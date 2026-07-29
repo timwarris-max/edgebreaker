@@ -211,7 +211,35 @@ var CASES = [
   // redraw() does not touch: only updateModeVisibility() can unhide it.
   { name: "picking a bit mid-dialog redraws the page", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.030", pick: "30.000000|0.500000",
-    expectCaption: "across the top face", expectInset: "SETBACK" }
+    expectCaption: "across the top face", expectInset: "SETBACK" },
+
+  // The Help button shares the 96px button bar with #Summary, and the summary
+  // is the only variable-width thing in there. These three cases walk that slot
+  // from its real worst case to past it.
+  //
+  // 1. The longest line the page can actually build from real fields: the
+  // longest verb, a two-digit chamfer, a four-digit shape count, a long size,
+  // mm (the wider unit), 100%, and a fractional bit angle.
+  { name: "bar: longest real summary beside Help", bit: "12.4deg V-bit",
+    angle: "12.4", dia: "0.25", size: "0.031250", units: "mm", percent: "100",
+    chamfers: "99|Chamfer 99 - 0.06 mm|differs|0.06|setback|auto|100;100|New chamfer (100)|new||||",
+    slot: "99", kind: "add", facts: "sel=9999;excluded=;mem=0", force: "replace" },
+  // 2. Past it. The summary's wording is not frozen -- it has been rewritten
+  // twice already -- so the bar is measured against a line longer than today's,
+  // not against today's exact string. Roughly 15% of headroom on the real worst
+  // case above; more than that genuinely does not fit, and the honest thing is
+  // to know where the edge is rather than to claim a margin we do not have.
+  { name: "bar: summary longer than any real one (headroom)", bit: "12.4deg V-bit",
+    angle: "12.4", dia: "0.25", size: "0.031250", units: "mm", percent: "100",
+    chamfers: "99|Chamfer 99 - 0.06 mm|differs|0.06|setback|auto|100;100|New chamfer (100)|new||||",
+    slot: "99", kind: "add", facts: "sel=9999;excluded=;mem=0", force: "replace",
+    forceSummary: "Will replace <b>Chamfer 99</b> · 9999 shapes · " +
+                  "<b>0.03125000 mm</b> @ 100% · 12.4° bit · headroom" },
+  // 3. Help could not open a browser. The fallback line takes the summary's
+  // slot, and it is longer than any summary -- it names a filename and a folder
+  // -- so it is its own worst case and gets its own measurement.
+  { name: "bar: Help can't open (fallback line)", bit: "60deg V-bit",
+    angle: "60", dia: "0.5", size: "0.030", helpFail: true }
 ];
 
 function seed(c) {
@@ -279,6 +307,16 @@ function seed(c) {
   // It has to be set BEFORE the page script runs, hence the head injection.
   if (c.force)
     s = s.replace("</head>", "<script>window.__FORCE_STATE='" + c.force + "';</script></head>");
+  // Same head-injection trick as __FORCE_STATE. forceSummary lets a case put a
+  // longer line in the bar than the real fields can produce, so the Help/summary
+  // collision check is measured against a margin rather than against today's
+  // exact wording. helpFail renders the can't-open fallback, which is the
+  // longest thing that ever occupies that slot.
+  if (c.forceSummary)
+    s = s.replace("</head>", "<script>window.__FORCE_SUMMARY=" +
+                  JSON.stringify(c.forceSummary) + ";</script></head>");
+  if (c.helpFail)
+    s = s.replace("</head>", "<script>window.__FORCE_HELP_FAIL=1;</script></head>");
   // Pin the page to Aspire's real viewport. Headless Chrome's --window-size
   // does not map 1:1 to the viewport, and the answer must not depend on that.
   // body:relative makes #Scroll/#Bar resolve against this fixed box instead of
@@ -324,10 +362,33 @@ function seed(c) {
     "var hdrInk=Math.round(Math.max(bb.bottom,pr?pr.bottom:0)-ht.top);" +
     "var hdrPair=pr?Math.round(pr.left-bb.right):9999;" +
     "var hdrGap=Math.round(Math.min(bb.left,pr?pr.left:bb.left)-vr.right);" +
+    // The button bar is a single 96px line shared by four things: Help and the
+    // summary on the left, Cancel and OK on the right. Only the summary's width
+    // is variable, so the summary crowding Help -- or the pair of them running
+    // into Cancel -- is the way this bar breaks. Measure the two groups against
+    // each other rather than trusting today's wording.
+    // Visibility matters: #HelpNote replaces #Summary when Help cannot open, so
+    // whichever is on screen is the one that must clear Help and Cancel.
+    "var bar=document.getElementById('Bar'), br=bar.getBoundingClientRect();" +
+    "var cx=document.getElementById('ButtonCancel').getBoundingClientRect();" +
+    "function vis(e){return (e&&e.offsetWidth>0&&e.offsetHeight>0)?e.getBoundingClientRect():null;}" +
+    "var hb=vis(document.getElementById('ButtonHelp'));" +
+    "var sm=vis(document.getElementById('Summary'));" +
+    "var hn=vis(document.getElementById('HelpNote'));" +
+    "var leftEdge=Math.max(hb?hb.right:0,sm?sm.right:0,hn?hn.right:0);" +
+    "var barGap=Math.round(Math.min(r.left,cx.left)-leftEdge);" +
+    "var helpGap=Math.round(Math.min(sm?sm.left:99999,hn?hn.left:99999)-(hb?hb.right:0));" +
+    "var barOver=Math.round(Math.max(hb?hb.bottom:0,sm?sm.bottom:0,hn?hn.bottom:0," +
+    "r.bottom,cx.bottom)-br.bottom);" +
+    "var helpW=hb?Math.round(hb.width):0;" +
+    "var helpX=hb?Math.round(hb.left-br.left):-1;" +
+    "var noteOn=hn?1:0, sumOn=sm?1:0;" +
     "document.title='MEASURE over='+over+' content='+real+' avail='+sc.clientHeight+" +
     "' okBottom='+Math.round(r.bottom)+' viewH=" + VIEW_H + "'+" +
     "' ink='+(Math.round(ink*10)/10)+" +
-    "' hdrInk='+hdrInk+' hdrPair='+hdrPair+' hdrGap='+hdrGap;" +
+    "' hdrInk='+hdrInk+' hdrPair='+hdrPair+' hdrGap='+hdrGap+" +
+    "' helpW='+helpW+' helpX='+helpX+' helpGap='+helpGap+' barGap='+barGap+" +
+    "' barOver='+barOver+' noteOn='+noteOn+' sumOn='+sumOn;" +
     "},1500);</script></body>");
   return s;
 }
@@ -430,11 +491,13 @@ CASES.forEach(function (c) {
     "--dump-dom", "file:///" + f.replace(/\\/g, "/")
   ], { encoding: "utf8", maxBuffer: 40 * 1024 * 1024 });
 
-  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+)/.exec(out);
+  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d)/.exec(out);
   if (!m) { console.log("FAIL  " + c.name + "  (no measurement - page error?)"); failed++; return; }
 
   var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH = +m[5], ink = +m[6];
   var hdrInk = +m[7], hdrPair = +m[8], hdrGap = +m[9];
+  var helpW = +m[10], helpX = +m[11], helpGap = +m[12], barGap = +m[13], barOver = +m[14];
+  var noteOn = +m[15], sumOn = +m[16];
   var bad = [];
   if (over > 0) bad.push("content overflows by " + over + "px");
   if (okBottom > viewH) bad.push("OK button below the fold");
@@ -468,6 +531,31 @@ CASES.forEach(function (c) {
   if (hdrPair < 0) bad.push("badge and picker button overlap by " + (-hdrPair) + "px");
   if (hdrGap < MIN_SLACK)
     bad.push("only " + hdrGap + "px between the version text and the badge");
+
+  // ---- the button bar -------------------------------------------------
+  // Help exists at all. It carries no `name` attribute (Aspire must not try to
+  // bind it), so nothing else on the page or in Lua would notice it vanishing.
+  if (helpW <= 0) bad.push("no Help button in the bar");
+  // At the far left, away from OK. 32px is #Bar's own padding; anything much
+  // past that means it stopped being the leftmost thing in the bar.
+  else if (helpX > 40) bad.push("Help button sits " + helpX + "px in, not at the left edge");
+  // The summary (or the can't-open note that replaces it) must not run back
+  // over Help, and neither may reach Cancel. This is the realistic failure:
+  // #Summary is variable-length and grows with the chamfer number, the shape
+  // count and the units.
+  if (helpGap < 0) bad.push("summary overlaps the Help button by " + (-helpGap) + "px");
+  if (barGap < MIN_SLACK)
+    bad.push("only " + barGap + "px between the summary and Cancel, want >= " + MIN_SLACK);
+  // A summary too wide to fit beside Help drops onto a second line, which the
+  // 96px bar cannot hold -- it would run off the bottom of the window.
+  if (barOver > 0) bad.push("bar content spills " + barOver + "px below the bar");
+  // Exactly one of the two left-hand lines shows: they occupy the same slot.
+  if (c.helpFail) {
+    if (!noteOn) bad.push("Help failed but the can't-open note is not shown");
+    if (sumOn) bad.push("the summary is still shown under the can't-open note");
+  } else if (!sumOn) {
+    bad.push("the summary is not shown");
+  }
 
   // The warning is display-only, so assert rendered text rather than a
   // measurement. --dump-dom carries the post-JS DOM, so #DepthWarn's content is
@@ -587,6 +675,7 @@ CASES.forEach(function (c) {
 
   console.log((bad.length ? "FAIL  " : "ok    ") + c.name +
     "  content " + content + " / " + avail + " avail, slack " + (avail - content) + "px" +
+    ", bar gap " + barGap + "px" +
     (bad.length ? "  <-- " + bad.join("; ") : ""));
   if (bad.length) failed++;
 });
@@ -815,6 +904,27 @@ console.log("");
     console.log("ok    " + name + "  " + svgs.length + " svg(s), all clipped and pixel-width");
   }
 });
+
+// ---- Source check: the help page still matches the README ----------------
+// EdgeBreaker-Help.htm is GENERATED from gadget/EdgeBreaker/README.md, so the
+// words the operator reads at the machine live in one place. But a generator
+// only delivers that if something notices when the committed page has fallen
+// behind: edit the README, forget to run build-help.ps1, and the repo, the
+// deploy and the Acer all carry a stale help page with every other check here
+// still green. Packaging catches it too, which is far too late to be the only
+// catch. This runs the generator's own -Check mode -- it writes nothing and
+// exits 1 when the page would come out different.
+console.log("");
+try {
+  cp.execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass",
+    "-File", path.join(__dirname, "..", "build-help.ps1"), "-Check"],
+    { encoding: "utf8", stdio: "pipe" });
+  console.log("ok    EdgeBreaker-Help.htm  matches README.md");
+} catch (e) {
+  var why = ((e.stdout || "") + (e.stderr || "")).trim().split(/\r?\n/)[0] || e.message;
+  console.log("FAIL  EdgeBreaker-Help.htm  " + why);
+  failed++;
+}
 
 console.log("");
 if (failed) { console.log(failed + " layout failure(s)."); process.exit(1); }

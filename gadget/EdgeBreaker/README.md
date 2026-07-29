@@ -14,6 +14,8 @@ tip and its flat ride in air beside the wall instead of dragging through your cu
 ## Quick start (60 seconds)
 
 1. Double-click `EdgeBreaker-v*.vgadget` to install, then restart Aspire.
+   Windows may warn you about the file when you download it. That's only because
+   it's new and not many people have it yet — choose Keep, then open it.
 2. Open a job, select the closed vector(s) to chamfer.
 3. Gadgets menu → EdgeBreaker. The dialog opens with a coloured banner telling you
    what it's about to do. **Choose your V-bit** (it opens on the bit you used last),
@@ -27,6 +29,10 @@ tip and its flat ride in air beside the wall instead of dragging through your cu
 5. Not what you wanted? Just run it again. Your vectors are still selected, so
    the banner says **Rebuilding Chamfer 1** and that chamfer's settings are
    already loaded.
+
+**Stuck at the machine?** The **Help** button at the bottom of the dialog opens this
+guide in a browser window. It's a copy that ships with the gadget, so it works with
+no internet.
 
 ## How it decides what to build
 

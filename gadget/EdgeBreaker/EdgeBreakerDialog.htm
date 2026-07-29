@@ -59,6 +59,15 @@ body { font-family: Segoe UI, Arial, sans-serif; font-size: 27px; margin: 0;
                           border-radius: 8px; float: right; }
 #Summary { float: left; font-size: 25px; color: #556; padding-top: 12px; }
 #Summary b { color: #223; }
+/* Help is the only control in this bar that does not finish the run, so it sits
+   at the far LEFT -- nobody reaching for OK can catch it on the way. Two ids so
+   it outweighs the `#Bar input[type=button]` float-right rule above; one id
+   would lose on specificity and the button would land beside Cancel. */
+#Bar #ButtonHelp { float: left; margin-left: 0; margin-right: 28px; font-weight: 600; }
+/* Shown only when Help could not open, in the summary's place: the bar is one
+   line tall, and of the two lines the failure is the one worth reading. */
+#HelpNote { float: left; font-size: 25px; color: #b00000; padding-top: 12px;
+            display: none; }
 /* The OK button takes the colour of what it is about to do. Trident draws a
    coloured input as a flat block, which is the intent anyway. */
 #ButtonOK.k-add     { background: #2f9e4f; color: #fff; border: 1px solid #268040; font-weight: 600; }
@@ -172,7 +181,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.8.0</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.9.0</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -211,7 +220,11 @@ input[type=radio] { zoom: 2.5; }
           <label><input type="radio" name="SideRadio" value="inside"> Inside</label>
         </span>
       </div>
-      <div class="row"><span id="HelpLink">Help &#9656;</span>
+      <!-- Named for what it holds, not "Help": the button in the bar is now the
+           Help, and two controls called Help on one dialog would mean two
+           different things. This one is the banner cheat-sheet, and it is also
+           the only help that still works if the browser will not open. -->
+      <div class="row"><span id="HelpLink">How it decides &#9656;</span>
         <div id="HelpBody">
           <b>The selection decides.</b> EdgeBreaker looks at what you have selected and
           opens ready to do the obvious thing &mdash; the banner at the top says which,
@@ -343,7 +356,13 @@ input[type=radio] { zoom: 2.5; }
   <div id="Bar">
     <input id="ButtonOK" name="ButtonOK" type="button" value="OK" class="k-add">
     <input id="ButtonCancel" name="ButtonCancel" type="button" value="Cancel">
+    <!-- id only, NO name: a named field is something Aspire may try to bind to
+         Lua, and this button has nothing to do with Lua. It opens the help page
+         from the page itself (see openHelp below) because HTML_Dialog is modal
+         and Lua gets no control back until OK or Cancel. -->
+    <input id="ButtonHelp" type="button" value="Help">
     <span id="Summary">&nbsp;</span>
+    <span id="HelpNote"></span>
   </div>
 </div>
 
@@ -1122,10 +1141,56 @@ function setSummary(sizeText) {
   var verb = (STATE === "add") ? "Will add" :
              (STATE === "replace") ? "Will replace" : "Will rebuild";
   var slot = rec ? rec.slot : "";
-  el("Summary").innerHTML = verb + " <b>Chamfer " + slot + "</b> · " +
+  // __FORCE_SUMMARY is a test-only hook (tests\check-dialog-layout.js), the
+  // same shape as __FORCE_STATE below. This line shares the bar with the Help
+  // button now, so how long it is decides whether the two collide -- and the
+  // real fields can only make it so long. The gate uses this to measure the bar
+  // against a summary longer than today's wording, not just today's.
+  el("Summary").innerHTML = window.__FORCE_SUMMARY ||
+    (verb + " <b>Chamfer " + slot + "</b> · " +
     shapesPhrase(buildCount()) + " · <b>" +
     sizeText + " " + UNIT + "</b> @ " + currentPercent + "% · " +
-    (haveBit ? currentAngle + "° bit" : "no bit yet");
+    (haveBit ? currentAngle + "° bit" : "no bit yet"));
+}
+
+// The Help button. HTML_Dialog is modal -- Lua is blocked until OK or Cancel --
+// so this cannot route through Lua the way every other control here does. The
+// page has to open the help itself, and the one rule that outranks opening it
+// is that the dialog must survive: a half-filled form thrown away by a stray
+// Help click would be far worse than Help not working. So there is deliberately
+// no <a> and no location.href anywhere on this path. window.open with a
+// "_blank" target is the only move that CANNOT navigate this page: whatever the
+// host does with it -- new IE window, new browser tab, or nothing at all -- the
+// dialog underneath is untouched.
+//
+// Relative, not absolute: the help page ships beside this file, so the URL
+// resolves against the dialog's own file: location and nothing has to
+// reconstruct the gadget folder's path.
+//
+// Nobody has run this in Aspire's Trident host before, so every way it can go
+// wrong ends in helpUnavailable() rather than in an exception: a throw (some
+// hosts refuse window.open outright) and a null return (blocked) are both just
+// "it didn't open".
+var HELP_FILE = "EdgeBreaker-Help.htm";
+
+function helpUnavailable() {
+  var note = el("HelpNote"), sum = el("Summary");
+  if (!note) return;
+  note.innerHTML = "Couldn't open Help &mdash; it's <b>EdgeBreaker-Help.htm</b>, " +
+                   "in the EdgeBreaker gadget folder.";
+  note.style.display = "block";
+  // The bar is one line tall and both float left, so they cannot both show.
+  // The summary only restates what is already on screen; this does not.
+  if (sum) sum.style.display = "none";
+}
+
+function openHelp() {
+  var w = null;
+  try { w = window.open(HELP_FILE, "_blank"); } catch (e) { w = null; }
+  if (!w) { helpUnavailable(); return; }
+  // Raising the window is a nicety, and a host that hands back a window it will
+  // not let us focus must not turn a working Help into a failure message.
+  try { w.focus(); } catch (e2) {}
 }
 
 function redraw() {
@@ -1314,6 +1379,10 @@ var t = setInterval(function() {
       h.style.display = (h.style.display === "block") ? "none" : "block";
     };
     el("HelpLink").onclick = toggleHelp;
+    el("ButtonHelp").onclick = openHelp;
+    // Test-only: forces the browser-open path to fail so the gate can measure
+    // the fallback line, which is longer than any real summary.
+    if (window.__FORCE_HELP_FAIL) helpUnavailable();
     el("Size").onkeyup = redraw;
     el("Size").onchange = redraw;
     el("StartDepth").onkeyup = redraw;

@@ -14,6 +14,8 @@ tip and its flat ride in air beside the wall instead of dragging through your cu
 ## Quick start (60 seconds)
 
 1. Double-click `EdgeBreaker-v*.vgadget` to install, then restart Aspire.
+   Windows may warn you about the file when you download it. That's only because
+   it's new and not many people have it yet — choose Keep, then open it.
 2. Open a job, select the closed vector(s) to chamfer.
 3. Gadgets menu → EdgeBreaker. The dialog opens with a coloured banner telling you
    what it's about to do. **Choose your V-bit** (it opens on the bit you used last),
@@ -27,6 +29,10 @@ tip and its flat ride in air beside the wall instead of dragging through your cu
 5. Not what you wanted? Just run it again. Your vectors are still selected, so
    the banner says **Rebuilding Chamfer 1** and that chamfer's settings are
    already loaded.
+
+**Stuck at the machine?** The **Help** button at the bottom of the dialog opens this
+guide in a browser window. It's a copy that ships with the gadget, so it works with
+no internet.
 
 ## How it decides what to build
 
@@ -220,7 +226,7 @@ the same units you work in.
 
 ## About this repo
 
-This is the released gadget. The five files in `gadget/EdgeBreaker/` are exactly what
+This is the released gadget. The six files in `gadget/EdgeBreaker/` are exactly what
 ships inside the `.vgadget`, and `tests/` is the suite that guards the geometry and the
 dialog layouts:
 
@@ -228,6 +234,11 @@ dialog layouts:
 lua tests\run-tests.lua          # geometry, slots, memory, messages
 node tests\check-dialog-layout.js  # renders the real dialogs, fails on overflow
 ```
+
+`EdgeBreaker-Help.htm` is the offline help the gadget's Help button opens, and it is
+**generated** from `gadget/EdgeBreaker/README.md` by `build-help.ps1` — so don't edit it
+by hand. Edit the README and run the script; the layout check fails if the two are out
+of step.
 
 Some comments in `EdgeBreaker.lua` refer to design specs by path. Those live in a private
 working repo along with the development notes; the source here is unmodified so that what

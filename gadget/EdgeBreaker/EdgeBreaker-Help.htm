@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<!--
+  GENERATED FILE - DO NOT EDIT.
+
+  Every word on this page comes from gadget/EdgeBreaker/README.md. Edits made
+  here are overwritten the next time the page is generated. Change the README,
+  then run build-help.ps1 at the repo root (build-vgadget.ps1 runs it too).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EdgeBreaker help</title>
+<style>
+/* Self-contained on purpose: this opens from a file: path on a shop PC with no
+   internet. No external CSS, fonts, images or script. Unlike the gadget's own
+   dialogs this renders in a real browser, so it is free to scroll and to use
+   modern CSS -- but the palette is the dialogs' palette. */
+:root {
+  --ink: #1f2b36; --muted: #5a6b7a; --page: #f4f6f8; --card: #ffffff;
+  --rule: #cbd5dd; --dark: #23303c; --orange: #f76707;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+       font-family: "Segoe UI", Arial, sans-serif; font-size: 19px;
+       line-height: 1.6; }
+header { background: linear-gradient(#2a3642, #1d2731); color: #fff;
+         border-bottom: 4px solid var(--orange); padding: 22px 28px; }
+header .name { font-size: 30px; letter-spacing: .5px; }
+header .ver { color: #8fa0b0; font-size: 21px; margin-left: 12px; }
+header .sub { color: #8fa0b0; font-size: 17px; margin-top: 4px; }
+main { max-width: 46em; margin: 0 auto; padding: 32px 28px 96px; }
+h2 { font-size: 27px; line-height: 1.25; margin: 48px 0 12px;
+     padding-bottom: 8px; border-bottom: 2px solid var(--rule); }
+p { margin: 0 0 16px; }
+a { color: #1264a3; }
+code { font-family: Consolas, "Courier New", monospace; font-size: .88em;
+       background: #e8edf1; border: 1px solid #dbe3ea; border-radius: 4px;
+       padding: 1px 5px; }
+strong { font-weight: 600; }
+ul, ol { margin: 0 0 16px; padding-left: 26px; }
+li { margin-bottom: 10px; }
+blockquote { margin: 0 0 20px; padding: 12px 18px; background: #fff7e0;
+             border: 1px solid #d9ad3c; border-left: 5px solid #b8860b;
+             border-radius: 8px; color: #6b4e05; }
+blockquote p { margin: 0; }
+.intro { font-size: 20px; }
+.intro > p:first-child { font-size: 22px; color: #33434f; }
+.toc { background: var(--card); border: 1px solid var(--rule); border-radius: 10px;
+       padding: 16px 22px; margin-top: 32px; }
+.toc h2 { font-size: 17px; text-transform: uppercase; letter-spacing: 1px;
+          color: var(--muted); border: 0; margin: 0 0 8px; padding: 0; }
+.toc ul { list-style: none; padding: 0; margin: 0; columns: 2; }
+.toc li { margin-bottom: 6px; break-inside: avoid; }
+/* Wide content scrolls in its own box so the page never scrolls sideways. */
+.tablewrap { overflow-x: auto; margin: 0 0 20px; }
+table { border-collapse: collapse; width: 100%; background: var(--card);
+        border: 1px solid var(--rule); font-size: 17px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px;
+         border-bottom: 1px solid var(--rule); }
+th { background: var(--dark); color: #fff; font-weight: 600;
+     border-bottom: 2px solid var(--orange); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:nth-child(even) { background: #fafcfd; }
+@media (max-width: 700px) {
+  body { font-size: 18px; }
+  main { padding: 24px 18px 64px; }
+  .toc ul { columns: 1; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="name">EdgeBreaker<span class="ver">v1.9.0</span></div>
+  <div class="sub">Help &mdash; works offline</div>
+</header>
+<main>
+<div class="intro"><p>Break an edge with a V-bit in Aspire: select closed vectors, pick a bit, enter a chamfer size, choose where on the flute to cut. The gadget draws offset vectors into the waste and creates a Profile "On" toolpath at the exact depth — the tip and its flat ride in air beside the wall instead of dragging through your cut.</p>
+<p><strong>Requires Aspire 12.x.</strong> (Not tested on V-Carve or earlier versions.)</p>
+<blockquote><p>Through v1.4.x this gadget was called <strong>ChamferOffset</strong>. Same gadget, new name. Jobs built with the old version still work — see <a href="#chamfers-from-older-versions">Chamfers from older versions</a>.</p></blockquote></div>
+<nav class="toc"><h2>On this page</h2><ul>
+<li><a href="#how-it-decides-what-to-build">How it decides what to build</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#start-depth">Start depth</a></li>
+<li><a href="#the-section-view">The section view</a></li>
+<li><a href="#what-a-chamfer-remembers">What a chamfer remembers</a></li>
+<li><a href="#more-than-one-chamfer-in-a-job">More than one chamfer in a job</a></li>
+<li><a href="#bits-come-from-your-tool-database">Bits come from your tool database</a></li>
+<li><a href="#chamfers-from-older-versions">Chamfers from older versions</a></li>
+<li><a href="#the-strategy-template">The strategy template</a></li>
+<li><a href="#quick-start-60-seconds">Quick start (60 seconds)</a></li>
+</ul></nav>
+<section>
+<h2 id="how-it-decides-what-to-build">How it decides what to build</h2>
+<p><strong>The selection decides.</strong> Before it asks you anything, EdgeBreaker looks at what you have selected and opens ready to do the obvious thing. The banner at the top of the dialog names it, in colour, and the OK button repeats it — so a run that would destroy something says so before you press anything.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>What you have selected</th><th>Banner</th><th>What OK does</th></tr></thead>
+<tbody>
+<tr><td>Shapes no chamfer uses</td><td><strong>Green — Adding Chamfer N</strong></td><td>Creates a new chamfer. Nothing existing is touched.</td></tr>
+<tr><td>Shapes an existing chamfer was built from</td><td><strong>Blue — Rebuilding Chamfer K</strong></td><td>Rebuilds K, with K's own size, side and cut position already loaded. Selecting <em>some</em> of its shapes is enough.</td></tr>
+<tr><td>Nothing</td><td><strong>Blue — Rebuilding Chamfer K, nothing selected</strong></td><td>Rebuilds K from the shapes it remembers.</td></tr>
+<tr><td>Shapes a chamfer <em>should</em> know but doesn't</td><td><strong>Amber — I don't know which shapes</strong></td><td>Rebuilds it on your selection, and this run teaches it.</td></tr>
+<tr><td>A chamfer you picked by hand, holding different shapes</td><td><strong>Red — Replacing Chamfer K's shapes</strong></td><td>Removes K's offsets and toolpath and rebuilds them on the new shapes. Cannot be undone.</td></tr>
+</tbody></table></div>
+<p>Two more things it works out on its own:</p>
+<ul>
+<li><strong>A mixed selection</strong> — some free shapes, some already owned by another chamfer — adds a new chamfer from the free ones and says how many it left out.</li>
+<li><strong>Your own orange offsets</strong> caught up in a box-select are ignored, not refused. Box-selecting everything and re-running is the natural way to adjust a chamfer, and it works.</li>
+</ul>
+<p>You are never stuck with its guess: the <strong>Change</strong> dropdown in the banner picks any chamfer in the job (or "New chamfer"), and the banner re-colours to match.</p>
+<p><strong>With nothing selected</strong>, EdgeBreaker rebuilds the newest chamfer — unless you single-click a chamfer's toolpath in the Toolpaths list first, which names the one you mean. A selection always outranks a highlighted toolpath.</p>
+</section>
+<section>
+<h2 id="notes">Notes</h2>
+<ul>
+<li>The layers <code>EdgeBreaker - Offset 01</code>, <code>02</code>, … are gadget-owned. Building a chamfer clears <strong>its own</strong> layer and no other, and gadget deletions cannot be undone — never keep your own work on one.</li>
+<li>Vectors must be <strong>closed</strong>. Outer boundaries offset outward, holes inward, automatically.</li>
+<li>A feature too narrow to chamfer at the size you asked for is <strong>skipped</strong>, not approximated: Aspire's offset collapses it to nothing, and it comes back with no orange offset beside it. A skip is one of the things that breaks the silence — you get a message naming the count. Ask for a smaller chamfer, or cut nearer the tip, and more of them will fit. Before v1.3.0 these came back inside-out and cut a slot down the middle of the feature.</li>
+<li>One vector can produce <strong>more than one</strong> offset vector. Where an inward offset pinches a neck closed, Aspire cuts the loop at the crossing and the valid pieces come back as separate closed loops — so the drawn count need not match what you selected.</li>
+<li>The gadget owns every toolpath whose name contains <code>[EdgeBreaker NN]</code>, and a run only touches its own number: building Chamfer 2 deletes and recreates <code>[EdgeBreaker 02]</code> and leaves <code>[EdgeBreaker 01]</code> alone. <strong>Toolpath deletions cannot be undone.</strong> To keep a chamfer toolpath forever, rename it so the marker is gone — the gadget will never touch it again, and it also forgets everything that chamfer remembered. Renaming it to a <em>different</em> number hands it to that chamfer instead.</li>
+<li>The gadget calculates its own toolpath and leaves your other toolpaths alone. If Aspire refuses the single-toolpath calculation, the message says so — then open the toolpath and click Calculate yourself.</li>
+<li>A chamfer with no memory of its own falls back to your <strong>last run's</strong> entries, kept in <code>%APPDATA%\EdgeBreaker-settings.txt</code> (a <code>ChamferOffset-settings.txt</code> left by an older version is still read). Anything that no longer applies falls back to the default — a size from an inch job when the open job is metric. Delete the file to start fresh.</li>
+<li><strong>Depth warning.</strong> A shallow-angle V-bit plunges a long way for a small chamfer — a 12.4° bit needs 0.90 in of depth for a 0.020 in chamfer. If the cut would go deeper than the stock thickness in Job Setup, the dialog says so and names the flute position that fits. It warns, it does not block, and it stays quiet when Job Setup has no thickness.</li>
+</ul>
+</section>
+<section>
+<h2 id="start-depth">Start depth</h2>
+<p><strong>Start depth is how far below the top of the stock the edge sits</strong> — a pocket floor, a second level, a top you have already skimmed. Leave it at <strong>0</strong> for an edge at the top of the material, which is the usual case.</p>
+<p>It does not change the chamfer itself. The size, the cut position and the bit geometry all describe the bit against the edge, and that relationship is the same wherever the edge happens to sit — a start depth simply moves the whole cut down. So the machine reaches <strong>start depth + cut depth</strong> into the material, and that total is what the depth-vs-stock warning measures and what the section view draws.</p>
+<p>Each chamfer remembers its <strong>own</strong> start depth, and a <strong>new</strong> chamfer always opens at 0. Unlike the chamfer size, it is deliberately not carried over from your last run: a leftover 0.25 in from yesterday's pocket applied to today's flat job would cut a quarter inch too deep without looking wrong on screen.</p>
+</section>
+<section>
+<h2 id="the-section-view">The section view</h2>
+<p>The right-hand side of the setup dialog draws the cut you are about to make, in section, and redraws it as you type: the stock, the bevel it will leave, the V-bit that cuts it, and the four numbers that describe it — <code>W</code> the chamfer width, <code>D</code> the plunge depth, <code>G</code> the standoff, and <code>S</code> the start depth when the edge sits below the top of the stock.</p>
+<p>The stock is schematic, not to scale. Drawing a 0.02 in chamfer against 0.75 in of real stock would make the chamfer 3% of the picture and tell you nothing; whether the cut is too deep for the material is answered in words by the warning directly above the drawing.</p>
+<p>On any bit that isn't 90°, a small corner detail sits at the right-hand end of the drawing. It's the corner blown up, with the edge you're sizing picked out in orange and named underneath — <code>SETBACK</code> across the top face, <code>FACE</code> along the slant, <code>LEG</code> down the side — and the number you typed below that.</p>
+<p>It's a sketch, not a scale drawing. At the main drawing's scale your chamfer is a sliver a few percent of the bit's reach, so all three edges land on top of each other with nowhere to put a label. The true angle and every real number are on the drawing right beside it.</p>
+<p>A 90° bit doesn't get one — at 90° the setback and the leg are the same measurement, so there's no choice to explain.</p>
+</section>
+<section>
+<h2 id="what-a-chamfer-remembers">What a chamfer remembers</h2>
+<p>Each chamfer stores, on its own toolpath, the shapes it was built from and the settings that built them — size, mode, side, cut position, start depth and units. That is what makes the table above work: recognising your selection, reloading the right numbers, rebuilding from memory when nothing is selected.</p>
+<ul>
+<li>It travels <strong>inside the job file</strong>, so it survives save/close/reopen and moves with the job to another machine. <strong>Save the job</strong> to keep it.</li>
+<li>Delete a chamfer's toolpath and it is forgotten — which is also how you free its number for reuse.</li>
+<li>Edit or move a remembered shape and the gadget stops recognising it (shapes are matched by size and position). You get the amber "teach me" banner; rebuilding from your selection fixes it.</li>
+<li><strong>The bit is the exception.</strong> Aspire gives no way to store a tool identity in text, so each chamfer's bit is remembered in Aspire's own settings <strong>on this PC</strong>, not in the job. Open the same job on another machine and the picker offers the last bit you used there, not that chamfer's. Everything else travels.</li>
+</ul>
+</section>
+<section>
+<h2 id="more-than-one-chamfer-in-a-job">More than one chamfer in a job</h2>
+<p>A job can hold up to 99 chamfers, each with its own bit, size and cut position — a fine chamfer on the lettering and a heavier one on the outline, say.</p>
+<p>Each chamfer keeps its own offset layer (<code>EdgeBreaker - Offset 01</code>, <code>02</code>, …) and its own toolpath marker (<code>[EdgeBreaker 01]</code>). A run clears and rebuilds <strong>only its own number</strong>; every other chamfer is left exactly as it was, and the banner says which ones those are before you press OK.</p>
+</section>
+<section>
+<h2 id="bits-come-from-your-tool-database">Bits come from your tool database</h2>
+<p>There is nothing to add to this gadget. Any V-bit defined in Aspire's tool database is offered, and its angle, diameter, <strong>feeds, speeds and tool number are used exactly as the database has them</strong> — so a chamfer is cut with the same numbers as the rest of your job, and you change them in one place.</p>
+<p>A bit in millimetres is fine in an inch job (and vice versa); the diameter is converted.</p>
+<p><strong>If Select is greyed out</strong> with a bit highlighted, that bit has no feeds and speeds for the machine named at the top of the tool database dialog. Press <strong>Copy</strong> under "Copy Settings From", then <strong>Apply</strong>. This is Aspire refusing to hand over a tool it has no cutting data for — not a gadget fault.</p>
+</section>
+<section>
+<h2 id="chamfers-from-older-versions">Chamfers from older versions</h2>
+<p>Chamfers built by <strong>ChamferOffset v1.4.x</strong> are adopted. They keep their number and their size, but not their shapes — nothing recorded them at the time — so the first time you rebuild one you get the amber "teach me" banner and your selection becomes its shapes. That rebuild also renames its layer and toolpath to the EdgeBreaker names, and removes the old ones.</p>
+<p>Chamfers from <strong>before v1.4.0</strong> (the unnumbered <code>ChamferOffset - Offset</code> layer, or a toolpath tagged plain <code>[ChamferOffset]</code>) are <em>not</em> adopted. The gadget says once that it found one and then leaves it alone entirely — never listed, never replaced, never deleted. Remove it by hand if you don't want it.</p>
+</section>
+<section>
+<h2 id="the-strategy-template">The strategy template</h2>
+<p>The gadget ships one file, <code>EdgeBreaker.ToolpathTemplate</code>, which supplies only the <em>strategy</em>: Profile, <strong>Machine Vectors: On</strong>, restricted to the layer <code>EdgeBreaker - Offset 01</code>. It exists because Aspire will not accept a template this gadget wrote itself. The bit inside it is irrelevant — it is swapped for the one you picked, and so is the depth.</p>
+<p>So is the layer: building Chamfer 3 rewrites the restriction to <code>EdgeBreaker - Offset 03</code> before the template is loaded — a two-character change, nothing else in the file moves — and the gadget reads the name back out to confirm it before handing it to Aspire. It refuses to build rather than cut a layer it did not aim at.</p>
+<p>You should never need to touch this file. If you do re-create it, it must be restricted to <strong><code>EdgeBreaker - Offset 01</code></strong> — the <code>01</code> matters, because that is the text the gadget rewrites. The <strong>Selector ...</strong> step is not optional either: without it Aspire binds the toolpath to whatever is selected when it recalculates, and loops silently drop out. It must also be saved from a job in the same units you work in.</p>
+</section>
+<section>
+<h2 id="quick-start-60-seconds">Quick start (60 seconds)</h2>
+<ol>
+<li>Double-click <code>EdgeBreaker-v*.vgadget</code> to install, then restart Aspire. Windows may warn you about the file when you download it. That's only because it's new and not many people have it yet — choose Keep, then open it.</li>
+<li>Open a job, select the closed vector(s) to chamfer.</li>
+<li>Gadgets menu → EdgeBreaker. The dialog opens with a coloured banner telling you what it's about to do. <strong>Choose your V-bit</strong> (it opens on the bit you used last), enter the chamfer size, pick a cut position, press OK.</li>
+<li>The gadget draws orange offset vectors and creates a calculated <code>Chamfer ... [EdgeBreaker 01]</code> toolpath. A clean run shows you nothing at all — the toolpath in the Toolpaths panel and the orange offsets on the canvas are the confirmation. You only get a message when there is something to act on: a shape too narrow to chamfer, a vector skipped, a remembered shape that has gone, or a toolpath that could not be created.</li>
+<li>Not what you wanted? Just run it again. Your vectors are still selected, so the banner says <strong>Rebuilding Chamfer 1</strong> and that chamfer's settings are already loaded.</li>
+</ol>
+<p><strong>Stuck at the machine?</strong> The <strong>Help</strong> button at the bottom of the dialog opens this guide in a browser window. It's a copy that ships with the gadget, so it works with no internet.</p>
+</section>
+</main>
+</body>
+</html>
