@@ -5,7 +5,10 @@ chamfer size, choose where on the flute to cut. The gadget draws offset vectors
 into the waste and creates a Profile "On" toolpath at the exact depth — the
 tip and its flat ride in air beside the wall instead of dragging through your cut.
 
-**Requires Aspire 12.x.** (Not tested on V-Carve or earlier versions.)
+**Built and tested in Aspire 12.x.** There's nothing in it that needs Aspire in
+particular — it draws vectors, offsets them and makes a Profile toolpath — so it
+should run in VCarve too, and probably in older versions. I just haven't tried.
+Give it a go and tell me how it went, and I'll say so here.
 
 > Through v1.4.x this gadget was called **ChamferOffset**. Same gadget, new name.
 > Jobs built with the old version still work — see
