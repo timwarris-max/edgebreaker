@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>EdgeBreaker</title>
+<style>
+/* px ONLY. Trident multiplies pt by ~2.7 and the layout gate stops meaning
+   anything. Same rule as EdgeBreakerDialog.htm. */
+html, body { height: 100%; margin: 0; padding: 0; }
+body { font-family: "Segoe UI", Arial, sans-serif; background: #f4f6f8;
+       color: #1f2b36; position: relative; overflow: hidden; }
+
+/* #Hdr and #Bar declare a height that #Scroll's top/bottom has to agree with,
+   so their padding and border must be INSIDE that height -- the setup dialog
+   gets this from `#Fit * { box-sizing: border-box; }`, which this page has no
+   equivalent of. Without it the header drew 92px against the 68px #Scroll
+   reserves (the banner covered the orange rule) and the bar drew 101px against
+   72px, hiding the bottom 29px of the scroll area behind itself. Neither is
+   visible to the layout gate: it measures content against #Scroll's own box,
+   which is the right size in both cases -- the chrome was simply sitting on
+   top of it. Found by rendering, 2026-07-28. */
+#Hdr, #Bar { box-sizing: border-box; }
+
+/* Same header as the setup dialog, shorter: this window is 500-700 tall, not
+   1000, so an 88px header would eat the message. 68px is not arbitrary --
+   #Scroll starts at 68, so the header box ends exactly where the content area
+   begins, the way the setup dialog pairs its own 88/88. */
+#Hdr { position: absolute; top: 0; left: 0; right: 0; height: 68px;
+       background: #23303c; background: linear-gradient(#2a3642, #1d2731);
+       border-bottom: 4px solid #f76707; padding: 12px 24px; color: #fff;
+       font-size: 26px; letter-spacing: .5px; }
+#Hdr .ver { color: #8fa0b0; font-size: 19px; margin-left: 12px; }
+
+#Scroll { position: absolute; top: 68px; left: 0; right: 0; bottom: 72px;
+          overflow: auto; padding: 20px 24px; }
+
+#Ban { border-radius: 10px; padding: 14px 18px 14px 66px; position: relative;
+       font-size: 26px; font-weight: 600; line-height: 1.3; }
+#Ban .ico { position: absolute; left: 16px; top: 12px; width: 38px; height: 38px;
+            border-radius: 19px; color: #fff; text-align: center;
+            font-size: 26px; line-height: 38px; font-weight: 700; }
+
+/* The setup dialog's banner palette, verbatim. */
+.m-error { background: #fdeaea; border: 1px solid #e07575; color: #871b1b; }
+.m-error .ico { background: #c92a2a; }
+.m-warn  { background: #fff7e0; border: 1px solid #d9ad3c; color: #6b4e05; }
+.m-warn  .ico { background: #b8860b; }
+.m-done  { background: #e4f5e9; border: 1px solid #57b970; color: #175c2a; }
+.m-done  .ico { background: #2f9e4f; }
+
+/* pre-wrap keeps the paragraph breaks the existing messages already carry as
+   \n\n, so Task 4 does not have to invent markup for them. */
+#Body { font-size: 22px; line-height: 1.45; margin-top: 16px; white-space: pre-wrap; }
+
+/* The row padding and the note's type are the height the tall window is bought
+   with. EVERY report carries the 3-line toolpath note -- toolpath_note is
+   assigned on every path through the success block and note_text always appends
+   it -- and should_report only fires when something else is stacked on top of
+   that, so the two-part note is the FLOOR of a real report, not its ceiling. At
+   22px rows and 21px/1.4 notes it did not fit a 700px window's client area.
+   Owner's ruling 2026-07-28: buy it back from the type rather than fill the
+   laptop screen. 3px is the vertical padding only -- td.k's padding-right is
+   the label/value gutter and is unchanged. */
+#Rows { margin-top: 18px; border-collapse: collapse; width: 100%; }
+#Rows td { font-size: 22px; padding: 3px 0; vertical-align: top; }
+#Rows td.k { color: #5a6b7a; width: 210px; padding-right: 16px; }
+
+#Note { margin-top: 18px; background: #fff7e0; border: 1px solid #d9ad3c;
+        color: #6b4e05; border-radius: 8px; padding: 12px 16px;
+        font-size: 19px; line-height: 1.35; white-space: pre-wrap; }
+
+#Bar { position: absolute; left: 0; right: 0; bottom: 0; height: 72px;
+       background: #e8edf1; border-top: 1px solid #cbd5dd; padding: 14px 24px;
+       text-align: right; }
+#Bar input[type=button] { font-size: 23px; padding: 8px 32px;
+       background: #2f9e4f; color: #fff; border: 1px solid #268040;
+       font-weight: 600; }
+</style>
+</head>
+<body>
+ <div id="Hdr">EdgeBreaker<span class="ver" id="VerOut"></span></div>
+ <div id="Scroll">
+   <div id="Ban" class="m-error"><span class="ico" id="Ico">!</span><span id="Head"></span></div>
+   <div id="Body"></div>
+   <table id="Rows"><tbody id="RowsBody"></tbody></table>
+   <div id="Note"></div>
+ </div>
+ <!-- One button. A display-only dialog reads nothing back, so there is nothing
+      to cancel. Same bar the deleted receipt used. -->
+ <div id="Bar">
+   <input id="ButtonOK" name="ButtonOK" type="button" value="OK">
+ </div>
+
+ <!-- Lua -> HTML. AddTextField fills these; the poll below waits for them. -->
+ <input type="hidden" id="MKind"    name="MKind"    value="">
+ <input type="hidden" id="MHead"    name="MHead"    value="">
+ <input type="hidden" id="MBody"    name="MBody"    value="">
+ <input type="hidden" id="MRows"    name="MRows"    value="">
+ <input type="hidden" id="MNote"    name="MNote"    value="">
+ <input type="hidden" id="MVersion" name="MVersion" value="">
+
+<script>
+function el(id) { return document.getElementById(id); }
+
+// EVERY Lua-supplied string goes through here. Line 2324 of EdgeBreaker.lua
+// interpolates tostring(oerr) -- an Aspire error string we do not control --
+// so nothing from Lua may ever be treated as markup. innerText rather than
+// textContent: Trident has had innerText since IE4, textContent is IE9+.
+function setText(id, s) {
+  var e = el(id);
+  if ("innerText" in e) e.innerText = s; else e.textContent = s;
+}
+
+function cellText(td, s) {
+  if ("innerText" in td) td.innerText = s; else td.textContent = s;
+}
+
+// "G=0.0403 in;Layer=EdgeBreaker - Offset 02", with backslash escapes.
+// Walked one character at a time rather than split(), because split() cannot
+// see an escape: a value containing ';' would silently become two rows.
+function parseRows(raw) {
+  var rows = [], label = "", cur = "", onValue = false, i, ch;
+  if (!raw) return rows;
+  for (i = 0; i < raw.length; i++) {
+    ch = raw.charAt(i);
+    if (ch === "\\") { i++; cur += raw.charAt(i); continue; }
+    if (ch === "=" && !onValue) { label = cur; cur = ""; onValue = true; continue; }
+    if (ch === ";") { rows.push([label, cur]); label = ""; cur = ""; onValue = false; continue; }
+    cur += ch;
+  }
+  if (label !== "" || cur !== "") rows.push([label, cur]);
+  return rows;
+}
+
+var ICON = { "m-error": "!", "m-warn": "!", "m-done": "\u2713" };
+
+function init() {
+  var kind = el("MKind").value || "m-error";
+  el("Ban").className = kind;
+  setText("Ico", ICON[kind] || "!");
+  setText("Head", el("MHead").value);
+  setText("VerOut", el("MVersion").value);
+
+  var body = el("MBody").value;
+  setText("Body", body);
+  el("Body").style.display = body === "" ? "none" : "block";
+
+  var rows = parseRows(el("MRows").value), tb = el("RowsBody"), i, tr, td;
+  for (i = 0; i < rows.length; i++) {
+    tr = document.createElement("tr");
+    td = document.createElement("td");
+    td.className = "k";
+    cellText(td, rows[i][0]);
+    tr.appendChild(td);
+    td = document.createElement("td");
+    cellText(td, rows[i][1]);
+    tr.appendChild(td);
+    tb.appendChild(tr);
+  }
+  el("Rows").style.display = rows.length ? "table" : "none";
+
+  var note = el("MNote").value;
+  setText("Note", note);
+  el("Note").style.display = note === "" ? "none" : "block";
+}
+
+// Aspire fills the hidden fields after the page loads, so the page waits for
+// them rather than reading once -- the same pattern the setup dialog uses to
+// wait on BitName. Every message has a headline, so that is the signal. The
+// try cap means a message that somehow arrives with an empty headline still
+// renders (blank banner) instead of an empty window.
+var tries = 0;
+var t = setInterval(function () {
+  tries++;
+  if (el("MHead").value !== "" || tries > 40) { clearInterval(t); init(); }
+}, 50);
+</script>
+</body>
+</html>

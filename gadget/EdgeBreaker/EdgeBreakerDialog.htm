@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta charset="utf-8">
+<title>EdgeBreaker - Setup</title>
+<style>
+/* px ONLY -- never pt. Aspire's Trident host draws CSS px as physical pixels
+   1:1, but silently multiplies `pt` by ~2.7. A pt-sized dialog therefore
+   cannot be predicted or measured outside Aspire, which is what made the
+   window size guesswork. With px, `node tests\check-dialog-layout.js` renders
+   this file in headless Chrome at Aspire's exact viewport and reports the
+   real slack -- run it after ANY change here, and keep the window size in
+   EdgeBreaker.lua in step with WIN_W/WIN_H in that script.
+
+   Form controls do NOT scale with font-size; enlarge them with IE's `zoom`.
+   Buttons live in a pinned #Bar so a short window is awkward, never unusable.
+
+   The two columns are inline-block, not absolutely positioned as in the
+   mockup: absolute children contribute nothing to their parent's height, and
+   the layout gate measures exactly that. Same picture, still measurable.
+
+   Every effect used here was live-checked in Aspire's Trident on 2026-07-26
+   (plan Task 2): linear-gradient, border-radius and box-shadow all render, so
+   none of them needs a flat fallback. */
+html, body { height: 100%; }
+/* Everything lives in #Fit, which is scaled to the window Lua opened (see the
+   fitToWindow() note below). #Hdr/#Scroll/#Bar are absolute and resolve against it. */
+#Fit { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+body { font-family: Segoe UI, Arial, sans-serif; font-size: 27px; margin: 0;
+       padding: 0; background: #edf0f3; overflow: hidden; }
+#Fit * { box-sizing: border-box; }
+#Hdr { position: absolute; top: 0; left: 0; right: 0; height: 88px;
+       background: #23303c; background: linear-gradient(#2a3642, #1d2731);
+       border-bottom: 4px solid #f76707; padding: 14px 32px; color: #fff;
+       font-size: 32px; letter-spacing: .5px; }
+#Hdr .ver { color: #8fa0b0; font-size: 23px; margin-left: 14px; }
+#BitBadge { float: right; background: #2f3d4a; border: 1px solid #4a5a6a;
+            border-radius: 8px; padding: 8px 18px; font-size: 24px; color: #dfe7ee; }
+#BitBadge b { color: #ffb35c; font-weight: 600; }
+/* The picker sits in the dark title bar, where the eye files it as window
+   furniture and misses it. Filled in the accent orange it is the loudest thing
+   in the header, which is what the control that picks the cutter should be. */
+#ToolChooseButton { float: right; font-size: 26px; font-weight: 600; padding: 9px 24px;
+                    margin-left: 14px; background: #f76707; color: #fff;
+                    border: 1px solid #d95a04; }
+#BitBadgeGeom { margin-left: 10px; color: #b9c6d2; }
+/* The empty-state word is its OWN span, never #BitBadgeName. Aspire owns that
+   one -- it writes the picker's buddy label -- and a placeholder parked there
+   would only be erased if Aspire's write lands. Miss it and the badge reads
+   "Bit No bit yet 60 deg / 0.5 in", contradicting itself. Kept apart, the two
+   can never both be visible. */
+#BitBadgeNone { color: #ffb35c; font-weight: 600; }
+#Scroll { position: absolute; top: 88px; left: 0; right: 0; bottom: 96px;
+          overflow: auto; padding: 18px 32px; }
+#Bar { position: absolute; left: 0; right: 0; bottom: 0; height: 96px;
+       background: #f7f9fa; border-top: 1px solid #d0d5da; padding: 20px 32px; }
+#Bar input[type=button] { font-size: 25px; padding: 10px 34px; margin-left: 16px;
+                          border-radius: 8px; float: right; }
+#Summary { float: left; font-size: 25px; color: #556; padding-top: 12px; }
+#Summary b { color: #223; }
+/* The OK button takes the colour of what it is about to do. Trident draws a
+   coloured input as a flat block, which is the intent anyway. */
+#ButtonOK.k-add     { background: #2f9e4f; color: #fff; border: 1px solid #268040; font-weight: 600; }
+#ButtonOK.k-rebuild { background: #1e6db3; color: #fff; border: 1px solid #175a95; font-weight: 600; }
+#ButtonOK.k-teach   { background: #b8860b; color: #fff; border: 1px solid #96700a; font-weight: 600; }
+#ButtonOK.k-replace { background: #c92a2a; color: #fff; border: 1px solid #a61e1e; font-weight: 600; }
+
+/* 880 + 24 + 770 = 1674 inside a 1734px content box, and #Scroll is nowrap so
+   the pair CANNOT drop into a stack whatever the arithmetic says.
+   Both belts are needed. The original 900+32+790=1722 left 12px of slack, which
+   passed this repo's gate (headless Chrome renders at zoom 1.0 exactly) and
+   failed live on 2026-07-27: fitToWindow() scales #Fit by `zoom` to Aspire's
+   real client width, Trident rounds each scaled child on its own, and a dozen
+   pixels vanish. The columns stacked, the stack overflowed the window, and the
+   flute chart was cut off mid-row.
+   Children reset white-space, or the nowrap would run every paragraph off the
+   edge. Left is the wider of the two because its rows are label + three radios
+   on one line; the right column only has to hold six cut-position buttons. */
+#Scroll { white-space: nowrap; }
+#ColL, #ColR { white-space: normal; }
+#ColL { display: inline-block; vertical-align: top; width: 880px; margin-right: 24px; }
+#ColR { display: inline-block; vertical-align: top; width: 770px; }
+.card { background: #fff; border: 1px solid #d7dce1; border-radius: 12px;
+        padding: 22px 28px; margin-bottom: 18px; box-shadow: 0 2px 6px rgba(20,30,40,.07); }
+.cardh { font-size: 21px; font-weight: 600; color: #5d6875; text-transform: uppercase;
+         letter-spacing: 2px; margin-bottom: 16px; border-left: 5px solid #f76707;
+         padding-left: 12px; }
+.row { font-size: 27px; color: #222; margin-bottom: 16px; }
+.row:last-child { margin-bottom: 0; }
+label { display: inline-block; width: 230px; }
+input[type=text] { width: 200px; font-size: 24px; padding: 6px 10px;
+                   border: 1px solid #a8b0b9; border-radius: 8px; }
+input[type=radio] { zoom: 2.5; }
+#ModeGroup label, #SideGroup label { width: auto; margin-right: 26px; font-weight: normal;
+                                     font-size: 26px; }
+
+/* Banner: the whole point of v1.5.0 -- it says what OK will do before it does
+   it. Four states, coloured per spec 2. */
+#Banner { border-radius: 12px; padding: 18px 24px 18px 96px; margin-bottom: 18px;
+          font-size: 28px; position: relative; min-height: 96px; }
+#Banner .ico { position: absolute; left: 22px; top: 20px; width: 54px; height: 54px;
+               border-radius: 50%; text-align: center; font-size: 34px; line-height: 54px;
+               color: #fff; }
+/* The Change control sits in the banner's top-right corner, and the headline
+   must never run under it -- it is unreadable exactly when it matters most.
+   It FLOATS rather than being absolutely positioned so only the FIRST line has
+   to keep clear: an absolute box reserved its width on every line, so any
+   headline that wrapped had its continuation squeezed into half a banner and
+   broke in silly places ("Adding Chamfer 3 - 5" / "shapes selected"). Floated,
+   line one shortens and the rest reclaim the full width. It is first in the
+   markup because a float only pushes content that FOLLOWS it. */
+#BannerHead { display: block; }
+#Banner .sub { font-size: 22px; margin-top: 5px; }
+/* This control decides whether OK adds a chamfer or replaces one, so it gets
+   weight to match. 26px in a grey box still read as part of the banner's own
+   sentence -- it was bigger but not more NOTICEABLE. It now borrows the accent
+   orange from "Choose bit ...", which is the other "what am I working on"
+   control, so the two look like a pair. Same place, same control, still
+   floated, so it costs no height.
+   The label stays BESIDE the field, not above it. Stacking them read better but
+   made the float taller than the banner's own text, and a float that outgrows
+   its box grows the box: two gate cases went over. Beside, it is still free. */
+#ChangeWrap { float: right; margin: 0 0 2px 20px; font-size: 20px; font-weight: 700;
+              color: #b34700; text-transform: uppercase; letter-spacing: 1px; }
+#ChamferSelect { font-size: 28px; max-width: 340px; margin-left: 8px; padding: 2px 8px;
+                 background: #fff; border: 3px solid #f76707; border-radius: 6px;
+                 font-weight: 600; color: #1c2530; text-transform: none;
+                 letter-spacing: normal; }
+.b-add     { background: #e4f5e9; border: 1px solid #57b970; color: #175c2a; }
+.b-add     .ico { background: #2f9e4f; }
+.b-add     .sub { color: #38724a; }
+.b-rebuild { background: #e5f0fb; border: 1px solid #6aa3d8; color: #0f4576; }
+.b-rebuild .ico { background: #1e6db3; }
+.b-rebuild .sub { color: #38678f; }
+.b-teach   { background: #fff7e0; border: 1px solid #d9ad3c; color: #6b4e05; }
+.b-teach   .ico { background: #b8860b; }
+.b-teach   .sub { color: #8a6a17; }
+.b-replace { background: #fdeaea; border: 1px solid #e07575; color: #871b1b; }
+.b-replace .ico { background: #c92a2a; }
+.b-replace .sub { color: #9d4242; }
+
+/* Cut position: one button per preset, each carrying its own depth readout so
+   the choice is made on numbers rather than on a percentage alone.
+   Six of them have to fit the right column's 712px of content width, so the
+   arithmetic is 6 x (108 + 8) = 696 and every one of those margins counts --
+   a trailing margin can wrap the last button onto its own line. */
+.seg { display: inline-block; width: 108px; text-align: center; padding: 10px 0 8px 0;
+       margin-right: 8px; border: 1px solid #b6bec6; border-radius: 10px;
+       background: #fbfcfd; cursor: pointer; }
+.seg .p { display: block; font-size: 27px; color: #223; }
+.seg .d { display: block; font-size: 20px; color: #778; margin-top: 2px; }
+.seg.sel { background: #f76707; border-color: #d95a04; box-shadow: 0 2px 5px rgba(217,90,4,.35); }
+.seg.sel .p { color: #fff; font-weight: 700; }
+.seg.sel .d { color: #ffe1c7; }
+
+.modecap { font-size: 22px; color: #667; display: block; margin-top: 6px; }
+#ChartWrap { border: 1px solid #e2e6ea; border-radius: 8px; background: #fff; margin-top: 4px; }
+#SecWrap { border: 1px solid #e2e6ea; border-radius: 8px; background: #fff; margin-top: 6px; }
+#BlockMsg { color: #b00000; font-size: 26px; padding: 24px; display: none; }
+/* Waiting for the operator is not a problem, so it must not look like one.
+   Red is reserved for the one message here that IS a fault: a chamfer too big
+   to cut safely. Before a bit or a size is entered nothing is wrong yet. */
+#BlockMsg.wait { color: #5a6672; }
+#DepthWarn { color: #b00000; font-size: 24px; margin: 10px 0 4px 0; }
+#HiddenNoteRow { font-size: 22px; color: #b00000; margin-bottom: 12px; }
+#HelpLink { color: #0066cc; cursor: pointer; text-decoration: underline; font-size: 25px; }
+#HelpBody { display: none; border: 1px solid #e0d6a8; background: #fffbe6;
+            border-radius: 8px; padding: 20px; font-size: 22px; margin-top: 10px; }
+#HelpBody li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div id="Fit">
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.8.0</span>
+   <input type="button" name="ToolChooseButton" id="ToolChooseButton"
+          value="Choose bit ..." class="ToolPicker">
+   <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
+ </div>
+ <div id="Scroll">
+  <div id="ColL">
+    <div id="Banner" class="b-add">
+      <span class="ico" id="BannerIcon">+</span>
+      <span id="ChangeWrap">Change:
+        <select id="ChamferSelect" name="ChamferSelect"></select>
+      </span>
+      <span id="BannerHead">&nbsp;</span>
+      <div class="sub" id="BannerSub">&nbsp;</div>
+    </div>
+    <div id="HiddenNoteRow" style="display:none"></div>
+    <div class="card">
+      <div class="cardh">Chamfer</div>
+      <div class="row" id="ModeRow" style="display:none">
+        <label>Size is a:</label>
+        <span id="ModeGroup">
+          <label><input type="radio" name="ModeRadio" value="setback"> Setback</label>
+          <label><input type="radio" name="ModeRadio" value="face"> Face</label>
+          <label><input type="radio" name="ModeRadio" value="leg"> Leg</label>
+        </span>
+        <span class="modecap" id="ModeCaption"></span>
+      </div>
+      <div class="row"><label id="SizeLabel">Chamfer size (in):</label>
+        <input type="text" id="Size" name="Size" value="0.020"></div>
+      <div class="row"><label id="StartLabel">Start depth (in):</label>
+        <input type="text" id="StartDepth" name="StartDepth" value="0"></div>
+      <div class="row" id="SideRow">
+        <label>Chamfer side:</label>
+        <span id="SideGroup">
+          <label><input type="radio" name="SideRadio" value="auto" checked> Auto</label>
+          <label><input type="radio" name="SideRadio" value="outside"> Outside</label>
+          <label><input type="radio" name="SideRadio" value="inside"> Inside</label>
+        </span>
+      </div>
+      <div class="row"><span id="HelpLink">Help &#9656;</span>
+        <div id="HelpBody">
+          <b>The selection decides.</b> EdgeBreaker looks at what you have selected and
+          opens ready to do the obvious thing &mdash; the banner at the top says which,
+          and you can always change it with the <b>Change</b> dropdown.
+          <ul>
+            <li><b>Green &mdash; adding.</b> You selected shapes no chamfer uses. A new
+                chamfer is created; nothing existing is touched.</li>
+            <li><b>Blue &mdash; rebuilding.</b> You selected shapes an existing chamfer was
+                built from, so that chamfer is rebuilt with its own size, side and cut
+                position already loaded. Selecting <i>some</i> of them is enough.</li>
+            <li><b>Blue with nothing selected.</b> The chamfer is rebuilt from the shapes it
+                remembers. Click a chamfer's toolpath in the Toolpaths list first to say
+                which one; otherwise it is the newest.</li>
+            <li><b>Amber &mdash; teaching.</b> That chamfer doesn't know which shapes it was
+                built from (it was made before v1.5.0, or its shapes have been moved or
+                edited). Your selection becomes its shapes.</li>
+            <li><b>Red &mdash; replacing.</b> You picked a chamfer while holding different
+                shapes. Its offsets and toolpath are removed and rebuilt on the new ones.
+                This cannot be undone.</li>
+          </ul>
+          <b>How it remembers:</b> each chamfer stores its shapes and settings on its own
+          toolpath, so it travels inside the job file. <b>Save the job</b> to keep it. Delete
+          a chamfer's toolpath and it is forgotten &mdash; which is also how you free its
+          number.<br><br>
+          <b>Chamfers made before v1.5.0</b> are adopted: they keep their number and their
+          size, but not their shapes, so the first rebuild is an amber one. That rebuild also
+          renames their layer and toolpath to the EdgeBreaker names.<br><br>
+          <b>Adding a bit:</b> there is nothing to add here. Bits come from Aspire's own tool
+          database, so any V-bit you have defined is offered when you press <b>Choose bit</b>,
+          and its angle, diameter, feeds, speeds and tool number are used exactly as the
+          database has them.
+          <ul>
+            <li>If <b>Select</b> is greyed out with a bit highlighted, that bit has no feeds
+                and speeds for the machine named at the top of that dialog. Press <b>Copy</b>
+                under &ldquo;Copy Settings From&rdquo;, then <b>Apply</b>.</li>
+            <li>To change a chamfer's feeds and speeds, edit the bit in the tool database
+                &mdash; not this gadget.</li>
+          </ul>
+          <b>Chamfer side:</b> <b>Auto</b> offsets part outlines outward and holes inward
+          &mdash; right when you select an outline together with its holes. It cannot
+          recognize a pocket edge or a hole selected on its own: pick <b>Inside</b> for those.
+          <b>Outside</b> forces every selected vector to chamfer on its outer side.<br><br>
+          <b>Start depth:</b> how far <b>below the top of the stock</b> the edge sits &mdash;
+          a pocket floor, a second level, a skimmed top. Leave it at <b>0</b> for an edge at
+          the top, which is the usual case. It does not change the chamfer itself, only how
+          far down the whole cut happens, so the machine reaches <b>start + depth</b> into the
+          material. Each chamfer remembers its own start depth, and a <b>new</b> chamfer always
+          opens at 0 &mdash; yesterday's pocket can never carry a quarter inch into today's
+          job.<br><br>
+          <b>Cut position:</b> which part of the flute does the cutting. <b>0%</b> is as near
+          the tip as is safe, <b>100%</b> as near the shoulder. Every position cuts the same
+          chamfer &mdash; all that changes is how deep the bit goes and which part of it wears.
+          The depth under each button is what the toolpath will use.<br><br>
+          <b>Depth vs stock:</b> a shallow-angle bit has to plunge a long way to reach a small
+          chamfer, so the cut can end up deeper than the material. If it does, a red line
+          under the positions says so and names one that fits. It counts the start depth too,
+          so what it measures is the total reach. Cutting nearer the tip is
+          shallower, but if the tip isn't perfectly sharp, its flat widens the chamfer
+          slightly &mdash; cut a touch shallower to compensate. The warning never stops you;
+          it is based on the material thickness in Job Setup, and stays quiet if that is not
+          set.<br><br>
+          <b>Features too narrow to chamfer:</b> a chamfer needs room on both sides of the
+          edge. Where there isn't any &mdash; a thin neck, a small counter inside a letter
+          &mdash; that vector is <i>skipped</i> rather than approximated, and the summary at
+          the end says how many. The skipped ones are the vectors with no orange offset beside
+          them.<br><br>
+          Each chamfer owns a layer <b>EdgeBreaker - Offset 01</b>, <b>02</b>, &hellip; and a
+          toolpath tagged <b>[EdgeBreaker 01]</b>, <b>02</b>, &hellip;. A run clears and
+          rebuilds only its own number. Gadget deletions cannot be undone &mdash; never keep
+          your own work on one of those layers. To keep a chamfer toolpath for good, rename it
+          so the tag is gone and the gadget will leave it alone forever.
+        </div>
+      </div>
+    </div>
+  </div><div id="ColR">
+    <div class="card">
+      <div class="cardh">Cut position on flute</div>
+      <div class="row" id="Presets">
+        <div class="seg" data-pct="0"><span class="p">0%</span><span class="d">&nbsp;</span></div><div
+             class="seg" data-pct="20"><span class="p">20%</span><span class="d">&nbsp;</span></div><div
+             class="seg" data-pct="40"><span class="p">40%</span><span class="d">&nbsp;</span></div><div
+             class="seg" data-pct="60"><span class="p">60%</span><span class="d">&nbsp;</span></div><div
+             class="seg sel" data-pct="80"><span class="p">80%</span><span class="d">&nbsp;</span></div><div
+             class="seg" data-pct="100"><span class="p">100%</span><span class="d">&nbsp;</span></div>
+      </div>
+      <div id="DepthWarn" style="display:none"></div>
+      <div id="ChartWrap">
+        <div id="BlockMsg"></div>
+        <!-- overflow="hidden" is LOAD-BEARING, not tidiness. Trident paints SVG
+             text correctly but measures it in unscaled viewBox units and does
+             not clip it to the viewport, so a label near an edge leaks into the
+             ancestor's scroll size and the dialog opens with BOTH scrollbars.
+             Measured live 2026-07-27: #Scroll 2520x785 against a 1781x749 client
+             box; hiding this element's 30 children collapsed it to 1798x766, and
+             revealing them one at a time named the two culprits - "0% · tip
+             margin" (all 739px of the width) and the "selected 100% · ..." line
+             at y=296 (the 36px of height). The attribute cleared both. Chrome
+             clips SVG by default, so the layout gate can never see this - the
+             rule is enforced in the gate's source check instead.
+             Width in PIXELS for the same reason of not trusting Trident's SVG
+             sizing: 710 = #ColR 770, less the card's 2px border + 56px padding,
+             less ChartWrap's 2px border. Keep this in step with those boxes. -->
+        <svg id="Chart" viewBox="0 0 1000 300" width="710" height="240" overflow="hidden" style="display:block"></svg>
+      </div>
+      <!-- v1.7.0: the run receipt's section view, reflowed wide-and-short to
+           fit the right column's measured 137px of headroom. Same drawing,
+           same letters (W, D, G, S), but LIVE: it redraws as the numbers are
+           typed, which is when it is worth something.
+           overflow="hidden" for the same Trident reason as the chart above.
+           1000x148 at 710x105 is a uniform 0.71 scale -- keep the two in step
+           or the drawing letterboxes and the constants stop meaning pixels. -->
+      <div id="SecWrap">
+        <svg id="Sec" viewBox="0 0 1000 148" width="710" height="105" overflow="hidden" style="display:block">
+          <defs>
+            <pattern id="hatch" width="14" height="14" patternTransform="rotate(45)"
+                     patternUnits="userSpaceOnUse">
+              <line x1="0" y1="0" x2="0" y2="14" stroke="#c8cfd6" stroke-width="3"/>
+            </pattern>
+          </defs>
+          <!-- Everything drawn goes in here, so redrawing can empty this group
+               without taking the <defs> above (and the hatch) with it. -->
+          <g id="SecG"></g>
+        </svg>
+      </div>
+    </div>
+  </div>
+ </div>
+
+  <div id="Bar">
+    <input id="ButtonOK" name="ButtonOK" type="button" value="OK" class="k-add">
+    <input id="ButtonCancel" name="ButtonCancel" type="button" value="Cancel">
+    <span id="Summary">&nbsp;</span>
+  </div>
+</div>
+
+  <!-- Lua -> HTML at open: the bit this run starts on, as real tool-library
+       values. Empty means no bit has ever been picked on this machine. -->
+  <input type="hidden" id="Units" name="Units" value="">
+  <input type="hidden" id="HiddenNote" name="HiddenNote" value="">
+  <input type="hidden" id="BitName" name="BitName" value="">
+  <input type="hidden" id="ToolAngle" name="ToolAngle" value="">
+  <input type="hidden" id="ToolDiameter" name="ToolDiameter" value="">
+  <!-- Lua -> HTML while the dialog is OPEN: the picker callback writes
+       "angle|diameter" here with UpdateLabelField and the poll below reads it.
+       Numbers only: Aspire's buddy label carries the NAME, so Lua never writes
+       a character the operator sees and nothing has to be HTML-escaped. -->
+  <span id="BitGeom" style="display:none"></span>
+  <input type="hidden" id="Thickness" name="Thickness" value="">
+  <!-- v1.5.0: what the selection MEANS. Chamfers carries one seven-field record
+       per chamfer (slot|label|relation|size|mode|side|percent); Kind is the
+       state the dialog opens in; BannerFacts the counts it quotes. -->
+  <input type="hidden" id="Chamfers" name="Chamfers" value="">
+  <input type="hidden" id="Kind" name="Kind" value="add">
+  <input type="hidden" id="BannerFacts" name="BannerFacts" value="">
+  <!-- HTML -> Lua round trip: the user's choices, read back after OK -->
+  <input type="hidden" id="Mode" name="Mode" value="setback">
+  <input type="hidden" id="Side" name="Side" value="auto">
+  <input type="hidden" id="Percent" name="Percent" value="80">
+  <input type="hidden" id="Slot" name="Slot" value="1">
+  <input type="hidden" id="KindOut" name="KindOut" value="add">
+
+<script type="text/javascript">
+// The layout is authored at ONE size -- the viewport of an 1800x1000 window --
+// and scaled down to whatever window Lua opened (CO.dialog_size picks a smaller
+// one on smaller screens). Scaling is uniform, so a layout that fits the design
+// size fits every smaller window too; that is why tests\check-dialog-layout.js
+// only has to check the design size. Keep DESIGN_W/H in step with WIN_W/H there
+// (they are the window less the 2x50px frame).
+//
+// `zoom` is used rather than a CSS transform because Trident supports it (the
+// radio buttons already rely on it) and it reflows text properly. #Fit is then
+// given the window size divided by the scale, so it still fills the window.
+var DESIGN_W = 1798, DESIGN_H = 950;
+function fitToWindow() {
+  var fit = document.getElementById("Fit");
+  // body, NOT documentElement: on the root element clientWidth/Height report the
+  // browser viewport, which tests\check-dialog-layout.js deliberately overrides
+  // by pinning html/body to Aspire's real viewport. body reads the pinned box in
+  // the test and the true window in Aspire (body is height:100%, margin 0).
+  var w = document.body.clientWidth;
+  var h = document.body.clientHeight;
+  if (!fit || !w || !h) return;                 // nothing sane to scale against
+  var z = Math.min(1, w / DESIGN_W, h / DESIGN_H);
+  fit.style.zoom = z;
+  fit.style.width  = Math.floor(w / z) + "px";
+  fit.style.height = Math.floor(h / z) + "px";
+}
+fitToWindow();
+
+// ============================================================
+// Mirror of CO geometry (gadget/EdgeBreaker/EdgeBreaker.lua) — preview
+// only. Lua recomputes authoritatively on OK. Ported to ES5 (var, no
+// destructuring/arrow-fns/template-literals) because HTML_Dialog renders in
+// an IE9-class Trident engine that does not support ES6 syntax; the math is
+// an unmodified, faithful copy of the brief's functions.
+// ============================================================
+// PRESETS must stay in step with CO.PRESETS in EdgeBreaker.lua -- Lua validates
+// a remembered percent against its own list, so a value only this page offers
+// would be silently replaced by the default on the next run.
+var SHOULDER_MARGIN = 0.90, TIP_MARGIN = 0.15, PRESETS = [0,20,40,60,80,100];
+function f4(x){ return (Math.round(x*10000 + 1e-6)/10000).toFixed(4); }
+// f4 pads to four decimals so the chart's columns line up. A sentence reads
+// better without the padding: 0.75, not 0.7500.
+function fnum(x){ return f4(x).replace(/0+$/, "").replace(/\.$/, ""); }
+function halfAngle(inclDeg){ return (inclDeg/2) * Math.PI/180; }
+function wFromSize(mode, size, a){
+  if (mode==="setback") return size;
+  if (mode==="face")    return size*Math.sin(a);
+  if (mode==="leg")     return size*Math.tan(a);
+}
+function safeBand(dia, W, a){
+  var r=dia/2;
+  return { g_lo: TIP_MARGIN*r, g_hi: SHOULDER_MARGIN*r - W, d_max: r/Math.tan(a) };
+}
+function solve(percent, dia, W, a){
+  var band=safeBand(dia,W,a);
+  var g=band.g_lo + (percent/100)*(band.g_hi-band.g_lo);
+  var d=(W+g)/Math.tan(a);
+  return { g: g, d: d, band_lo: g/Math.tan(a), band_hi: d, standoff: g };
+}
+
+var UNIT = "in";   // replaced by the Units field when Lua drives the dialog
+// Zero, not 90/0.25. The dialog can now open before any bit has been chosen,
+// and a default angle would draw a confident chart, five preset depths and a
+// section view for a bit nobody picked. haveBit is what everything downstream
+// keys off; it goes true only when both real library values arrive.
+var currentAngle = 0, currentDia = 0, haveBit = false;
+var currentMode = "setback";
+var currentPercent = 80;
+var stockThickness = NaN;   // from Lua; NaN means the job did not say
+var startDepth = 0;   // how far below the stock top the edge sits; 0 = at the top
+
+// v1.5.0 state. CHAMFERS is the parsed dropdown, FACTS the banner's counts,
+// STATE the banner currently on screen (and the value Lua reads back).
+var CHAMFERS = [], FACTS = { sel: 0, excluded: [], mem: 0 }, STATE = "add";
+
+function el(id) { return document.getElementById(id); }
+
+// "slot|label|relation|size|mode|side|percent" records joined by ";". Anything
+// that does not split into seven fields is dropped rather than guessed at: a
+// half-parsed record would aim a rebuild at the wrong chamfer.
+function parseChamfers() {
+  var raw = el("Chamfers").value;
+  var out = [];
+  if (!raw) return out;
+  var rows = raw.split(";");
+  for (var i = 0; i < rows.length; i++) {
+    var f = rows[i].split("|");
+    if (f.length < 7) continue;
+    out.push({ slot: f[0], label: f[1], relation: f[2],
+               size: f[3], mode: f[4], side: f[5], percent: f[6] });
+  }
+  return out;
+}
+
+// "sel=2;excluded=1:2,3:1;mem=4"
+function parseFacts() {
+  var out = { sel: 0, excluded: [], mem: 0 };
+  var raw = el("BannerFacts").value;
+  if (!raw) return out;
+  var parts = raw.split(";");
+  for (var i = 0; i < parts.length; i++) {
+    var eq = parts[i].indexOf("=");
+    if (eq === -1) continue;
+    var k = parts[i].substring(0, eq), v = parts[i].substring(eq + 1);
+    if (k === "sel") out.sel = parseInt(v, 10) || 0;
+    else if (k === "mem") out.mem = parseInt(v, 10) || 0;
+    else if (k === "excluded" && v) {
+      var pairs = v.split(",");
+      for (var j = 0; j < pairs.length; j++) {
+        var c = pairs[j].split(":");
+        if (c.length === 2) out.excluded.push({ slot: c[0], count: parseInt(c[1], 10) || 0 });
+      }
+    }
+  }
+  return out;
+}
+
+// What picking THIS chamfer would mean, given what is selected. Lua inferred
+// the opening state; this is the same rule applied to a later change of mind.
+// With nothing selected there is nothing to compare against, so a chamfer that
+// remembers shapes recalls them and one that does not cannot be built at all —
+// the amber banner says so, and Lua refuses if OK is pressed anyway.
+function stateFor(rec) {
+  if (!rec) return "add";
+  if (FACTS.sel === 0) return rec.size !== "" ? "recall" : "teach";
+  if (rec.relation === "new") return "add";
+  if (rec.relation === "match") return "rebuild";
+  if (rec.relation === "nomem") return "teach";
+  return "replace";
+}
+
+function shapesPhrase(n) { return n + (n === 1 ? " shape" : " shapes"); }
+
+// Which other chamfers this run leaves alone -- the reassurance half of the
+// banner, and the only place the user is told that a rebuild is surgical.
+function othersPhrase(slot) {
+  var others = [];
+  for (var i = 0; i < CHAMFERS.length; i++) {
+    if (CHAMFERS[i].relation !== "new" && CHAMFERS[i].slot !== slot)
+      others.push(CHAMFERS[i].slot);
+  }
+  if (others.length === 0) return "";
+  var head = "Chamfer" + (others.length > 1 ? "s " : " ");
+  if (others.length === 1) return head + others[0] + " stays as it is.";
+  return head + others.slice(0, -1).join(", ") + " and " + others[others.length - 1] +
+         " stay as they are.";
+}
+
+function excludedPhrase() {
+  if (FACTS.excluded.length === 0) return "";
+  var bits = [];
+  for (var i = 0; i < FACTS.excluded.length; i++) {
+    bits.push(FACTS.excluded[i].count + " already belong" +
+              (FACTS.excluded[i].count === 1 ? "s" : "") +
+              " to Chamfer " + FACTS.excluded[i].slot);
+  }
+  return " " + bits.join(", ") + " — leaving them out.";
+}
+
+// The banner, the OK button and the KindOut field are one decision, so they
+// are set in one place. state is also what Lua reads back: it is the state the
+// user could actually SEE when they pressed OK, not the one inferred on open.
+function setBanner(state) {
+  STATE = state;
+  var rec = currentRecord();
+  var slot = rec ? rec.slot : "";
+  var b = el("Banner"), head = el("BannerHead"), sub = el("BannerSub");
+  var ok = el("ButtonOK"), icon = el("BannerIcon");
+  var cls = "b-add", mark = "+", h = "", s = "", okLabel = "OK";
+
+  if (state === "add") {
+    cls = "b-add"; mark = "+";
+    h = "<b>Adding Chamfer " + slot + "</b> — " + shapesPhrase(FACTS.sel) + " selected";
+    s = "Nothing existing is touched." + excludedPhrase() + " " + othersPhrase(slot);
+    okLabel = "OK — add Chamfer " + slot;
+  } else if (state === "rebuild") {
+    cls = "b-rebuild"; mark = "↻";
+    h = "<b>Rebuilding Chamfer " + slot + "</b> — its " + shapesPhrase(FACTS.sel) + " selected";
+    s = "Loaded Chamfer " + slot + "'s own size, side and cut position. " + othersPhrase(slot);
+    okLabel = "OK — rebuild Chamfer " + slot;
+  } else if (state === "recall") {
+    cls = "b-rebuild"; mark = "↻";
+    h = "<b>Rebuilding Chamfer " + slot + "</b> — nothing selected";
+    s = "It rebuilds using the " + shapesPhrase(FACTS.mem) + " it remembers. " + othersPhrase(slot);
+    okLabel = "OK — rebuild Chamfer " + slot;
+  } else if (state === "teach") {
+    cls = "b-teach"; mark = "?";
+    if (FACTS.sel === 0) {
+      h = "<b>Chamfer " + slot + "</b> — I don't know which shapes it was built from";
+      s = "Nothing is selected, so there is nothing to rebuild it from. Cancel, select its " +
+          "shapes, and run again.";
+    } else {
+      h = "<b>Rebuilding Chamfer " + slot + "</b> — I don't know which shapes it was built from";
+      s = "Your " + shapesPhrase(FACTS.sel) + " replace" + (FACTS.sel === 1 ? "s" : "") +
+          " them, and this run teaches it. " + othersPhrase(slot);
+    }
+    okLabel = "OK — rebuild Chamfer " + slot;
+  } else {
+    cls = "b-replace"; mark = "!";
+    h = "<b>Replacing Chamfer " + slot + "'s shapes</b> — " +
+        shapesPhrase(FACTS.sel) + " selected that it was not built from";
+    s = "Its offsets and toolpath are removed (this can't be undone) and rebuilt on the NEW " +
+        "shapes. Wanted another chamfer? Pick “New chamfer” above.";
+    okLabel = "OK — replace Chamfer " + slot;
+  }
+  b.className = cls;
+  icon.innerHTML = mark;
+  head.innerHTML = h;
+  sub.innerHTML = s;
+  ok.value = okLabel;
+  ok.className = "k-" + (state === "recall" ? "rebuild" : state);
+  el("KindOut").value = state;
+}
+
+function currentRecord() {
+  var sel = el("ChamferSelect");
+  if (!sel || sel.selectedIndex < 0) return null;
+  return CHAMFERS[sel.selectedIndex] || null;
+}
+
+// The Change dropdown. Lua sends the records and the slot the dialog should
+// open on; Slot and KindOut travel back. The dropdown hides itself if Lua sent
+// nothing, so a failure to seed it can never leave an empty list looking like
+// a real choice.
+function initChamfers() {
+  CHAMFERS = parseChamfers();
+  FACTS = parseFacts();
+  var sel = el("ChamferSelect");
+  var want = el("Slot").value;
+  for (var i = 0; i < CHAMFERS.length; i++) {
+    sel.options[sel.options.length] = new Option(CHAMFERS[i].label, CHAMFERS[i].slot);
+    if (CHAMFERS[i].slot === want) sel.selectedIndex = i;
+  }
+  if (sel.options.length === 0) { el("ChangeWrap").style.display = "none"; return; }
+  el("Slot").value = sel.options[sel.selectedIndex].value;
+  sel.onchange = function () {
+    var rec = currentRecord();
+    el("Slot").value = sel.options[sel.selectedIndex].value;
+    seedFrom(rec);
+    setBanner(stateFor(rec));
+    redraw();
+  };
+}
+
+// A chamfer carries its own settings, so changing chamfer reloads the form the
+// way opening on that chamfer would have. Empty seeds mean "no memory": the
+// form is left exactly as it is rather than reset to arbitrary defaults.
+function seedFrom(rec) {
+  if (!rec) return;
+  if (rec.size !== "") {
+    el("Size").value = rec.size;
+    var p = parseFloat(rec.percent);
+    if (!isNaN(p)) { currentPercent = p; el("Percent").value = p; applyPresetSelection(); }
+    if (rec.mode !== "") { currentMode = rec.mode; el("Mode").value = rec.mode; updateModeVisibility(); }
+    if (rec.side !== "") { el("Side").value = rec.side; applySideDefault(); }
+  }
+}
+
+// Respect defaults Lua seeded into the Mode/Percent hidden fields before
+// ShowDialog() (same convention as CutterName in Inlay Doctor's SetupDialog).
+function initFromDefaults() {
+  var mv = el("Mode").value;
+  if (mv) currentMode = mv;
+  var pv = parseFloat(el("Percent").value);
+  if (!isNaN(pv)) currentPercent = pv;
+  var th = parseFloat(el("Thickness").value);
+  stockThickness = (!isNaN(th) && th > 0) ? th : NaN;
+  applyPresetSelection();
+  applySideDefault();
+}
+
+function applyPresetSelection() {
+  var segs = document.getElementsByClassName("seg");
+  for (var i = 0; i < segs.length; i++) {
+    var p = parseFloat(segs[i].getAttribute("data-pct"));
+    segs[i].className = (p === currentPercent) ? "seg sel" : "seg";
+  }
+}
+
+// The bit Lua seeded the page with, read once at open. Changing it while the
+// dialog is open goes through the #BitGeom poll below, not through here.
+function initBit() {
+  if (el("Units").value !== "") UNIT = el("Units").value;
+
+  var a = parseFloat(el("ToolAngle").value);
+  var d = parseFloat(el("ToolDiameter").value);
+  haveBit = (!isNaN(a) && a > 0 && !isNaN(d) && d > 0);
+  if (haveBit) { currentAngle = a; currentDia = d; }
+
+  // Aspire owns #BitBadgeName -- it fills the picker's buddy label with the
+  // bit's library name and the page must never write it. Only the geometry
+  // beside it belongs to us. With no bit the badge reads "No bit yet" and
+  // nothing else: "Bit No bit yet" says bit twice.
+  el("BitBadgePre").style.display = haveBit ? "" : "none";
+  el("BitBadgeNone").style.display = haveBit ? "none" : "";
+  el("BitBadgeGeom").innerHTML =
+    haveBit ? (currentAngle + "° / " + currentDia + " " + UNIT) : "";
+
+  // Lua sends the template's problem here when the strategy template is
+  // unusable: offsets will still be drawn, but no toolpath is possible.
+  var note = el("HiddenNote").value;
+  if (note) {
+    var nr = el("HiddenNoteRow");
+    nr.style.display = ""; nr.innerHTML = note;
+  }
+  updateModeVisibility();
+}
+
+function updateModeVisibility() {
+  var modeRow = el("ModeRow");
+  var sizeLabel = el("SizeLabel");
+  var cap = el("ModeCaption");
+  // The start depth is a plain length whatever the bit angle is, so unlike the
+  // size label it says the same thing in both branches -- only the unit moves.
+  var startLabel = el("StartLabel");
+  if (startLabel) startLabel.innerHTML = "Start depth (" + UNIT + "):";
+  // No bit yet: which edge of the corner you are dimensioning is a question
+  // about the bit's angle, so it cannot be asked until there is a bit. Unlike
+  // the 90 deg branch below this must NOT force currentMode -- nothing has
+  // been decided here, only deferred until a bit arrives.
+  if (!haveBit) {
+    modeRow.style.display = "none";
+    sizeLabel.innerHTML = "Chamfer size (" + UNIT + "):";
+    cap.innerHTML = "";
+    return;
+  }
+  if (currentAngle === 90) {
+    modeRow.style.display = "none";
+    sizeLabel.innerHTML = "Chamfer size (" + UNIT + "):";
+    currentMode = "setback"; // setback == leg at 90 deg; either mode is equivalent
+    el("Mode").value = currentMode;
+    cap.innerHTML = "";
+  } else {
+    modeRow.style.display = "";
+    sizeLabel.innerHTML = "Size (" + UNIT + "):";
+    var radios = document.getElementsByName("ModeRadio");
+    for (var i = 0; i < radios.length; i++) radios[i].checked = (radios[i].value === currentMode);
+    setModeCaption();
+  }
+}
+
+function setModeCaption() {
+  var cap = el("ModeCaption");
+  if (currentAngle === 90) { cap.innerHTML = ""; return; }
+  // Describes the edge, not the conversion. The arithmetic these used to state
+  // (W = size, size*sin, size*tan) is in wFromSize() where it belongs; what the
+  // operator needs here is which edge of the corner they are dimensioning.
+  if (currentMode === "setback") cap.innerHTML = "across the top face &mdash; how far in from the edge";
+  else if (currentMode === "face") cap.innerHTML = "along the slanted bevel face";
+  else if (currentMode === "leg") cap.innerHTML = "down the side face &mdash; how far below the top";
+}
+
+function initModeRadios() {
+  var radios = document.getElementsByName("ModeRadio");
+  for (var i = 0; i < radios.length; i++) {
+    radios[i].onclick = function() {
+      currentMode = this.value;
+      el("Mode").value = currentMode;
+      setModeCaption();
+      redraw();
+    };
+  }
+}
+
+function initSideRadios() {
+  var radios = document.getElementsByName("SideRadio");
+  for (var i = 0; i < radios.length; i++) {
+    radios[i].onclick = function () { el("Side").value = this.value; };
+  }
+}
+function applySideDefault() {
+  var sv = el("Side").value || "auto";
+  var radios = document.getElementsByName("SideRadio");
+  for (var i = 0; i < radios.length; i++) radios[i].checked = (radios[i].value === sv);
+}
+
+function initPresets() {
+  var segs = document.getElementsByClassName("seg");
+  for (var i = 0; i < segs.length; i++) {
+    segs[i].onclick = function() {
+      currentPercent = parseFloat(this.getAttribute("data-pct"));
+      el("Percent").value = currentPercent;
+      applyPresetSelection();
+      redraw();
+    };
+  }
+}
+
+function svgEl(tag, attrs) {
+  var el2 = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (var k in attrs) el2.setAttribute(k, attrs[k]);
+  return el2;
+}
+
+// The chart builds its text nodes inline; the section has fourteen of them, so
+// it gets the receipt's helper rather than repeating the same four lines.
+function svgText(x, y, size, fill, str, anchor) {
+  var t = svgEl("text", { x: x, y: y, "font-size": size, fill: fill });
+  if (anchor) t.setAttribute("text-anchor", anchor);
+  t.textContent = str;
+  return t;
+}
+
+// The cut, in section. Ported from ReceiptDialog.htm (v1.5.0/v1.6.0) and
+// reflowed for a wide, short frame. The stock is deliberately NOT drawn to the
+// job's real thickness: a 0.02 in chamfer to scale in 0.75 in stock is 3% of
+// the picture and says nothing, and that is the common case. The hatched block
+// means "the material"; the depth-vs-stock question belongs to #DepthWarn above.
+var XE = 380, YT = 44, YB = 132, XL = 20;   // stock corner / block
+function drawSection(W, D, G, ang, S, refD, refG, dia, minD) {
+  var svg = el("SecG");
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  if (isNaN(S) || S < 0) S = 0;
+  if (isNaN(W) || isNaN(D) || isNaN(G) || isNaN(ang) || isNaN(refD) ||
+      isNaN(dia) || isNaN(minD) || W <= 0 || D <= 0 || ang <= 0 || dia <= 0) {
+    svg.appendChild(svgText(500, 86, 24, "#8a94a0", "(section view unavailable)", "middle"));
+    return false;
+  }
+  var a = (ang / 2) * Math.PI / 180;
+  // The frame has to hold the whole reach, not just the cut, or a recessed
+  // chamfer's tip is drawn below the bottom of the picture.
+  //
+  // v1.7.0: scale from the DEEPEST preset (refD/refG), never from the selected
+  // one. Scaling to the selection made depth the limiting term in every real
+  // case, so k came out as exactly 70/(D+S) and the tip was drawn at exactly 70
+  // units deep NO MATTER WHICH PRESET WAS PICKED -- the one quantity the preset
+  // actually changes was the one it could never show. Worse, W was then drawn
+  // at 110*W/(D+S) and so SHRANK as the preset rose, even though the chamfer is
+  // identical at every preset. Stepping 20% -> 100% read as "the bit backs away
+  // from the edge and the chamfer gets smaller"; the truth is "the bit plunges
+  // nearly twice as deep and the chamfer does not change at all" (found live
+  // 2026-07-27, by the operator, on the five presets side by side).
+  //
+  // Keying on the deepest preset makes W and the stock fixed across presets, so
+  // the only thing that moves is the bit -- down and out along the bevel line,
+  // which is exactly what choosing a higher cut position does. The deepest
+  // preset still fills the frame exactly as before, so this can only ever draw
+  // SMALLER than the old code: the worst case for layout is unchanged.
+  //
+  // The bit is drawn as the WHOLE flute, tip to shoulder (see below), so the
+  // air above the stock has to hold however much of it is not buried. That is
+  // largest at the SHALLOWEST preset (minD), and like refD it must not depend
+  // on the selection, or k would start moving per preset again and undo the
+  // paragraph above. `flute` is the cone's depth at full diameter.
+  var flute = (dia / 2) / Math.tan(a);
+  var above = Math.max(flute - minD - S, 1e-9);   // reach above the stock's top
+  var k = Math.min(70 / (refD + S), 130 / Math.max(refG, 1e-9), 110 / W,
+                   (YT - 2) / above);
+  var w = W * k, g = G * k, d = D * k, sy = S * k;
+  var v = w / Math.tan(a);                  // vertical drop of the bevel face
+  var YS = YT + sy;                         // the surface the edge sits on
+  var tipX = XE + g, tipY = YS + d;
+
+  // Stock, with the chamfered corner already taken off it. With a start depth
+  // the block keeps its full height on the left and steps down to the recessed
+  // surface, so the picture says "the top of the stock is up here, the edge is
+  // down there". At S = 0 this is the flat-topped block.
+  var XSTEP = XL + 110;
+  var block = (S > 0)
+    ? XL + "," + YT + " " + XSTEP + "," + YT + " " + XSTEP + "," + YS + " " +
+      (XE - w) + "," + YS + " " + XE + "," + (YS + v) + " " + XE + "," + YB +
+      " " + XL + "," + YB
+    : XL + "," + YT + " " + (XE - w) + "," + YT + " " + XE + "," + (YT + v) +
+      " " + XE + "," + YB + " " + XL + "," + YB;
+  svg.appendChild(svgEl("polygon", { points: block, fill: "#e9edf1" }));
+  svg.appendChild(svgEl("polygon", { points: block, fill: "url(#hatch)" }));
+  if (S > 0) {
+    svg.appendChild(svgEl("line", { x1: XL, y1: YT, x2: XSTEP, y2: YT,
+                                    stroke: "#5d6875", "stroke-width": 3 }));
+    svg.appendChild(svgEl("line", { x1: XSTEP, y1: YT, x2: XSTEP, y2: YS,
+                                    stroke: "#5d6875", "stroke-width": 3 }));
+  }
+  svg.appendChild(svgEl("line", { x1: (S > 0) ? XSTEP : XL, y1: YS, x2: XE - w, y2: YS,
+                                  stroke: "#5d6875", "stroke-width": 3 }));
+  svg.appendChild(svgEl("line", { x1: XE, y1: YS + v, x2: XE, y2: YB,
+                                  stroke: "#5d6875", "stroke-width": 3 }));
+  // In the full-height shelf when there is a step: the band left below the
+  // recessed surface is thin and vanishes entirely as the start depth grows.
+  svg.appendChild(svgText((S > 0) ? (XL + XSTEP) / 2 : 150, YT + 44, 22, "#8a94a0",
+                          "STOCK", "middle"));
+
+  // The bit: the WHOLE flute, tip to shoulder, at the real half-angle.
+  //
+  // It used to be drawn only as far as 12 units above the recessed surface --
+  // i.e. its length was the cut depth plus a sliver. That made the top of the
+  // cutter land ON the material's top face at EVERY preset, which reads as the
+  // shoulder permanently in contact (operator, live 2026-07-27). The truth is
+  // that only the orange bevel touches; everything above it is cone standing in
+  // open air, and how much of the flute is buried is precisely what the cut
+  // position changes. Drawing the real flute says that without a caption: at
+  // 20% the bit stands well clear of the stock, at 100% it is buried nearly to
+  // the shoulder. k already reserves the head room this needs (see above), so
+  // the shoulder cannot be pushed out of the frame.
+  var up = flute * k, dx = up * Math.tan(a), shoulderY = tipY - up;
+  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: tipX - dx, y2: shoulderY,
+                                  stroke: "#4c6ef5", "stroke-width": 4 }));
+  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: tipX + dx, y2: shoulderY,
+                                  stroke: "#4c6ef5", "stroke-width": 4 }));
+  // The shoulder itself. Without it the flanks just stop, and "how close is
+  // this cut to the shoulder limit" -- the question the presets are really
+  // asking -- has nothing to be measured against.
+  svg.appendChild(svgEl("line", { x1: tipX - dx, y1: shoulderY, x2: tipX + dx, y2: shoulderY,
+                                  stroke: "#4c6ef5", "stroke-width": 3 }));
+  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: tipX, y2: shoulderY,
+                                  stroke: "#9aa5b0", "stroke-width": 1.5,
+                                  "stroke-dasharray": "6,5" }));
+  // The chamfer itself -- the one orange line, drawn AFTER the flanks: the
+  // flank is what cuts the facet, so the two lie on top of each other and
+  // whichever goes last is the one you see.
+  svg.appendChild(svgEl("line", { x1: XE - w, y1: YS, x2: XE, y2: YS + v,
+                                  stroke: "#f76707", "stroke-width": 6 }));
+  // Angle arc, labelled OUTSIDE the right flank rather than above the tip: on
+  // a shallow bit the V is only a few units wide and the label lands inside it.
+  // The arc has to be sized to the V it annotates, not fixed. Once presets
+  // stopped renormalising the scale, a low preset draws a genuinely small bit,
+  // and a fixed 46-unit radius then arced clean over the tip and through the W
+  // label above it. Capping it at about half the drawn flank keeps it inside
+  // the V at every preset and angle.
+  var ar = Math.min(46, 0.55 * (tipY - (YS - 12)));
+  var ax = ar * Math.sin(a), ay = ar * Math.cos(a);
+  svg.appendChild(svgEl("path", {
+    d: "M " + (tipX - ax) + " " + (tipY - ay) + " A " + ar + " " + ar + " 0 0 1 " +
+       (tipX + ax) + " " + (tipY - ay),
+    fill: "none", stroke: "#667", "stroke-width": 1.5 }));
+  // The label rides with the tip, and once the section stopped renormalising
+  // per preset (above) a low preset genuinely draws the tip close to the
+  // surface -- impossible before, when every preset was forced to the same
+  // depth. On a shallow bit that lifted this label into the W label's line and
+  // the two ran together (rendered 60 deg / 0.5 dia / S 0.1 at 20%). Floor it
+  // below the surface so it clears W by construction, not by luck: W's text
+  // sits above YS - 12, so a baseline at YS + 14 leaves a gap no bit angle or
+  // preset can close.
+  var angY = Math.max(tipY - ay + 7, YS + 14);
+  svg.appendChild(svgText(tipX + ax + 16, angY, 22, "#667", fnum(ang) + "°"));
+
+  // Dimensions. W above the top face, D on a column clear of both the tip and
+  // the angle label, G on the green line from the bottom of the bevel to the tip.
+  // No tick line for W any more. It marked the bevel's horizontal extent 12
+  // units above the surface, which sat directly under the old centred label;
+  // with the label moved (below) and the flute drawn full length, that tick
+  // became a stray dash floating INSIDE the cutter, connected to nothing. The
+  // orange facet is the thing being dimensioned and the label now sits against
+  // it, so the tick has no work left to do.
+  // The label sits just INSIDE the top face, right-aligned beside the bevel,
+  // rather than centred above it: the air above the bevel now belongs to the
+  // flute (see the bit, above), and a full-length flank runs straight through
+  // where this text used to be. Inside the stock is the only region the cutter
+  // can never reach. A plain white plate goes behind it because the hatching
+  // runs underneath -- Trident has no paint-order, so a stroked text halo is
+  // not available; the plate is sized from the string, which only has to be
+  // generous, not exact.
+  var wtxt = "W " + fnum(W) + " " + UNIT;
+  var wx = XE - w - 10, wy = YS + 28;
+  svg.appendChild(svgEl("rect", { x: wx - (wtxt.length * 12 + 8), y: wy - 20,
+                                  width: wtxt.length * 12 + 8, height: 27,
+                                  fill: "#fff", opacity: 0.92 }));
+  svg.appendChild(svgText(wx, wy, 24, "#334", wtxt, "end"));
+  var DX = Math.max(tipX + 110, 620);
+  svg.appendChild(svgEl("line", { x1: DX, y1: YS, x2: DX, y2: tipY,
+                                  stroke: "#334", "stroke-width": 2, "stroke-dasharray": "4,4" }));
+  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: DX, y2: tipY,
+                                  stroke: "#cdd3d9", "stroke-width": 1.5 }));
+  svg.appendChild(svgText(DX + 12, (YS + tipY) / 2 + 8, 24, "#334",
+                          "D " + fnum(D) + " " + UNIT));
+  // The start depth, measured in the air the step cut away: same letter-plus-
+  // number language as W, D and G, so the drawing needs no legend.
+  if (S > 0) {
+    var SX = XSTEP + 40;
+    svg.appendChild(svgEl("line", { x1: SX, y1: YT, x2: SX, y2: YS,
+                                    stroke: "#334", "stroke-width": 2, "stroke-dasharray": "4,4" }));
+    svg.appendChild(svgEl("line", { x1: XSTEP, y1: YT, x2: SX + 8, y2: YT,
+                                    stroke: "#cdd3d9", "stroke-width": 1.5 }));
+    svg.appendChild(svgEl("line", { x1: XSTEP, y1: YS, x2: SX + 8, y2: YS,
+                                    stroke: "#cdd3d9", "stroke-width": 1.5 }));
+    svg.appendChild(svgText(SX + 14, (YT + YS) / 2 + 8, 24, "#334",
+                            "S " + fnum(S) + " " + UNIT));
+  }
+  svg.appendChild(svgEl("line", { x1: XE, y1: YS + v, x2: tipX, y2: tipY,
+                                  stroke: "#2f9e4f", "stroke-width": 3, "stroke-dasharray": "3,3" }));
+  svg.appendChild(svgText(tipX + 10, tipY + 26, 22, "#2f9e4f", "G " + fnum(G) + " " + UNIT));
+  return true;
+}
+
+// The corner detail: which edge does the size mean?
+//
+// It cannot be answered on the real geometry. The frame above is scaled to the
+// whole flute reach and the chamfer is ~3% of it, so on the operator's 15 deg
+// bit at 0.03 in the orange facet is drawn about 2.5 units wide by 19 tall --
+// smaller than the 22-24 unit text -- and all three edges live inside that
+// sliver. It is WORSE on exactly the bits that offer the choice, because a
+// narrow bit means a deep reach. A feature too small to dimension in place gets
+// a detail at its own scale; that is what this is.
+//
+// Schematic, not a scale model (Tim's ruling 2026-07-27): a true-shape inset at
+// 15 deg is a 1:7.6 sliver whose top edge has nowhere to put a label -- the
+// exact problem it exists to solve. Nothing is hidden by that, because the true
+// angle, the true proportions and every real number are on the drawing beside
+// it. The two straight edges are drawn ~1.6:1 rather than at 45 deg: at 45 they
+// are equal, which is true only of a 90 deg bit, and that is the one case where
+// this never appears. WHICH of them is the longer one flips at 90 -- setback =
+// leg * tan(half angle) -- so an acute bit has the longer leg (1.73x at 60 deg)
+// and an obtuse one the longer setback (1.73x at 120 deg, and 120 and 140 deg
+// marking bits are real). Past 90 the box's width and height swap: the ratio
+// stays a schematic 1.6 either way, but the picture always leans the way the
+// bit does. Drawn the other way it would state the opposite of the truth while
+// the words stayed right, which is worse than drawing nothing.
+//
+// x 800..990 is empty in every case. DX, the D dimension column, is
+// Math.max(tipX + 110, 620); g = G*k <= 130 because k <= 130/refG and
+// G <= refG, so tipX = 380 + g <= 510 and DX is PINNED at 620 for every bit,
+// size, preset and start depth. The D label therefore always starts at x=632
+// and runs about 12.85 units a character (measured with getBBox at the real
+// font, not the 12 a character this comment used to assume). D is printed to
+// four decimals, so under 1000 units it is at most 13 characters -- the longest
+// reachable one is "D 391.6544 mm", a 5 deg bit at 38 dia in mm at 100%, and it
+// ends at 799.1. The inset's own leftmost ink is a little over 840 -- its two
+// labels are centred, so the widest of them reaches left of the 858 material
+// edge -- which leaves 40-odd units of gap, not the 24 the old estimate
+// implied. Provable, not just measured: reaching 840 would take 16 characters,
+// i.e. a six-figure D, and D is capped at 0.9*r/tan(a) -- under 400 units for
+// any real V-bit.
+var IX = 898, IY = 20, IW = 36, IH = 58;
+function drawModeInset(mode, size, angle, sizeText) {
+  var svg = el("SecG");
+  // Obtuse bits have the proportions the other way round (see above), so the
+  // box's width and height swap over 90 deg. IX and IY do not move: the inset
+  // is pinned to the top right of the frame, and only its far corner travels.
+  var w = (angle > 90) ? IH : IW, h = (angle > 90) ? IW : IH;
+  var XC = IX + w, YL = IY + h;      // the original sharp corner is (XC, IY)
+  var L = IX - 40, BOT = YL + 16;    // how far the material runs left and down
+
+  // The material with its corner already broken -- same language as the block
+  // in drawSection, same hatch from the shared <defs>, so the two read as the
+  // same stuff at two scales.
+  var mat = L + "," + IY + " " + IX + "," + IY + " " + XC + "," + YL + " " +
+            XC + "," + BOT + " " + L + "," + BOT;
+  svg.appendChild(svgEl("polygon", { points: mat, fill: "#e9edf1" }));
+  svg.appendChild(svgEl("polygon", { points: mat, fill: "url(#hatch)" }));
+
+  // The three edges. Setback and leg bound the corner that was REMOVED -- they
+  // are air, so they are dashed; the bevel is real material and is solid. The
+  // selected one is drawn solid and orange whichever it is: a dashed highlight
+  // reads as tentative, and orange is the colour the real facet already uses.
+  var edges = {
+    setback: { x1: IX, y1: IY, x2: XC, y2: IY, dash: "5,4" },
+    leg:     { x1: XC, y1: IY, x2: XC, y2: YL, dash: "5,4" },
+    face:    { x1: IX, y1: IY, x2: XC, y2: YL, dash: null }
+  };
+  var order = ["setback", "leg", "face"], i, k, e, at;
+  for (i = 0; i < order.length; i++) {
+    k = order[i]; e = edges[k];
+    at = { x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2,
+           stroke: (k === mode) ? "#f76707" : "#9aa5b0",
+           "stroke-width": (k === mode) ? 6 : 2 };
+    if (e.dash && k !== mode) at["stroke-dasharray"] = e.dash;
+    svg.appendChild(svgEl("line", at));
+  }
+
+  // The mode's own WORD, not a W/F/L letter: tying "Leg" to an edge is the
+  // whole point, and a letter would need a legend of its own. The number under
+  // it is what the operator typed -- in Face and Leg mode that number appears
+  // nowhere else on this drawing, which is half the reason the inset exists.
+  var XM = (L + XC) / 2;
+  var word = svgText(XM, 114, 22, "#f76707", mode.toUpperCase(), "middle");
+  word.setAttribute("font-weight", "600");
+  svg.appendChild(word);
+  // Drawn as TYPED, not through fnum: fnum rounds to four decimals, so a 1/32
+  // chamfer entered as 0.03125 came back as 0.0313 -- the one number on this
+  // dialog whose whole claim is that it is the operator's own is the one that
+  // must not be rounded. (fnum stays right for W, D, G and S: those are results,
+  // not something anybody typed.) A blank or half-typed field falls back to the
+  // rounded value rather than drawing whatever is in the box.
+  var typed = (sizeText || "").replace(/^\s+|\s+$/g, "");
+  var shown = /^\d*\.?\d+$/.test(typed) ? typed : fnum(size);
+  svg.appendChild(svgText(XM, 138, 24, "#334", shown + " " + UNIT, "middle"));
+}
+
+// Depth versus stock. The bit's own limit is already handled by safeBand, which
+// caps depth at 90% of where the cone reaches full diameter; this is the
+// quantity the gadget never used to look at -- cutting past the material into
+// whatever is holding it.
+//
+// Advisory, never blocking: the material block's thickness is only as accurate
+// as whoever set it. Names the DEEPEST position that still fits, not the
+// shallowest, because low positions are the ones exposed to tip-flat widening.
+// `rows` ascends by percent, so the last fit found is the highest.
+// v1.6.0: the quantity measured is now start + cut, the total reach into the
+// stock, not the plunge depth alone.
+function depthWarning(rows, selectedDepth) {
+  if (isNaN(stockThickness)) return "";
+  var total = startDepth + selectedDepth;
+  if (total <= stockThickness) return "";
+  var fits = null;
+  for (var i = 0; i < rows.length; i++) {
+    if (startDepth + rows[i].d <= stockThickness) fits = rows[i];
+  }
+  // With a start depth the plunge depth alone no longer explains the number:
+  // "past your 0.5 in stock" is baffling beside a 0.1 in chamfer unless the
+  // sentence also says where the other 0.25 came from. This is accuracy, not
+  // escalation -- the warning is no louder, and at startDepth 0 every string
+  // below is byte-identical to v1.5.0's.
+  var lead = (startDepth > 0)
+    ? "Reaches " + fnum(total) + " " + UNIT + " (" + fnum(startDepth) +
+      " start + " + fnum(selectedDepth) + " cut)"
+    : "Cuts " + fnum(selectedDepth) + " " + UNIT + " deep";
+  if (fits) {
+    return lead + " — past your " + fnum(stockThickness) + " " + UNIT + " stock. " +
+           fits.p + "% would fit, at " + fnum(startDepth + fits.d) + " " + UNIT + ".";
+  }
+  var lead0 = (startDepth > 0)
+    ? "Reaches " + fnum(startDepth + rows[0].d) + " " + UNIT + " even at " + rows[0].p + "%"
+    : "Cuts " + fnum(rows[0].d) + " " + UNIT + " deep even at " + rows[0].p + "%";
+  // Name the lever that can actually help. Once the start depth alone reaches
+  // the stock, no bit and no chamfer size can fix it -- "use a wider-angle bit"
+  // is then advice that cannot work, which is worse than no advice at all
+  // (live 2026-07-27: 0.25 start depth on 0.25 stock).
+  var cure = (startDepth >= stockThickness)
+    ? "The start depth alone already reaches it — reduce the start depth."
+    : (startDepth > 0)
+      ? "Use a wider-angle bit, a smaller chamfer, or less start depth."
+      : "Use a wider-angle bit or a smaller chamfer.";
+  return lead0 + " — past your " + fnum(stockThickness) + " " + UNIT +
+         " stock. " + cure;
+}
+
+// How many shapes the run will BUILD, which is not always how many are
+// selected: an add leaves out the ones another chamfer already owns. Lua drops
+// exactly the same ones and only for an add -- deliberately aiming at an
+// existing chamfer means "these shapes, that chamfer" and takes them all -- so
+// the two rules must stay in step. With nothing selected the run rebuilds from
+// what the chamfer remembers.
+function buildCount() {
+  if (FACTS.sel === 0) return FACTS.mem;
+  var n = FACTS.sel;
+  if (STATE === "add")
+    for (var i = 0; i < FACTS.excluded.length; i++) n -= FACTS.excluded[i].count;
+  return n;
+}
+
+// The plain-language one-liner in the button bar: what OK is about to do, in
+// the numbers the user typed rather than the ones the gadget derived. The
+// banner headline above counts the SELECTION ("3 shapes selected", true); this
+// line describes the RUN, so it must promise only what will be built.
+function setSummary(sizeText) {
+  var rec = currentRecord();
+  var verb = (STATE === "add") ? "Will add" :
+             (STATE === "replace") ? "Will replace" : "Will rebuild";
+  var slot = rec ? rec.slot : "";
+  el("Summary").innerHTML = verb + " <b>Chamfer " + slot + "</b> · " +
+    shapesPhrase(buildCount()) + " · <b>" +
+    sizeText + " " + UNIT + "</b> @ " + currentPercent + "% · " +
+    (haveBit ? currentAngle + "° bit" : "no bit yet");
+}
+
+function redraw() {
+  var size = parseFloat(el("Size").value);
+  // Read live, like the size above and unlike stockThickness: Lua sets the
+  // thickness once, but the user types the start depth and the warning has to
+  // follow every keystroke.
+  var sd = parseFloat(el("StartDepth").value);
+  startDepth = (!isNaN(sd) && sd > 0) ? sd : 0;
+  var chart = el("Chart");
+  var blockMsg = el("BlockMsg");
+  var depthWarn = el("DepthWarn");
+  var segs = document.getElementsByClassName("seg");
+  while (chart.firstChild) chart.removeChild(chart.firstChild);
+
+  if (!haveBit || isNaN(size) || size <= 0) {
+    blockMsg.style.display = "block";
+    blockMsg.className = "wait";
+    blockMsg.innerHTML = haveBit ? "Enter a chamfer size to see the cut."
+                                 : "Choose a bit to see the cut.";
+    chart.style.display = "none";
+    depthWarn.innerHTML = ""; depthWarn.style.display = "none";
+    for (var q = 0; q < segs.length; q++) segs[q].children[1].innerHTML = "&nbsp;";
+    setSummary("—");
+    el("SecWrap").style.display = "none";
+    return;
+  }
+
+  var a = halfAngle(currentAngle);
+  var W = wFromSize(currentMode, size, a);
+  var band = safeBand(currentDia, W, a);
+  var ok = band.g_hi > band.g_lo;
+
+  if (!ok) {
+    blockMsg.style.display = "block";
+    blockMsg.className = "";
+    blockMsg.innerHTML = "Chamfer too big for a safe cut with this bit: it would force the " +
+      "cut onto the tip or the shoulder. Use a larger bit or a smaller chamfer.";
+    chart.style.display = "none";
+    depthWarn.innerHTML = ""; depthWarn.style.display = "none";
+    for (var q2 = 0; q2 < segs.length; q2++) segs[q2].children[1].innerHTML = "&nbsp;";
+    setSummary(el("Size").value);
+    el("SecWrap").style.display = "none";
+    return;
+  }
+  blockMsg.style.display = "none";
+  chart.style.display = "block";
+  el("SecWrap").style.display = "";
+
+  // Flute schematic (tip apex bottom -> shoulder top), same layout as the
+  // agreed brainstorm mockup (flute-percentage-5.html), scaled 0-100% across
+  // the bit's SAFE usable band (not the bit's literal physical tip/shoulder).
+  // The flute is drawn to the bit's REAL half-angle: half-width / depth =
+  // tan(a). Fit that true shape into the box (max depth MAXD, max half-width
+  // MAXHW) so a 90 deg bit reads wide-and-shallow and a 30 deg bit reads
+  // narrow-and-deep.
+  var MAXD = 160, MAXHW = 150;
+  var depth = MAXD, halfw = MAXD * Math.tan(a);
+  if (halfw > MAXHW) { depth = MAXHW / Math.tan(a); halfw = MAXHW; }
+  var TIPX = 660, TOPY = 70, TIPY = TOPY + depth, HALFW = halfw;
+  chart.appendChild(svgEl("line", {x1:TIPX,y1:TIPY,x2:TIPX-HALFW,y2:TOPY, stroke:"#4c6ef5", "stroke-width":3}));
+  chart.appendChild(svgEl("line", {x1:TIPX,y1:TIPY,x2:TIPX+HALFW,y2:TOPY, stroke:"#4c6ef5", "stroke-width":3}));
+  chart.appendChild(svgEl("line", {x1:TIPX-HALFW,y1:TOPY,x2:TIPX-HALFW,y2:TOPY-20, stroke:"#4c6ef5", "stroke-width":3}));
+  chart.appendChild(svgEl("line", {x1:TIPX+HALFW,y1:TOPY,x2:TIPX+HALFW,y2:TOPY-20, stroke:"#4c6ef5", "stroke-width":3}));
+  chart.appendChild(svgEl("line", {x1:TIPX-HALFW,y1:TOPY-20,x2:TIPX+HALFW,y2:TOPY-20, stroke:"#4c6ef5", "stroke-width":3}));
+  chart.appendChild(svgEl("line", {x1:TIPX-6,y1:TIPY,x2:TIPX+6,y2:TIPY, stroke:"#4c6ef5", "stroke-width":5}));
+  var tipLbl = svgEl("text", {x:TIPX+16,y:TIPY+7,"font-size":24,fill:"#666"});
+  tipLbl.textContent = "0% · tip margin";
+  chart.appendChild(tipLbl);
+  var topLbl = svgEl("text", {x:TIPX,y:38,"font-size":24,fill:"#666","text-anchor":"middle"});
+  topLbl.textContent = "100% · shoulder limit";
+  chart.appendChild(topLbl);
+
+  // Callouts sit on FIXED evenly-spaced rows, not beside their dot: a 90 deg
+  // flute is only ~150 units deep, so five stacked two-line labels collided.
+  // One line each, highest percent on top, leader line out to the flute.
+  // `deepest` is the section view's scale reference -- see drawSection. It has
+  // to be the largest preset's solve, not the selected one, or the drawing
+  // renormalises on every click and hides the very change being made.
+  var selected = null, deepest = null, shallowest = null, rows = [];
+  // Six rows now, and the stack is bounded below by the two captions at y=270
+  // and y=296: the last row's baseline is ROW0 + 5*ROWH + 7 = 246, which clears
+  // the caption's ascender. Re-check both if a preset is ever added again.
+  var ROW0 = 44, ROWH = 39, LEADX = 440;
+  for (var i = 0; i < PRESETS.length; i++) {
+    var p = PRESETS[i];
+    var s = solve(p, currentDia, W, a);
+    rows.push({ p: p, d: s.d });
+    // Each cut-position button carries its own depth: the choice is made on
+    // the number that ends up on the toolpath, not on a percentage.
+    if (segs[i]) segs[i].children[1].innerHTML = "D " + f4(s.d);
+    var t = p / 100;
+    var x = TIPX - t * HALFW;
+    var y = TIPY - t * (TIPY - TOPY);
+    var rowY = ROW0 + (PRESETS.length - 1 - i) * ROWH;
+    var isSel = (p === currentPercent);
+    if (isSel) selected = s;
+    if (!deepest || s.d > deepest.d) deepest = s;
+    if (!shallowest || s.d < shallowest.d) shallowest = s;
+    var color = isSel ? "#e03131" : "#f76707";
+    chart.appendChild(svgEl("line", {x1:LEADX,y1:rowY,x2:x,y2:y, stroke:color, "stroke-width":1, opacity:0.45}));
+    chart.appendChild(svgEl("circle", {cx:x,cy:y,r:isSel?8:5,fill:color}));
+    var lbl = svgEl("text", {x:30,y:rowY+7,"font-size":26,fill:color,"font-weight":isSel?"700":"600"});
+    lbl.textContent = p + "%";
+    chart.appendChild(lbl);
+    var nums = svgEl("text", {x:110,y:rowY+7,"font-size":26,fill:isSel?"#333":"#777"});
+    nums.textContent = "D " + f4(s.d) + "  ·  G " + f4(s.g);
+    chart.appendChild(nums);
+  }
+
+  // Pinned to the bottom of the viewBox, not to TIPY -- TIPY now moves with
+  // the bit angle (a 90 deg flute is shallow) and the caption should not.
+  // Centred on the viewBox (500), NOT on the flute: centred on the flute the
+  // longer of the two captions ran off the right edge and was clipped.
+  var cap = svgEl("text", {x:500,y:270,"font-size":24,fill:"#666","text-anchor":"middle"});
+  cap.textContent = currentAngle + "° bit, " + currentDia + " " + UNIT +
+    " dia, chamfer size " + size + " " + UNIT;
+  chart.appendChild(cap);
+
+  var selTxt = svgEl("text", {x:500,y:296,"font-size":24,fill:"#333","text-anchor":"middle","font-weight":"600"});
+  selTxt.textContent = "selected " + currentPercent + "%  ·  D " + f4(selected.d) +
+    "  ·  G " + f4(selected.g) +
+    "  ·  contact band " + f4(selected.band_lo) + "–" + f4(selected.band_hi);
+  chart.appendChild(selTxt);
+
+  // The same numbers the caption above just quoted, drawn. `selected` is
+  // resolved in the preset loop and is what the toolpath will actually cut.
+  var drew = drawSection(W, selected.d, selected.g, currentAngle, startDepth,
+                         deepest.d, deepest.g, currentDia, shallowest.d);
+  // Only when there is a choice to explain. At 90 deg setback and leg are the
+  // same quantity, updateModeVisibility() hides the row and forces setback, and
+  // an inset would be answering a question nobody asked.
+  if (drew && currentAngle !== 90)
+    drawModeInset(currentMode, size, currentAngle, el("Size").value);
+
+  // Last, because it depends on the selected preset resolved in the loop above.
+  var msg = depthWarning(rows, selected.d);
+  depthWarn.innerHTML = msg;
+  depthWarn.style.display = msg ? "block" : "none";
+  setSummary(el("Size").value);
+}
+
+var attempts = 0;
+var t = setInterval(function() {
+  attempts++;
+  if (el("Units").value || el("BitName").value || attempts > 10) {
+    clearInterval(t);
+    initChamfers();
+    initFromDefaults();
+    initBit();
+    initModeRadios();
+    initSideRadios();
+    initPresets();
+    // There is no event to hook: Aspire writes into the live page and tells
+    // nobody. So watch the carrier. 250ms is imperceptible against a person
+    // crossing a modal tool-library dialog, and this is the whole mechanism the
+    // single-dialog design rests on.
+    //
+    // Cancelling Aspire's picker does not fire the callback at all (probe Q5), so
+    // this span never goes back to empty and the chart holds by construction --
+    // there is deliberately no blanking branch here.
+    var lastGeom = el("BitGeom").innerHTML;
+    setInterval(function () {
+      var now = el("BitGeom").innerHTML;
+      if (now === lastGeom || !now) return;
+      lastGeom = now;
+      var parts = now.split("|");
+      var a = parseFloat(parts[0]), d = parseFloat(parts[1]);
+      if (isNaN(a) || a <= 0 || isNaN(d) || d <= 0) return;
+      currentAngle = a; currentDia = d; haveBit = true;
+      el("BitBadgePre").style.display = "";
+      el("BitBadgeNone").style.display = "none";
+      el("BitBadgeGeom").innerHTML = currentAngle + "° / " + currentDia + " " + UNIT;
+      // updateModeVisibility BEFORE redraw: the mode row is shown or hidden by
+      // angle and redraw() never touches it, so a 90 -> 60 pick would otherwise
+      // redraw a chart for a bit whose size mode the operator cannot reach.
+      updateModeVisibility();
+      redraw();
+    }, 250);
+    // __FORCE_STATE is a test-only hook (tests\check-dialog-layout.js) so the
+    // layout gate can render every banner state, including ones no seeded
+    // field combination would produce.
+    setBanner(window.__FORCE_STATE || el("Kind").value || "add");
+    var toggleHelp = function() {
+      var h = el("HelpBody");
+      h.style.display = (h.style.display === "block") ? "none" : "block";
+    };
+    el("HelpLink").onclick = toggleHelp;
+    el("Size").onkeyup = redraw;
+    el("Size").onchange = redraw;
+    el("StartDepth").onkeyup = redraw;
+    // A blank start depth means "the edge is at the top of the stock", which
+    // is 0, not an error. onchange fires on blur, which is the last moment
+    // before OK can be pressed -- so Lua reads a number either way.
+    el("StartDepth").onchange = function () {
+      if (this.value.replace(/^\s+|\s+$/g, "") === "") this.value = "0";
+      redraw();
+    };
+    redraw();
+  }
+}, 100);
+</script>
+</body>
+</html>
