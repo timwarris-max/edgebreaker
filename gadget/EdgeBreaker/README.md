@@ -67,6 +67,27 @@ any chamfer in the job (or "New chamfer"), and the banner re-colours to match.
 single-click a chamfer's toolpath in the Toolpaths list first, which names the
 one you mean. A selection always outranks a highlighted toolpath.
 
+## Where on the flute you cut
+
+EdgeBreaker doesn't cut on your line. It draws a new line a little way out into
+the waste and cuts that one — and **`G` is how far out**. The dialog calls it the
+standoff.
+
+That gap is the whole trick. Push the cut further into the waste and the V-bit has
+to go deeper before its slanted face reaches your edge. Same chamfer, deeper
+plunge, and a higher spot on the flute doing the work.
+
+That's what the **0%–100%** buttons pick. **0%** is the smallest gap — the cut sits
+low, just clear of the tip. **100%** is the largest — up near the top of the flute.
+Cutting high uses fresh, wide flute instead of the tip, which is a point that
+barely cuts and wears out first. You pay for it in depth, and each button shows the
+depth it needs, so take the highest one your bit and your stock can reach.
+
+Both ends of the range are there to keep the cut off the two spots a V-bit cuts
+badly: the tip, and the shoulder where the flute runs out. That's also why a big
+chamfer on a small bit gets refused — the chamfer eats into the top of the range,
+and past a certain size there's nothing left in between.
+
 ## Start depth
 
 **Start depth is how far below the top of the stock the edge sits** — a pocket

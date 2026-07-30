@@ -37,6 +37,7 @@ $LUA    = Join-Path $root "gadget\EdgeBreaker\EdgeBreaker.lua"
 $ORDER = @(
   "How it decides what to build",
   "Notes",
+  "Where on the flute you cut",
   "Start depth",
   "The section view",
   "What a chamfer remembers",
