@@ -121,9 +121,9 @@ numbers, rebuilding from memory when nothing is selected.
 - Edit or move a remembered shape and the gadget stops recognising it (shapes are
   matched by size and position). You get the amber "teach me" banner; rebuilding
   from your selection fixes it.
-- **The bit is the exception.** Aspire gives no way to store a tool identity in
-  text, so each chamfer's bit is remembered in Aspire's own settings **on this
-  PC**, not in the job. Open the same job on another machine and the picker
+- **The bit is the exception.** There's no way to store a tool identity in
+  text, so each chamfer's bit is remembered in the software's own settings **on
+  this PC**, not in the job. Open the same job on another machine and the picker
   offers the last bit you used there, not that chamfer's. Everything else travels.
 
 ## The section view
@@ -177,7 +177,7 @@ never deleted. Remove it by hand if you don't want it.
 
 ## Bits come from your tool database
 
-There is nothing to add to this gadget. Any V-bit defined in Aspire's tool
+There is nothing to add to this gadget. Any V-bit defined in your tool
 database is offered, and its angle, diameter, **feeds, speeds and tool number
 are used exactly as the database has them** — so a chamfer is cut with the same
 numbers as the rest of your job, and you change them in one place.
@@ -187,27 +187,27 @@ converted.
 
 **If Select is greyed out** with a bit highlighted, that bit has no feeds and
 speeds for the machine named at the top of the tool database dialog. Press
-**Copy** under "Copy Settings From", then **Apply**. This is Aspire refusing to
+**Copy** under "Copy Settings From", then **Apply**. This is the software refusing to
 hand over a tool it has no cutting data for — not a gadget fault.
 
 ## The strategy template
 
 The gadget ships one file, `EdgeBreaker.ToolpathTemplate`, which supplies only
 the *strategy*: Profile, **Machine Vectors: On**, restricted to the layer
-`EdgeBreaker - Offset 01`. It exists because Aspire will not accept a template
+`EdgeBreaker - Offset 01`. It exists because the software will not accept a template
 this gadget wrote itself. The bit inside it is irrelevant — it is swapped for
 the one you picked, and so is the depth.
 
 So is the layer: building Chamfer 3 rewrites the restriction to
 `EdgeBreaker - Offset 03` before the template is loaded — a two-character
 change, nothing else in the file moves — and the gadget reads the name back out
-to confirm it before handing it to Aspire. It refuses to build rather than cut a
+to confirm it before handing it over. It refuses to build rather than cut a
 layer it did not aim at.
 
 You should never need to touch this file. If you do re-create it, it must be
 restricted to **`EdgeBreaker - Offset 01`** — the `01` matters, because that is
 the text the gadget rewrites. The **Selector ...** step is not optional either:
-without it Aspire binds the toolpath to whatever is selected when it
+without it the toolpath gets bound to whatever is selected when it
 recalculates, and loops silently drop out. It must also be saved from a job in
 the same units you work in.
 
@@ -219,13 +219,13 @@ the same units you work in.
 - Vectors must be **closed**. Outer boundaries offset outward, holes inward,
   automatically.
 - A feature too narrow to chamfer at the size you asked for is **skipped**, not
-  approximated: Aspire's offset collapses it to nothing, and it comes back with no
+  approximated: the offset collapses it to nothing, and it comes back with no
   orange offset beside it. A skip is one of the things that breaks the silence —
   you get a message naming the count. Ask for a smaller chamfer, or cut nearer
   the tip, and more of them will fit. Before v1.3.0 these came back inside-out and
   cut a slot down the middle of the feature.
 - One vector can produce **more than one** offset vector. Where an inward offset
-  pinches a neck closed, Aspire cuts the loop at the crossing and the valid
+  pinches a neck closed, the offset cuts the loop at the crossing and the valid
   pieces come back as separate closed loops — so the drawn count need not match
   what you selected.
 - The gadget owns every toolpath whose name contains `[EdgeBreaker NN]`, and a
@@ -236,7 +236,7 @@ the same units you work in.
   also forgets everything that chamfer remembered.
   Renaming it to a *different* number hands it to that chamfer instead.
 - The gadget calculates its own toolpath and leaves your other toolpaths
-  alone. If Aspire refuses the single-toolpath calculation, the message says
+  alone. If the software refuses the single-toolpath calculation, the message says
   so — then open the toolpath and click Calculate yourself.
 - A chamfer with no memory of its own falls back to your **last run's** entries,
   kept in `%APPDATA%\EdgeBreaker-settings.txt` (a `ChamferOffset-settings.txt`

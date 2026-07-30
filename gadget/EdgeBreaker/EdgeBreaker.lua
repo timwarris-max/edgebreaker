@@ -54,11 +54,11 @@ end
 function CO.check_tool_geometry(angle, dia)
    if type(angle) ~= "number" or angle ~= angle or angle <= 0 or angle >= 180 then
       return nil, "This bit reports an included angle of " .. tostring(angle)
-                  .. ", which cannot be machined. Check the bit in Aspire's tool database."
+                  .. ", which cannot be machined. Check the bit in your tool database."
    end
    if type(dia) ~= "number" or dia ~= dia or dia <= 0 then
       return nil, "This bit reports a diameter of " .. tostring(dia)
-                  .. ". Check the bit in Aspire's tool database."
+                  .. ". Check the bit in your tool database."
    end
    return true
 end
@@ -653,7 +653,7 @@ function CO.validate_template(bytes, job_units)
    local _, derr = CO.find_depth_offset(bytes)
    if derr then
       return nil, "'" .. CO.TEMPLATE_NAME .. "' is not a usable toolpath template - "
-                  .. "re-save it from Aspire (see Help)."
+                  .. "re-save it from Aspire or VCarve (see Help)."
    end
    -- v1.6.0: a template we cannot aim in Z is as unusable as one we cannot
    -- aim in a layer. Required, not optional -- every Aspire profile template
@@ -661,7 +661,7 @@ function CO.validate_template(bytes, job_units)
    local _, serr = CO.find_start_depth_offset(bytes)
    if serr then
       return nil, "'" .. CO.TEMPLATE_NAME .. "' has no start depth we can set - "
-                  .. "re-save it from Aspire (see Help)."
+                  .. "re-save it from Aspire or VCarve (see Help)."
    end
    -- The restriction is REQUIRED as of v1.4.0: it is what the per-slot patch
    -- rewrites, so an unscoped template has nothing to aim and would cut every
@@ -669,7 +669,7 @@ function CO.validate_template(bytes, job_units)
    local layers, lerr = CO.read_template_layers(bytes)
    if layers == nil then
       return nil, "'" .. CO.TEMPLATE_NAME .. "' is not a usable toolpath template ("
-                  .. tostring(lerr) .. ") - re-save it from Aspire (see Help)."
+                  .. tostring(lerr) .. ") - re-save it from Aspire or VCarve (see Help)."
    end
    local want = CO.offset_layer_name(1)
    if #layers ~= 1 or layers[1] ~= want then
@@ -1941,7 +1941,7 @@ function CO.sdk_apply_template(dir, filename, depth, start, slot, new_name, tool
    tpm:LoadToolpathTemplate(tmp)
    pcall(os.remove, tmp)                 -- best-effort cleanup; a leftover is harmless
    if tpm.Count <= before then
-      return nil, "Aspire did not load the patched template (Count unchanged)"
+      return nil, "The patched template did not load (Count unchanged)"
    end
    -- The new toolpaths are the TAIL of the list (Vectric's sample gadget
    -- relies on the same append order after LoadToolpathTemplate).
@@ -2027,7 +2027,8 @@ function main(script_path)
    local gadget_dir = resolve_gadget_dir(script_path)
    if gadget_dir == nil then
       DisplayMessageBox("Cannot find EdgeBreakerDialog.htm under:\n" .. script_path ..
-         "\n\nRe-run sync-gadgets.bat and restart Aspire.")
+         "\n\nSome of EdgeBreaker's files are missing. Install EdgeBreaker.vgadget"
+         .. " again, then restart Aspire or VCarve.")
       return false
    end
 
@@ -2214,9 +2215,9 @@ function main(script_path)
       CO.show_message(gadget_dir, {
          kind = "error",
          headline = "Nothing was changed",
-         body = "EdgeBreaker couldn't open Aspire's tool picker, so it can't "
+         body = "EdgeBreaker couldn't open the tool picker, so it can't "
              .. "ask which bit to use.\n\nPlease report this message.",
-         plain = "EdgeBreaker couldn't open Aspire's tool picker, so it can't "
+         plain = "EdgeBreaker couldn't open the tool picker, so it can't "
              .. "ask which bit to use.\n\nNothing was changed. Please report this message.",
       })
       return false
@@ -2274,12 +2275,12 @@ function main(script_path)
          kind = "error",
          headline = "Nothing was changed",
          body = "Pick a bit first - the Choose bit button is at the top right."
-             .. "\n\nIf Aspire's Select button stayed GREYED with a bit highlighted, that "
+             .. "\n\nIf the Select button stayed GREYED with a bit highlighted, that "
              .. "bit has no feeds and speeds for the machine shown at the top of that "
              .. "dialog. Press Copy under 'Copy Settings From', then Apply.",
          plain = "Pick a bit first - the Choose bit button is at the top right."
              .. "\n\nNothing was changed.\n\n"
-             .. "If Aspire's Select button stayed GREYED with a bit highlighted, that bit has "
+             .. "If the Select button stayed GREYED with a bit highlighted, that bit has "
              .. "no feeds and speeds for the machine shown at the top of that dialog. Press "
              .. "Copy under 'Copy Settings From', then Apply.",
       })
@@ -2564,7 +2565,7 @@ function main(script_path)
          },
          plain = string.format(
             "None of the %d selected vector(s) are wide enough to chamfer at G %.4f %s"
-            .. " - Aspire's offset collapsed every one of them to nothing.\n\n"
+            .. " - the offset collapsed every one of them to nothing.\n\n"
             .. "No offset vectors were drawn and no toolpath was created. The previous"
             .. " run's offset vectors were already cleared.%s\n\n"
             .. "Try a smaller chamfer size, or a cut position nearer the tip.%s",
