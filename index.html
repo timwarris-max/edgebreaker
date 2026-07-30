@@ -256,7 +256,6 @@
     font-weight: 700;
   }
 
-  input[type="range"] { width: 100%; accent-color: var(--accent); }
 
   .vals { display: grid; gap: 9px; }
   .val { display: flex; align-items: baseline; gap: 10px; }
@@ -459,8 +458,6 @@
           <div>
             <div class="eyebrow" style="margin-bottom:7px;">Cut position</div>
             <div class="presets" id="presets"></div>
-            <input id="pct" type="range" min="0" max="100" value="0" step="1"
-                   aria-label="Cut position on the flute, percent" style="margin-top:11px;">
           </div>
           <div class="vals">
             <div class="val"><span class="k">W</span><span class="v" id="oW"></span><span class="u" id="uW"></span></div>
@@ -758,17 +755,19 @@
   var angEl = document.getElementById("ang");
   var diaEl = document.getElementById("dia");
   var sizeEl = document.getElementById("size");
-  var pctEl = document.getElementById("pct");
   var presetsEl = document.getElementById("presets");
   var drawEl = document.getElementById("draw");
   var warnEl = document.getElementById("warn");
+
+  // The six buttons are the whole control, same as the gadget's dialog.
+  var pct = PRESETS[0];
 
   PRESETS.forEach(function (p) {
     var b = document.createElement("button");
     b.type = "button";
     b.textContent = p + "%";
     b.setAttribute("aria-pressed", "false");
-    b.addEventListener("click", function () { pctEl.value = p; render(); });
+    b.addEventListener("click", function () { pct = p; render(); });
     presetsEl.appendChild(b);
   });
 
@@ -798,7 +797,6 @@
     var inc = parseFloat(angEl.value);
     var dia = parseFloat(diaEl.value);
     var W = parseFloat(sizeEl.value);
-    var pct = parseFloat(pctEl.value);
 
     if (!(dia > 0) || !(W > 0)) { return; }
 
@@ -828,7 +826,7 @@
   }
 
   // Section view. Stock on the left, the wall at x = xe, waste to the right.
-  // Scale depends only on the bit, so dragging the slider doesn't rescale the drawing.
+  // Scale depends only on the bit, so switching cut position doesn't rescale the drawing.
   function svgFor(s, inc, dia, W, pct) {
     var VW = 1000, VH = 470;
     var padL = 96, padR = 150, padT = 76, padB = 64;
@@ -965,7 +963,7 @@
       + '"' + (tracking ? ' letter-spacing="' + tracking + 'em"' : '') + '>' + esc(s) + '</text>';
   }
 
-  [angEl, diaEl, sizeEl, pctEl].forEach(function (el) {
+  [angEl, diaEl, sizeEl].forEach(function (el) {
     el.addEventListener("input", render);
     el.addEventListener("change", render);
   });
