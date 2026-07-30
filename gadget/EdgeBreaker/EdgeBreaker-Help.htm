@@ -71,12 +71,12 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </head>
 <body>
 <header>
-  <div class="name">EdgeBreaker<span class="ver">v1.9.1</span></div>
+  <div class="name">EdgeBreaker<span class="ver">v1.9.2</span></div>
   <div class="sub">Help &mdash; works offline</div>
 </header>
 <main>
-<div class="intro"><p>Break an edge with a V-bit in Aspire: select closed vectors, pick a bit, enter a chamfer size, choose where on the flute to cut. The gadget draws offset vectors into the waste and creates a Profile "On" toolpath at the exact depth — the tip and its flat ride in air beside the wall instead of dragging through your cut.</p>
-<p><strong>Built and tested in Aspire 12.x.</strong> There's nothing in it that needs Aspire in particular — it draws vectors, offsets them and makes a Profile toolpath — so it should run in VCarve too, and probably in older versions. I just haven't tried. Give it a go and tell me how it went, and I'll say so here.</p>
+<div class="intro"><p>Break an edge with a V-bit: select closed vectors, pick a bit, enter a chamfer size, choose where on the flute to cut. The gadget draws offset vectors into the waste and creates a Profile "On" toolpath at the exact depth — the tip and its flat ride in air beside the wall instead of dragging through your cut.</p>
+<p><strong>Runs in Aspire and VCarve Pro.</strong> I built and tested it in Aspire 12, and someone's now run it in VCarve Pro 12.5. There's nothing in it that needs either one in particular — it draws vectors, offsets them and makes a Profile toolpath — so older versions should be fine too. I just haven't tried them. Tell me how you get on and I'll say so here.</p>
 <blockquote><p>Through v1.4.x this gadget was called <strong>ChamferOffset</strong>. Same gadget, new name. Jobs built with the old version still work — see <a href="#chamfers-from-older-versions">Chamfers from older versions</a>.</p></blockquote></div>
 <nav class="toc"><h2>On this page</h2><ul>
 <li><a href="#how-it-decides-what-to-build">How it decides what to build</a></li>
@@ -181,7 +181,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <section>
 <h2 id="quick-start-60-seconds">Quick start (60 seconds)</h2>
 <ol>
-<li>Double-click <code>EdgeBreaker-v*.vgadget</code> to install, then restart Aspire. Windows may warn you about the file when you download it. That's only because it's new and not many people have it yet — choose Keep, then open it.</li>
+<li>Double-click <code>EdgeBreaker-v*.vgadget</code> to install, then restart Aspire or VCarve. Windows may warn you about the file when you download it. That's only because it's new and not many people have it yet — choose Keep, then open it.</li>
 <li>Open a job, select the closed vector(s) to chamfer.</li>
 <li>Gadgets menu → EdgeBreaker. The dialog opens with a coloured banner telling you what it's about to do. <strong>Choose your V-bit</strong> (it opens on the bit you used last), enter the chamfer size, pick a cut position, press OK.</li>
 <li>The gadget draws orange offset vectors and creates a calculated <code>Chamfer ... [EdgeBreaker 01]</code> toolpath. A clean run shows you nothing at all — the toolpath in the Toolpaths panel and the orange offsets on the canvas are the confirmation. You only get a message when there is something to act on: a shape too narrow to chamfer, a vector skipped, a remembered shape that has gone, or a toolpath that could not be created.</li>

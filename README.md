@@ -1,14 +1,15 @@
 # EdgeBreaker
 
-Break an edge with a V-bit in Aspire: select closed vectors, pick a bit, enter a
+Break an edge with a V-bit: select closed vectors, pick a bit, enter a
 chamfer size, choose where on the flute to cut. The gadget draws offset vectors
 into the waste and creates a Profile "On" toolpath at the exact depth — the
 tip and its flat ride in air beside the wall instead of dragging through your cut.
 
-**Built and tested in Aspire 12.x.** There's nothing in it that needs Aspire in
-particular — it draws vectors, offsets them and makes a Profile toolpath — so it
-should run in VCarve too, and probably in older versions. I just haven't tried.
-Give it a go and tell me how it went, and I'll say so here.
+**Runs in Aspire and VCarve Pro.** I built and tested it in Aspire 12, and
+someone's now run it in VCarve Pro 12.5. There's nothing in it that needs either
+one in particular — it draws vectors, offsets them and makes a Profile toolpath —
+so older versions should be fine too. I just haven't tried them. Tell me how you
+get on and I'll say so here.
 
 > Through v1.4.x this gadget was called **ChamferOffset**. Same gadget, new name.
 > Jobs built with the old version still work — see
@@ -16,7 +17,7 @@ Give it a go and tell me how it went, and I'll say so here.
 
 ## Quick start (60 seconds)
 
-1. Double-click `EdgeBreaker-v*.vgadget` to install, then restart Aspire.
+1. Double-click `EdgeBreaker-v*.vgadget` to install, then restart Aspire or VCarve.
    Windows may warn you about the file when you download it. That's only because
    it's new and not many people have it yet — choose Keep, then open it.
 2. Open a job, select the closed vector(s) to chamfer.
