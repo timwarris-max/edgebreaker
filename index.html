@@ -1,6 +1,16 @@
-<title>EdgeBreaker — break an edge with a V-bit</title>
-
-<style>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EdgeBreaker &mdash; break an edge with a V-bit in Aspire</title>
+<meta name="description" content="A free Vectric Aspire gadget. Pick a bit, type a size, press OK -- it works out the depth and builds the toolpath.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="EdgeBreaker &mdash; break an edge with a V-bit in Aspire">
+<meta property="og:description" content="A free Vectric Aspire gadget. Pick a bit, type a size, press OK -- it works out the depth and builds the toolpath.">
+<meta property="og:url" content="https://timwarris-max.github.io/edgebreaker/">
+</head>
+<body><style>
   :root {
     --ground:      #14161a;
     --panel:       #1b1f26;
@@ -160,7 +170,9 @@
 
   /* ---- hero ---- */
   .hero { padding: clamp(48px, 8vw, 92px) 0 8px; }
-  .hero .col { max-width: 30ch; }
+  /* px, not ch -- a ch max-width here resolves against the body font size, not the
+     headline's, which squeezed the h1 to about 255px and broke it across three lines. */
+  .hero .col { max-width: 660px; }
   .hero h1 { margin-bottom: 18px; }
   .hero-sub { max-width: 60ch; margin: 0 auto; }
   .hero .col, .hero-sub { text-align: center; }
@@ -961,3 +973,6 @@
   render();
 })();
 </script>
+
+</body>
+</html>
