@@ -38,6 +38,19 @@ get on and I'll say so here.
 guide in a browser window. It's a copy that ships with the gadget, so it works with
 no internet.
 
+## Updating
+
+Same as installing. Download the latest `EdgeBreaker.vgadget`, double-click it,
+restart Aspire or VCarve. It installs over the old copy — there's nothing to
+uninstall first.
+
+Your work is untouched. Existing chamfers live in the job file and come back
+exactly as they were, and your last-used settings are kept.
+
+The gadget doesn't check for updates, so it stays on the version you installed
+until you do this. **The version is printed at the top of the dialog**, next to
+the name — that's how to tell what you're on.
+
 ## How it decides what to build
 
 **The selection decides.** Before it asks you anything, EdgeBreaker looks at what

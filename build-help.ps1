@@ -45,7 +45,8 @@ $ORDER = @(
   "Bits come from your tool database",
   "Chamfers from older versions",
   "The strategy template",
-  "Quick start (60 seconds)"
+  "Quick start (60 seconds)",
+  "Updating"
 )
 
 $SENT = [char]1   # placeholder marker for code spans; cannot occur in the README
