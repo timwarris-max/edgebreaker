@@ -242,6 +242,10 @@ the same units you work in.
   left by an older version is still read). Anything that no longer applies falls
   back to the default — a size from an inch job when the open job is metric.
   Delete the file to start fresh.
+- **The dialog is sized for an ordinary laptop screen** and scales itself to fit.
+  It can't measure your screen, so it opens at a size that should fit anything
+  1366 × 768 or bigger. If it's still too big for yours, tell me your resolution
+  and I'll fix it.
 - **Depth warning.** A shallow-angle V-bit plunges a long way for a small
   chamfer — a 12.4° bit needs 0.90 in of depth for a 0.020 in chamfer. If the
   cut would go deeper than the stock thickness in Job Setup, the dialog says so

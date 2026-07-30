@@ -315,16 +315,6 @@ CHECK(CO.offset_count_phrase(17, 0) == "0 of 17 vector(s)",
 CHECK(CO.offset_count_phrase(1, 1) == "1 vector(s)",
       "count_phrase: one vector uses the same (s) form as every other message")
 
--- CO.dialog_size: per-machine window size. A dialog cannot resize itself, so an
--- unknown machine must get the design size -- i.e. exactly what shipped before.
-local dw, dh = CO.dialog_size("HAAS-LAPTOP")
-CHECK(dw == 1280 and dh == 720, "dialog_size: shop laptop gets the small window")
-CHECK(select(1, CO.dialog_size("haas-laptop")) == 1280, "dialog_size: name match is case-insensitive")
-dw, dh = CO.dialog_size("SOME-OTHER-PC")
-CHECK(dw == CO.DESIGN_SIZE[1] and dh == CO.DESIGN_SIZE[2], "dialog_size: unknown machine gets the design size")
-dw, dh = CO.dialog_size(nil)
-CHECK(dw == CO.DESIGN_SIZE[1] and dh == CO.DESIGN_SIZE[2], "dialog_size: no COMPUTERNAME gets the design size")
-for name, s in pairs(CO.SCREEN_SIZES) do
-   CHECK(s[1] <= CO.DESIGN_SIZE[1] and s[2] <= CO.DESIGN_SIZE[2],
-         "dialog_size: " .. name .. " never exceeds the design size (the page only scales down)")
-end
+-- CO.dialog_size moved to tests/test_dialog_size.lua on 2026-07-29. The two
+-- assertions here required an unknown machine to get the DESIGN size, which is
+-- the defect a user reported from the field -- they pinned it as correct.

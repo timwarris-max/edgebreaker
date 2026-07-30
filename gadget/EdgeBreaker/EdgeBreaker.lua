@@ -23,7 +23,7 @@ CO.TIP_MARGIN      = 0.15   -- bottom of safe band: contact clears the tip
 CO.PRESETS         = { 0, 20, 40, 60, 80, 100 }
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.9.0"
+CO.VERSION         = "1.9.1"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -66,11 +66,28 @@ end
 -- Dialog window size, in physical pixels, per machine. The page is authored at
 -- one fixed size and scales itself down to whatever window it is given (see
 -- EdgeBreakerDialog.htm), so a machine with a smaller screen gets a smaller window
--- rather than a cramped layout. 1800x1000 suits the ultrawide desktop but is
--- nearly the whole screen on the shop laptop's 1920x1080.
+-- rather than a cramped layout.
 -- A dialog cannot resize itself, so this must be right before it opens.
+--
+-- DESIGN_SIZE is what the LAYOUT is authored against -- keep it in step with
+-- DESIGN_W/H in EdgeBreakerDialog.htm and WIN_W/H in the layout gate. It is
+-- deliberately NOT the default window any more.
+--
+-- DEFAULT_SIZE is what an unlisted machine opens at, and every machine but ours
+-- is unlisted. It has to fit a screen we have never seen, so it is sized for
+-- 1366x768 -- the ordinary laptop. Until 2026-07-29 the default WAS the design
+-- size, which is bigger than that screen in both directions, and because the
+-- OK/Cancel bar is pinned to the bottom of the window the buttons went off the
+-- bottom of the screen. Reported from the field by a VCarve Pro 12.510 user; the
+-- table used to list the one small screen and default to the big one, and now
+-- lists the big screens and defaults to small. Getting this wrong is invisible
+-- here and unusable there, so it is pinned by tests/test_dialog_size.lua.
 CO.DESIGN_SIZE  = { 1800, 1000 }        -- keep in step with EdgeBreakerDialog.htm
-CO.SCREEN_SIZES = { ["HAAS-LAPTOP"] = { 1280, 720 } }
+CO.DEFAULT_SIZE = { 1280, 700 }         -- anyone we do not know: fits 1366x768
+CO.SCREEN_SIZES = {
+   ["FASTTRACKS2026"] = { 1800, 1000 }, -- 5120x1440 ultrawide desktop
+   ["HAAS-LAPTOP"]    = { 1280, 720 },  -- Acer A315-54, 1920x1080 @ 100%
+}
 
 -- Styled messages (see docs/superpowers/specs/2026-07-28-edgebreaker-styled-messages-design.md).
 -- The class names are the setup dialog's own banner palette under different
@@ -167,7 +184,7 @@ end
 -- must never exceed the design size: the page only ever scales down.
 function CO.dialog_size(computer_name)
    local s = CO.SCREEN_SIZES[string.upper(computer_name or "")]
-   s = s or CO.DESIGN_SIZE
+   s = s or CO.DEFAULT_SIZE
    return s[1], s[2]
 end
 

@@ -29,6 +29,7 @@ local files = {
    "test_classify.lua",
    "test_memory.lua",
    "test_messages.lua",
+   "test_dialog_size.lua",
 }
 for _, f in ipairs(files) do
    current_file = f
