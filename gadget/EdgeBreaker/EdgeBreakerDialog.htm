@@ -181,7 +181,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.10.2</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.10.3</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -423,8 +423,22 @@ var DESIGN_W = 1798, DESIGN_H = 950;
 // back to empty by that injection.
 function reportScreen() {
   try {
-    document.getElementById("Screen").value =
-      screen.availWidth + "x" + screen.availHeight;
+    var v = screen.availWidth + "x" + screen.availHeight;
+    // The numbers above are ALWAYS the primary monitor's -- Trident cannot see
+    // any other (ScreenProbe, 2026-07-30). What it CAN see is where this window
+    // is: screenLeft/screenTop are live and truthful, same sitting. If our own
+    // centre is outside the primary, say so instead of vouching for numbers
+    // that describe a different screen. Guarded: if any of these reads fails or
+    // comes back NaN, the suffix is simply not added and v1.10.2 behaviour
+    // stands.
+    try {
+      var cx = window.screenLeft + (window.outerWidth  || 0) / 2;
+      var cy = window.screenTop  + (window.outerHeight || 0) / 2;
+      if (typeof cx === "number" && !isNaN(cx) && !isNaN(cy) &&
+          (cx < 0 || cx >= screen.width || cy < 0 || cy >= screen.height))
+        v += " off";
+    } catch (e2) { /* position unknowable: report the measurement alone */ }
+    document.getElementById("Screen").value = v;
   } catch (e) { /* leave it empty; the stored value simply stays as it was */ }
 }
 function fitToWindow() {

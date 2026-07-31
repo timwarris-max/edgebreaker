@@ -29,11 +29,21 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: #f4f6f8;
          style="position:absolute; left:26px; bottom:16px;">
 <script type="text/javascript">
 // The one thing this page exists to do. availWidth/availHeight already exclude
-// the taskbar, which is what the window has to fit inside.
+// the taskbar, which is what the window has to fit inside. The numbers are
+// always the PRIMARY monitor's (Trident cannot see any other -- ScreenProbe,
+// 2026-07-30); if this window's own centre is off the primary, " off" is
+// appended so Lua knows not to trust them for the window it is about to open.
 function reportScreen() {
   try {
-    document.getElementById("Screen").value =
-      screen.availWidth + "x" + screen.availHeight;
+    var v = screen.availWidth + "x" + screen.availHeight;
+    try {
+      var cx = window.screenLeft + (window.outerWidth  || 0) / 2;
+      var cy = window.screenTop  + (window.outerHeight || 0) / 2;
+      if (typeof cx === "number" && !isNaN(cx) && !isNaN(cy) &&
+          (cx < 0 || cx >= screen.width || cy < 0 || cy >= screen.height))
+        v += " off";
+    } catch (e2) { /* position unknowable: report the measurement alone */ }
+    document.getElementById("Screen").value = v;
   } catch (e) { /* leave it empty; Lua falls back to the default size */ }
 }
 // Close ourselves so the operator sees a flash and nothing else. Clicking OK is

@@ -167,6 +167,21 @@ do
    CHECK(CO.parse_screen_field("99999x99999") == nil, "absurdly large -> nothing")
 end
 
+-- v1.10.3: the " off" suffix -- the page's way of saying "these numbers are the
+-- primary's and I was NOT on the primary" (Trident only ever reports the
+-- primary; ScreenProbe sitting, 2026-07-30).
+do
+   local w, h, off = CO.parse_screen_field("1920x1032 off")
+   CHECK(w == 1920 and h == 1032 and off == true, "WxH off parses, flag up")
+   local w2, h2, off2 = CO.parse_screen_field("1920x1032")
+   CHECK(w2 == 1920 and off2 == false, "no suffix means on the primary, flag down")
+   -- The suffix is a token, not a substring hunt: anything else stays nothing.
+   CHECK(CO.parse_screen_field("1920x1032 offx") == nil, "a mangled suffix is nothing")
+   CHECK(CO.parse_screen_field("1920x1032 on") == nil, "an unknown word is nothing")
+   CHECK(CO.parse_screen_field("off") == nil, "the word alone is nothing")
+   CHECK(CO.parse_screen_field("100x100 off") == nil, "believability still applies with the suffix")
+end
+
 -- Round trip through the real file, then put the user's own file back exactly
 -- as it was. This test writes to %APPDATA% on the machine running it.
 do
@@ -186,8 +201,22 @@ do
    end
 
    CHECK(CO.save_screen(1920, 1040) == true, "a believable screen saves")
-   local w, h = CO.load_screen()
+   local w, h, off = CO.load_screen()
    CHECK(w == 1920 and h == 1040, "and reads back as numbers")
+   CHECK(off == false, "no third argument saved means on the primary")
+
+   -- v1.10.3: the off-primary flag round-trips, and a v1.10.0-2 file (no
+   -- offprimary line) reads back false -- older stores keep their old meaning.
+   CHECK(CO.save_screen(1920, 1040, true) == true, "the off-primary flag saves")
+   local ow, oh, ooff = CO.load_screen()
+   CHECK(ow == 1920 and ooff == true, "and reads back true")
+   do
+      local f = assert(io.open(path, "w"))
+      f:write("# EdgeBreaker measured screen size - safe to delete\n")
+      f:write("screenw=1920\nscreenh=1040\n"); f:close()
+      local vw, vh, voff = CO.load_screen()
+      CHECK(vw == 1920 and voff == false, "a v1.10.0-2 file with no flag reads as on-primary")
+   end
 
    CHECK(CO.save_screen(10, 10) == false, "an unbelievable screen is refused, not written")
    local w2, h2 = CO.load_screen()

@@ -357,7 +357,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.10.2", "version gate: 1.10.2")
+CHECK(CO.VERSION == "1.10.3", "version gate: 1.10.3")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -475,4 +475,24 @@ do
          "measuring never opens a message window")
    CHECK(body == nil or body:find("DisplayMessageBox", 1, true) == nil,
          "measuring never opens a message box")
+
+   -- v1.10.3 MULTI-MONITOR. Trident only ever reports the PRIMARY monitor
+   -- (ScreenProbe sitting, 2026-07-30), so each page tags its report " off"
+   -- when its own window centre is outside the primary, and Lua discards the
+   -- numbers on that flag. Three files again, and the same drift risk: a page
+   -- that stops sending the suffix, or Lua that stops parsing it, silently
+   -- brings back the overflowing-laptop-panel defect with no offline symptom.
+   CHECK(page:find('" off"', 1, true) ~= nil,
+         "the measuring page can tag its report off-primary")
+   CHECK(dlg:find('" off"', 1, true) ~= nil,
+         "the setup dialog can tag its report off-primary")
+   CHECK(page:find("window.screenLeft", 1, true) ~= nil and
+         dlg:find("window.screenLeft", 1, true) ~= nil,
+         "both pages read their own position -- the one thing Trident is honest about")
+   CHECK(lua:find('offprimary', 1, true) ~= nil,
+         "the store carries the off-primary flag")
+   do
+      local w, h, off = CO.parse_screen_field("1920x1032 off")
+      CHECK(w == 1920 and off == true, "Lua parses the suffix the pages send")
+   end
 end

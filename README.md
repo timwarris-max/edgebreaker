@@ -258,6 +258,9 @@ the same units you work in.
   Delete the file to start fresh.
 - **EdgeBreaker sizes its window to fit your screen.** The first time you run it
   you'll see a small window flash up while it checks â€” you shouldn't see it again.
+  Two monitors? It sizes for your main one, and opens smaller on the other. The
+  first run after you move Aspire to a different monitor can come out the wrong
+  size â€” run it again and it sorts itself out.
 - **Depth warning.** A shallow-angle V-bit plunges a long way for a small
   chamfer â€” a 12.4Â° bit needs 0.90 in of depth for a 0.020 in chamfer. If the
   cut would go deeper than the stock thickness in Job Setup, the dialog says so

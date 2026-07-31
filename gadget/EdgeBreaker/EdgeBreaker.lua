@@ -23,7 +23,7 @@ CO.TIP_MARGIN      = 0.15   -- bottom of safe band: contact clears the tip
 CO.PRESETS         = { 0, 20, 40, 60, 80, 100 }
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.10.2"
+CO.VERSION         = "1.10.3"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -185,8 +185,12 @@ function CO.show_message(gadget_dir, msg)
       if probe == nil then return end
       probe:close()
       -- The stored screen, so this window fits it too. load_screen returns nil
-      -- on every failure and message_fields then leaves the size alone.
-      local sw, sh = CO.load_screen()
+      -- on every failure and message_fields then leaves the size alone. Off the
+      -- primary the numbers describe the wrong monitor, so they are discarded
+      -- the same way -- the unclamped 900x700 fits any panel 768 tall or more,
+      -- which is the smallest laptop screen there is.
+      local sw, sh, off = CO.load_screen()
+      if off then sw, sh = nil, nil end
       local fields, w, h = CO.message_fields(msg, sw, sh)
       local dlg = HTML_Dialog(false, "file:" .. gadget_dir .. "\\MessageDialog.htm",
                               w, h, "EdgeBreaker v" .. CO.VERSION)
@@ -218,7 +222,7 @@ CO.MEASURE_SIZE = { 360, 200 }
 -- Telling the operator about it would be noise in the one gadget that worked
 -- hard to stay quiet, and there is nothing they could do with the news.
 function CO.sdk_measure_screen(gadget_dir)
-   local w, h
+   local w, h, off
    pcall(function()
       local probe = io.open(gadget_dir .. "\\MeasureScreen.htm", "r")
       if probe == nil then return end
@@ -230,11 +234,11 @@ function CO.sdk_measure_screen(gadget_dir)
       -- clicking OK, and a Cancel (or the X) is not a failure either -- what
       -- matters is whether a number came back.
       dlg:ShowDialog()
-      w, h = CO.parse_screen_field(dlg:GetTextField("Screen"))
+      w, h, off = CO.parse_screen_field(dlg:GetTextField("Screen"))
    end)
    if w == nil then return nil end
-   CO.save_screen(w, h)
-   return w, h
+   CO.save_screen(w, h, off)
+   return w, h, off
 end
 
 -- Read a dialog's Screen field and remember it. Called after the setup dialog
@@ -244,8 +248,8 @@ end
 -- older page cannot break a run.
 function CO.remember_screen(dlg)
    pcall(function()
-      local w, h = CO.parse_screen_field(dlg:GetTextField("Screen"))
-      if w ~= nil then CO.save_screen(w, h) end
+      local w, h, off = CO.parse_screen_field(dlg:GetTextField("Screen"))
+      if w ~= nil then CO.save_screen(w, h, off) end
    end)
 end
 
@@ -1262,47 +1266,60 @@ function CO.screen_path()
    return settings_path_for("EdgeBreaker-screen.txt")
 end
 
--- "1920x1040" -> 1920, 1040. This is the shape a page writes into its hidden
--- field, and the only shape either dialog ever sends. Anything that is not two
--- believable numbers is nothing at all: nonsense is discarded here so it can
--- never reach the file.
+-- "1920x1040" -> 1920, 1040, false. "1920x1040 off" -> 1920, 1040, true.
+-- These are the only two shapes either dialog ever sends. The numbers are
+-- always the PRIMARY monitor's -- the 2026-07-30 ScreenProbe sitting proved
+-- Trident reports the primary no matter which monitor the window is on -- so a
+-- page that can tell it is NOT on the primary (window.screenLeft, which the
+-- same sitting proved live and truthful) appends " off" instead of sending
+-- numbers it cannot get. Anything else is nothing at all: nonsense is
+-- discarded here so it can never reach the file.
 function CO.parse_screen_field(text)
    if type(text) ~= "string" then return nil end
    local w, h = text:match("^%s*(%d+)%s*[xX]%s*(%d+)%s*$")
+   local off = false
+   if w == nil then
+      w, h = text:match("^%s*(%d+)%s*[xX]%s*(%d+)%s+off%s*$")
+      off = true
+   end
    if w == nil then return nil end
    w, h = tonumber(w), tonumber(h)
    if not CO.believable_screen(w, h) then return nil end
-   return w, h
+   return w, h, off
 end
 
 -- Both halves are best-effort and silent, exactly like the settings pair above:
 -- a locked, missing or unreadable file must never interrupt a run. Sizing is a
 -- convenience -- it can make the dialog awkward, it can never make a wrong cut.
+-- Third return: was the dialog OFF the primary monitor last time it closed?
+-- A v1.10.0-2 file has no offprimary key and reads back false, which keeps the
+-- old behaviour exactly.
 function CO.load_screen()
    local path = CO.screen_path()
    if path == nil then return nil end
-   local ok, w, h = pcall(function()
+   local ok, w, h, off = pcall(function()
       local f = io.open(path, "r")
       if f == nil then return nil end
       local text = f:read("*a"); f:close()
       local t = CO.parse_settings(text)
       if t == nil then return nil end
       if not CO.believable_screen(t.screenw, t.screenh) then return nil end
-      return tonumber(t.screenw), tonumber(t.screenh)
+      return tonumber(t.screenw), tonumber(t.screenh), t.offprimary == "1"
    end)
-   if ok then return w, h end
+   if ok then return w, h, off end
    return nil
 end
 
-function CO.save_screen(w, h)
+function CO.save_screen(w, h, off)
    if not CO.believable_screen(w, h) then return false end
    local path = CO.screen_path()
    if path == nil then return false end
    return (pcall(function()
       local f = assert(io.open(path, "w"))
       f:write("# EdgeBreaker measured screen size - safe to delete\n")
-      f:write(string.format("screenw=%d\nscreenh=%d\n",
-                            math.floor(tonumber(w)), math.floor(tonumber(h))))
+      f:write(string.format("screenw=%d\nscreenh=%d\noffprimary=%d\n",
+                            math.floor(tonumber(w)), math.floor(tonumber(h)),
+                            off and 1 or 0))
       f:close()
    end))
 end
@@ -2335,8 +2352,17 @@ function main(script_path)
    -- something only a page can measure: see CO.sdk_measure_screen. The measuring
    -- window appears once per machine and never again, because the setup dialog
    -- reports its own screen on the way out.
-   local screen_w, screen_h = CO.load_screen()
-   if screen_w == nil then screen_w, screen_h = CO.sdk_measure_screen(gadget_dir) end
+   local screen_w, screen_h, off_primary = CO.load_screen()
+   if screen_w == nil then
+      screen_w, screen_h, off_primary = CO.sdk_measure_screen(gadget_dir)
+   end
+   -- v1.10.3: last time, the dialog closed on a monitor that is NOT the primary
+   -- -- and the measurement is always the primary's, because Trident cannot see
+   -- any other (ScreenProbe sitting, 2026-07-30). So the stored numbers describe
+   -- the wrong screen, and the honest size is the conservative DEFAULT, which is
+   -- what discarding them here produces. Self-healing with one run of lag each
+   -- way: the dialog re-reports its position on every close, OK and Cancel alike.
+   if off_primary then screen_w, screen_h = nil, nil end
    local win_w, win_h = CO.dialog_size(screen_w, screen_h)
    local dlg = HTML_Dialog(false, "file:" .. gadget_dir .. "\\EdgeBreakerDialog.htm",
                            win_w, win_h, "EdgeBreaker v" .. CO.VERSION)

@@ -998,8 +998,11 @@ var SCR_VW = SCR_W - FRAME_W, SCR_VH = SCR_H - FRAME_H;
     // Chrome reports its headless window here rather than a real monitor, so the
     // NUMBERS mean nothing offline -- but the SHAPE is the contract Lua parses
     // (CO.parse_screen_field), and an empty field is the failure worth catching.
-    if (!/^\d+x\d+$/.test(field))
-      bad.push("the Screen field should hold WxH, got '" + field + "'");
+    // v1.10.3: an optional " off" suffix marks a window off the primary monitor.
+    // Headless Chrome sits at 0,0 so the suffix never appears here; accepted so
+    // the contract stays in one regex.
+    if (!/^\d+x\d+( off)?$/.test(field))
+      bad.push("the Screen field should hold WxH or 'WxH off', got '" + field + "'");
   }
   console.log((bad.length ? "FAIL  " : "ok    ") + "MeasureScreen.htm  " +
     SCR_VW + "x" + SCR_VH + (bad.length ? "  <-- " + bad.join("; ") : ""));
