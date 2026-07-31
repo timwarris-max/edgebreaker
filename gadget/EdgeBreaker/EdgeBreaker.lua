@@ -23,7 +23,7 @@ CO.TIP_MARGIN      = 0.15   -- bottom of safe band: contact clears the tip
 CO.PRESETS         = { 0, 20, 40, 60, 80, 100 }
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.10.0"
+CO.VERSION         = "1.10.1"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -82,6 +82,16 @@ end
 CO.DESIGN_SIZE  = { 1800, 1000 }        -- keep in step with EdgeBreakerDialog.htm
 CO.DEFAULT_SIZE = { 1280, 700 }         -- no measurement: fits 1366x768
 CO.SCREEN_MARGIN = 16                   -- so the window is not flush to the screen edge
+
+-- v1.10.1: SCREEN_MARGIN alone only asks "does it fit". On a 1920x1080 screen
+-- both axes reach DESIGN_SIZE, so the window covers ~93% of the screen and
+-- reads as fullscreen rather than as a dialog (seen on the Acer, 2026-07-30).
+-- SCREEN_FRACTION is the second cap: never more than this much of the screen.
+-- DEFAULT_SIZE then acts as a FLOOR, because a fraction takes its biggest bite
+-- exactly where there is least room -- 80% of a 1366-wide laptop is 1092, and
+-- shrinking the machines that need every pixel would be backwards. Net effect:
+-- only screens between roughly 1600 and 2250 wide change at all.
+CO.SCREEN_FRACTION = 0.80
 
 -- Styled messages (see docs/superpowers/specs/2026-07-28-edgebreaker-styled-messages-design.md).
 -- The class names are the setup dialog's own banner palette under different
@@ -230,16 +240,24 @@ function CO.believable_screen(w, h)
    return true
 end
 
--- The whole rule: usable screen, less a margin, capped at the design size.
--- Pure -- no SDK, no environment, no file -- so tests/test_dialog_size.lua
--- covers every case. Each dimension is capped independently.
+-- The whole rule: usable screen, less a margin, capped at the design size AND
+-- at SCREEN_FRACTION of the screen, then floored at DEFAULT_SIZE -- except that
+-- the floor can never push the window back off the screen it just fitted, so it
+-- is itself clamped to screen-less-margin. Pure -- no SDK, no environment, no
+-- file -- so tests/test_dialog_size.lua covers every case. Each dimension is
+-- worked out independently.
 function CO.dialog_size(screen_w, screen_h)
    if not CO.believable_screen(screen_w, screen_h) then
       return CO.DEFAULT_SIZE[1], CO.DEFAULT_SIZE[2]
    end
-   local w = math.min(tonumber(screen_w) - CO.SCREEN_MARGIN, CO.DESIGN_SIZE[1])
-   local h = math.min(tonumber(screen_h) - CO.SCREEN_MARGIN, CO.DESIGN_SIZE[2])
-   return math.floor(w), math.floor(h)
+   local function axis(screen, design, default)
+      local fits  = screen - CO.SCREEN_MARGIN
+      local size  = math.min(fits, design, screen * CO.SCREEN_FRACTION)
+      local floor = math.min(default, fits)
+      return math.floor(math.max(size, floor))
+   end
+   return axis(tonumber(screen_w), CO.DESIGN_SIZE[1], CO.DEFAULT_SIZE[1]),
+          axis(tonumber(screen_h), CO.DESIGN_SIZE[2], CO.DEFAULT_SIZE[2])
 end
 
 -- Display units follow the open job (job.InMM). ~0.5mm and 0.020in are
