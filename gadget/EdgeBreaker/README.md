@@ -119,6 +119,22 @@ at 0. Unlike the chamfer size, it is deliberately not carried over from your las
 run: a leftover 0.25 in from yesterday's pocket applied to today's flat job would
 cut a quarter inch too deep without looking wrong on screen.
 
+## Sharp inside corners
+
+A chamfer's inside corners normally come out rounded — at one depth, the bit
+can only get so far into a corner. Tick **Sharp inside corners** and the bit
+rises as it drives into each corner, so the two edges meet in a crisp point.
+
+- It's there when **Chamfer side** is **Inside** — pockets and holes. On Auto
+  or Outside the box is greyed out.
+- Each chamfer remembers its own setting, so a rebuild keeps what you chose.
+- The corner moves cut closer to the bit's tip than the position you picked —
+  that's the only way into a corner, and it's a tiny share of the cut.
+- Outside corners still come out rounded.
+- The orange line sits a touch outside the pocket's edge on purpose — that's
+  the line the machine steers by, not the cut. The cut still lands exactly
+  where it always does.
+
 ## What a chamfer remembers
 
 Each chamfer stores, on its own toolpath, the shapes it was built from and the

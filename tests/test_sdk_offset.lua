@@ -131,6 +131,163 @@ CHECK(type(err) == "string" and err:find("group", 1, true) ~= nil,
       "selection count 5 (promoted): error mentions grouping")
 CHECK(copy_calls == 0, "selection count 5 (promoted): never reached CreateCopyOfSelectedContours")
 
+-- Sharp mode (v1.11.0, Finding 1 review 2026-07-31): sdk_offset_loop's 4th
+-- arg is now sharp_dist, not a plain flag -- nil on a normal run, the shifted
+-- distance on a sharp run. On a sharp run the SAME copy is offset TWICE:
+-- once at dist (the normal distance) as a viability probe whose group is
+-- thrown away, and -- only if that probe comes back non-empty -- again at
+-- sharp_dist, which is then squared with MakeOffsetsSquare. This is the fix
+-- for the sharp path structurally disabling the too-narrow safety net: the
+-- shifted distance is always outward, so on its own it can never collapse.
+--
+-- NILR is a sentinel meaning "this :Offset call returns nil", so a hole in
+-- the offsets list can be distinguished from "no more calls expected".
+local NILR = {}
+
+-- A fake offset-result group: readable Count, and a MakeOffsetsSquare method
+-- whose return value the test controls. Every call's ARGUMENTS are recorded
+-- too: the real signature is
+--    bool MakeOffsetsSquare(ContourGroup*, double, bool, double)
+-- and that bool is the squaring switch. It shipped as false, which Aspire
+-- honours by squaring nothing and STILL returning true -- indistinguishable
+-- from success at the call site, and only caught by looking at the cut (Task 9
+-- sitting, 2026-07-31). Nothing but an argument assertion can hold that line.
+local square_calls = {}
+local function grp(count, square_result)
+   return {
+      Count = count,
+      MakeOffsetsSquare = function(self, w, flag, w2)
+         square_calls[#square_calls + 1] = { w = w, flag = flag, w2 = w2 }
+         return square_result
+      end,
+   }
+end
+
+-- Installs CreateCopyOfSelectedContours so repeated :Offset calls on the SAME
+-- copy return successive entries from `results`, in order, recording every
+-- call's args. A "raise" entry throws instead of returning.
+local function install_sharp_copy(results)
+   copy_calls, offset_calls, square_calls = 0, {}, {}
+   local n = 0
+   CreateCopyOfSelectedContours = function()
+      copy_calls = copy_calls + 1
+      return {
+         Offset = function(self, dist, absdist, mode, preserve_arcs)
+            n = n + 1
+            offset_calls[#offset_calls + 1] =
+               { dist = dist, absdist = absdist, mode = mode, preserve_arcs = preserve_arcs }
+            local r = results[n]
+            if r == "raise" then error("boom: sharp offset") end
+            if r == NILR then return nil end
+            return r
+         end,
+      }
+   end
+end
+
+-- Finding 1: the probe collapses (too narrow at the NORMAL distance) -- skip
+-- it and count it, exactly like a normal run, and never even attempt the
+-- real sharp offset.
+install_sharp_copy({ NILR })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(group == nil, "sharp probe collapses: bare nil, the skip case")
+CHECK(err == nil, "sharp probe collapses: no error -- too narrow, not a failure")
+CHECK(#offset_calls == 1, "sharp probe collapses: the real sharp offset is never attempted")
+
+-- (a) the probe passes, the real sharp offset passes, MakeOffsetsSquare
+-- returns a fresh group with Count >= 1 -- adopted.
+install_sharp_copy({ grp(2), grp(2, grp(5)) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(err == nil, "sharp success: no error")
+CHECK(type(group) == "table" and group.Count == 5,
+      "sharp success: the squared group is adopted")
+CHECK(#offset_calls == 2, "sharp success: probe then real sharp offset, two :Offset calls")
+CHECK(offset_calls[1].dist == -0.05, "sharp success: the probe uses the plain dist")
+CHECK(offset_calls[2].dist == -0.09, "sharp success: the real sharp offset uses sharp_dist")
+
+-- The squaring call's own arguments. The flag is the whole feature: with it
+-- false the corners come back rounded and the call still reports success, so
+-- this assertion -- not the return-value handling -- is what keeps the cut
+-- sharp. Probed live 2026-07-31: false -> 4 arcs, true -> 0 arcs.
+CHECK(#square_calls == 1, "sharp success: MakeOffsetsSquare called exactly once")
+CHECK(square_calls[1].flag == true,
+      "sharp success: the squaring flag is TRUE (false squares nothing and still returns true)")
+CHECK(square_calls[1].w == 0.09,
+      "sharp success: squaring gets the sharp distance's magnitude")
+CHECK(square_calls[1].w2 == 0.18,
+      "sharp success: squaring's third argument is twice that distance")
+
+-- (b) MakeOffsetsSquare returns true: the post-process worked in place, so
+-- the ungrown group is kept.
+install_sharp_copy({ grp(2), grp(3, true) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(err == nil, "sharp, square true: no error")
+CHECK(type(group) == "table" and group.Count == 3,
+      "sharp, square true: the original sharp group is kept")
+
+-- (c) MakeOffsetsSquare returns nil: a refusal, never a silent round-cornered cut.
+install_sharp_copy({ grp(2), grp(3, nil) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(group == nil, "sharp, square nil: nil group")
+CHECK(type(err) == "string" and err:find("square", 1, true) ~= nil,
+      "sharp, square nil: error names the squaring step")
+
+-- (d) MakeOffsetsSquare returns something unreadable (a table with no usable
+-- Count): also a refusal.
+install_sharp_copy({ grp(2), grp(3, {}) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(group == nil, "sharp, square unreadable: nil group")
+CHECK(type(err) == "string" and err:find("square", 1, true) ~= nil,
+      "sharp, square unreadable: error names the squaring step")
+
+-- (e) MakeOffsetsSquare throws: caught by pcall, reported as a failure.
+-- grp()'s square_result is a fixed value, not callable, so this needs its
+-- own fake rather than grp -- MakeOffsetsSquare itself raises.
+copy_calls, offset_calls = 0, {}
+CreateCopyOfSelectedContours = function()
+   copy_calls = (copy_calls or 0) + 1
+   local n = 0
+   return {
+      Offset = function(self, dist, absdist, mode, preserve_arcs)
+         n = n + 1
+         if n == 1 then return { Count = 2 } end
+         return {
+            Count = 3,
+            MakeOffsetsSquare = function() error("boom: square") end,
+         }
+      end,
+   }
+end
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(group == nil, "sharp, square raises: nil group")
+CHECK(type(err) == "string" and err:find("boom", 1, true) ~= nil,
+      "sharp, square raises: error carries the original message text")
+
+-- The real sharp offset itself returning nil/empty after the probe passed is
+-- unexpected (sharp_dist can never collapse the way the probe can), so it is
+-- reported as a failure rather than silently skipped.
+install_sharp_copy({ grp(2), NILR })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(group == nil, "sharp offset unexpectedly nil after probe passed: nil group")
+CHECK(type(err) == "string" and err:find("unexpected", 1, true) ~= nil,
+      "sharp offset unexpectedly nil after probe passed: error says so")
+
+-- A normal run (sharp_dist == nil) must be completely unaffected: one
+-- :Offset call, no MakeOffsetsSquare, exactly the pre-Finding-1 behaviour.
+install_sharp_copy({ grp(4) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, nil)
+CHECK(err == nil and type(group) == "table" and group.Count == 4,
+      "normal run: unaffected by the sharp path")
+CHECK(#offset_calls == 1, "normal run: exactly one :Offset call")
+
 CreateCopyOfSelectedContours = SAVED_CREATE_COPY
 
 -- sdk_scan_chamfers reads the job twice -- layers for offsets, toolpaths for

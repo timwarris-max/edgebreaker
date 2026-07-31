@@ -275,3 +275,25 @@ do
       os.remove(settings_path)
    end
 end
+
+-- Sharp inside corners (v1.11.0). The checkbox is unitless and safe to carry
+-- between runs (unlike start depth): it is visible on the dialog and only
+-- ever APPLIED when Side = Inside -- CO.sharp_applies gates in Lua whatever
+-- the stored field claims (spec 5).
+CHECK(CO.serialize_settings({ units = "in", mode = "setback", side = "inside",
+   percent = 80, size = 0.02, sharp = 1 }):find("sharp=1", 1, true) ~= nil,
+      "sharp is a last-used setting")
+CHECK(CO.apply_settings({ sharp = "1" }, IN).sharp == 1, "sharp=1 survives the file")
+CHECK(CO.apply_settings({ sharp = "0" }, IN).sharp == 0, "sharp=0 survives the file")
+CHECK(CO.apply_settings({}, IN).sharp == 0, "no sharp key seeds off")
+CHECK(CO.apply_settings({ sharp = "banana" }, IN).sharp == 0, "garbage sharp seeds off")
+CHECK(CO.apply_settings({ sharp = "1", units = "in" }, MM).sharp == 1,
+      "sharp is unitless: carried even when the units changed")
+
+-- The Side rule itself: Lua authoritative, the dropdown the complete detector.
+CHECK(CO.sharp_applies("inside", 1) == true,  "inside + ticked applies")
+CHECK(CO.sharp_applies("inside", "1") == true, "the dialog's text field form applies too")
+CHECK(CO.sharp_applies("inside", 0) == false, "inside + unticked does not")
+CHECK(CO.sharp_applies("auto", 1) == false,   "auto never applies, whatever the field says")
+CHECK(CO.sharp_applies("outside", 1) == false, "outside never applies")
+CHECK(CO.sharp_applies(nil, nil) == false,     "nothing applies on missing fields")

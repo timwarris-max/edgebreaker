@@ -59,3 +59,22 @@ local v150 = CO.decode_memory("[EdgeBreaker-DATA]EB1|size=1|units=in[/EdgeBreake
 CHECK(v150.start == nil, "a v1.5.0 blob carries no start depth")
 NEAR(CO.apply_settings(v150, CO.unit_info(false)).start, 0, 1e-12,
      "...and a v1.5.0 chamfer rebuilds at start depth 0")
+
+-- Sharp (v1.11.0): remembered per chamfer, raw checkbox value -- the APPLIED
+-- value is gated by CO.sharp_applies at run time, so a blob carrying sharp=1
+-- with side=outside deterministically rebuilds without it (spec 5).
+local memP = { size = 0.02, mode = "setback", side = "inside", percent = 80,
+               units = "in", sharp = 1, fps = {} }
+local backP = CO.decode_memory(CO.encode_memory(memP))
+CHECK(backP.sharp == 1, "round-trip sharp=1")
+CHECK(CO.apply_settings(backP, CO.unit_info(false)).sharp == 1,
+      "a remembered sharp seeds the rebuild ticked")
+local memQ = { size = 0.02, mode = "setback", side = "auto", percent = 80,
+               units = "in", fps = {} }
+CHECK(CO.decode_memory(CO.encode_memory(memQ)).sharp == 0,
+      "an unset sharp encodes as the inert sharp=0, not as absence")
+-- A pre-1.11.0 blob has no sharp key at all: reads back nil, seeds off.
+local v1100 = CO.decode_memory("[EdgeBreaker-DATA]EB1|size=1|units=in[/EdgeBreaker-DATA]")
+CHECK(v1100.sharp == nil, "an old blob carries no sharp key")
+CHECK(CO.apply_settings(v1100, CO.unit_info(false)).sharp == 0,
+      "...and an old chamfer rebuilds with sharp off")

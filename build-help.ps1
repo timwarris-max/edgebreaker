@@ -39,6 +39,7 @@ $ORDER = @(
   "Notes",
   "Where on the flute you cut",
   "Start depth",
+  "Sharp inside corners",
   "The section view",
   "What a chamfer remembers",
   "More than one chamfer in a job",

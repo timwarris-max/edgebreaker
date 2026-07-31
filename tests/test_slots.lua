@@ -78,7 +78,7 @@ CHECK(CO.tool_defaults_key(12) ~= CO.tool_defaults_key(1),
 -- Mode and Side already travel. v1.5.0 record: seven |-separated fields
 -- "slot|label|relation|size|mode|side|percent", records joined by ";". The
 -- relation badges the entry against the CURRENT selection (so the dialog can
--- colour the banner without asking Lua again) and the four seeds let it
+-- colour the banner without asking Lua again) and the five seeds let it
 -- re-seed the form when the user changes chamfer. Size text is free-form -- it
 -- is lifted from a toolpath name the user can edit in Aspire -- so
 -- encode_chamfer_list sanitises out both separators (see below).
@@ -87,22 +87,22 @@ local fpY = { cx = 9, cy = 1, xlen = 2, ylen = 1 }
 local mem = { fps = { fpX }, size = 0.02, mode = "setback", side = "auto", percent = 80 }
 local EPS = 1e-6
 
-CHECK(CO.encode_chamfer_list({}, 1, {}, EPS) == "1|New chamfer (1)|new||||",
+CHECK(CO.encode_chamfer_list({}, 1, {}, EPS) == "1|New chamfer (1)|new|||||",
       "empty job offers only a new chamfer, with no seeds")
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in" } }, 2, {}, EPS)
-      == "1|Chamfer 1 - 0.06 in|nomem||||;2|New chamfer (2)|new||||",
+      == "1|Chamfer 1 - 0.06 in|nomem|||||;2|New chamfer (2)|new|||||",
       "a chamfer with no memory is 'nomem' and carries no seeds")
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in", memory = mem } }, 2, { fpX }, EPS)
-      == "1|Chamfer 1 - 0.06 in|match|0.02|setback|auto|80;2|New chamfer (2)|new||||",
-      "a remembered chamfer carries its relation and its four seeds")
+      == "1|Chamfer 1 - 0.06 in|match|0.02|setback|auto|80|0;2|New chamfer (2)|new|||||",
+      "a remembered chamfer carries its relation and its five seeds")
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in", memory = mem } }, 2, { fpY }, EPS)
       :find("|differs|", 1, true) ~= nil,
       "a selection the chamfer does not remember reads 'differs'")
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in" }, { slot = 2, size = nil } }, 3, {}, EPS)
-      == "1|Chamfer 1 - 0.06 in|nomem||||;2|Chamfer 2 - offsets only|nomem||||;3|New chamfer (3)|new||||",
+      == "1|Chamfer 1 - 0.06 in|nomem|||||;2|Chamfer 2 - offsets only|nomem|||||;3|New chamfer (3)|new|||||",
       "a chamfer whose toolpath was deleted reads 'offsets only'")
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in" } }, nil, {}, EPS)
-      == "1|Chamfer 1 - 0.06 in|nomem||||",
+      == "1|Chamfer 1 - 0.06 in|nomem|||||",
       "a full job offers no new chamfer")
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in" } }, 2, {}, EPS):find("Chamfer 01") == nil,
       "labels never show the zero padding")
@@ -112,7 +112,7 @@ CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in" } }, 2, {}, EPS):fin
 -- nothing left to rebuild it FROM, so picking it must mean "teach it these".
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in", memory = mem, missing_all = true } },
                              2, { fpY }, EPS)
-      == "1|Chamfer 1 - 0.06 in - shapes missing or moved|nomem|0.02|setback|auto|80;2|New chamfer (2)|new||||",
+      == "1|Chamfer 1 - 0.06 in - shapes missing or moved|nomem|0.02|setback|auto|80|0;2|New chamfer (2)|new|||||",
       "a chamfer whose shapes are all gone is labelled and forced to teach")
 
 -- A toolpath's name is free text the user can edit in Aspire. Neither
@@ -121,7 +121,7 @@ CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in", memory = mem, missi
 -- rides in the toolpath's Notes, which is just as editable, so its seeds are
 -- sanitised the same way.
 CHECK(CO.encode_chamfer_list({ { slot = 1, size = "0.06 in; 3|evil" } }, 2, {}, EPS)
-      == "1|Chamfer 1 - 0.06 in  3 evil|nomem||||;2|New chamfer (2)|new||||",
+      == "1|Chamfer 1 - 0.06 in  3 evil|nomem|||||;2|New chamfer (2)|new|||||",
       "separators in a hand-edited toolpath name cannot forge a dropdown entry")
 CHECK(select(2, CO.encode_chamfer_list({ { slot = 1, size = "a;b" } }, nil, {}, EPS):gsub(";", "")) == 0,
       "a sanitised single-entry list contains no separator at all")
@@ -144,3 +144,19 @@ CHECK(CO.encode_banner_facts({ excluded = {} }, 2, 0) == "sel=2;excluded=;mem=0"
 CHECK(CO.encode_banner_facts({ excluded = { { slot = 1, count = 2 }, { slot = 3, count = 1 } } }, 5, 4)
       == "sel=5;excluded=1:2,3:1;mem=4",
       "excluded owners travel as slot:count pairs")
+
+-- v1.11.0: the record carries the sharp flag so switching chamfers in the
+-- dialog reseeds the checkbox the way opening on that chamfer would have.
+do
+   local memS = { size = 0.06, mode = "setback", side = "inside", percent = 80,
+                  sharp = 1, fps = {} }
+   local rec = CO.encode_chamfer_list({ { slot = 1, size = "0.06 in", memory = memS } },
+                                      2, {}, EPS)
+   CHECK(rec:find("|1;2|New chamfer", 1, true) ~= nil,
+         "a sharp chamfer's record ends its seed fields with sharp=1")
+   local memN = { size = 0.06, mode = "setback", side = "auto", percent = 80, fps = {} }
+   local rec2 = CO.encode_chamfer_list({ { slot = 1, size = "0.06 in", memory = memN } },
+                                       2, {}, EPS)
+   CHECK(rec2:find("|0;2|New chamfer", 1, true) ~= nil,
+         "a chamfer without the tick carries sharp=0")
+end

@@ -132,15 +132,15 @@ var CASES = [
     expectWarn: "", noSection: true },
   // The real layout worst case: everything visible AND the warning present.
   { name: "kitchen sink + warning (worst case)", bit: "60deg V-bit",
-    angle: "60", dia: "0.5", size: "0.030", thickness: "0.25",
+    angle: "60", dia: "0.5", size: "0.030", thickness: "0.25", small: true,
     note: "2 bits for a different job unit were hidden.",
     expectWarn: "40% would fit, at 0.226 in.",
-    chamfers: "1|Chamfer 1 - 0.06 in|nomem||||;2|Chamfer 2 - offsets only|nomem||||;3|New chamfer (3)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in|nomem|||||;2|Chamfer 2 - offsets only|nomem|||||;3|New chamfer (3)|new|||||",
     slot: "2", facts: "sel=2;excluded=;mem=0" },
   // Task 4: exercises the Change dropdown alone, without the rest of the sink.
   { name: "many chamfers (dropdown populated)", bit: "60deg V-bit",
     angle: "60", dia: "0.5", size: "0.030",
-    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60;2|Chamfer 2 - 0.015 in|match|0.015|face|inside|40;3|Chamfer 3 - offsets only|nomem||||;4|New chamfer (4)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|Chamfer 2 - 0.015 in|match|0.015|face|inside|40|;3|Chamfer 3 - offsets only|nomem|||||;4|New chamfer (4)|new|||||",
     slot: "3", facts: "sel=3;excluded=;mem=0" },
 
   // v1.5.0: the banner is the dialog's whole point, and each state is a
@@ -150,25 +150,25 @@ var CASES = [
   // list are used deliberately: they are what pushes the sub-line onto a
   // third line, which is the only way this banner can overflow.
   { name: "banner: add (green)", bit: "60deg V-bit", angle: "60", dia: "0.5", size: "0.030",
-    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40;3|New chamfer (3)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40|;3|New chamfer (3)|new|||||",
     slot: "3", kind: "add", facts: "sel=5;excluded=1:2,2:1;mem=0",
     force: "add", expectBanner: "Adding Chamfer 3" },
   { name: "banner: rebuild (blue)", bit: "60deg V-bit", angle: "60", dia: "0.5", size: "0.030",
-    chamfers: "1|Chamfer 1 - 0.06 in|match|0.06|setback|auto|60;2|New chamfer (2)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in|match|0.06|setback|auto|60|;2|New chamfer (2)|new|||||",
     slot: "1", kind: "rebuild", facts: "sel=4;excluded=;mem=4",
     force: "rebuild", expectBanner: "Rebuilding Chamfer 1" },
   { name: "banner: teach (amber)", bit: "60deg V-bit", angle: "60", dia: "0.5", size: "0.030",
-    chamfers: "1|Chamfer 1 - 0.06 in - shapes missing or moved|nomem|0.06|setback|auto|60;2|New chamfer (2)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in - shapes missing or moved|nomem|0.06|setback|auto|60|;2|New chamfer (2)|new|||||",
     slot: "1", kind: "rebuild", facts: "sel=3;excluded=;mem=4",
     force: "teach", expectBanner: "I don't know which shapes" },
   { name: "banner: replace (red)", bit: "60deg V-bit", angle: "60", dia: "0.5", size: "0.030",
-    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40;3|New chamfer (3)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40|;3|New chamfer (3)|new|||||",
     slot: "1", kind: "add", facts: "sel=3;excluded=;mem=4",
     force: "replace", expectBanner: "Replacing Chamfer 1" },
   // Nothing selected: the recall banner, and the only state whose counts come
   // from mem= rather than sel=.
   { name: "banner: recall (nothing selected)", bit: "60deg V-bit", angle: "60", dia: "0.5", size: "0.030",
-    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60;2|New chamfer (2)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|New chamfer (2)|new|||||",
     slot: "1", kind: "recall", facts: "sel=0;excluded=;mem=4",
     expectBanner: "nothing selected" },
   // v1.6.0. A start depth adds a row to the LEFT column and lengthens the
@@ -178,7 +178,7 @@ var CASES = [
   { name: "start depth + wrapped warning (v1.6.0 worst case)", bit: "12.4deg V-bit",
     angle: "12.4", dia: "0.25", size: "0.020", thickness: "0.375", start: "0.25",
     note: "2 bits for a different job unit were hidden.",
-    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40;3|New chamfer (3)|new||||",
+    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40|;3|New chamfer (3)|new|||||",
     slot: "1", kind: "add", facts: "sel=3;excluded=;mem=4", force: "replace",
     expectWarn: "Reaches 0.6067 in even at 0% — past your 0.375 in stock. Use a wider-angle bit, a smaller chamfer, or less start depth." },
   // Live 2026-07-27: a 0.25 start depth on 0.25 stock. Nothing about the BIT
@@ -254,6 +254,17 @@ var CASES = [
     angle: "90", dia: "0.25", size: "0.030", pick: "30.000000|0.500000",
     expectCaption: "across the top face", expectInset: "SETBACK" },
 
+  // v1.11.0 sharp corners. The checkbox lives on the Side row, live exactly
+  // when Side = Inside, greyed with its remedy caption otherwise (Lua gates
+  // for real -- this is UX). Both states measured, both at the design size
+  // and at the small default window.
+  { name: "sharp: inside + ticked (live)", bit: "60deg V-bit", angle: "60",
+    dia: "0.5", size: "0.030", side: "inside", sharp: "1", small: true,
+    expectSharp: { dis: 0, chk: 1, cap: 0 } },
+  { name: "sharp: auto (greyed, caption)", bit: "60deg V-bit", angle: "60",
+    dia: "0.5", size: "0.030", small: true,
+    expectSharp: { dis: 1, chk: 0, cap: 1 } },
+
   // The Help button shares the 96px button bar with #Summary, and the summary
   // is the only variable-width thing in there. These three cases walk that slot
   // from its real worst case to past it.
@@ -263,7 +274,7 @@ var CASES = [
   // mm (the wider unit), 100%, and a fractional bit angle.
   { name: "bar: longest real summary beside Help", bit: "12.4deg V-bit",
     angle: "12.4", dia: "0.25", size: "0.031250", units: "mm", percent: "100",
-    chamfers: "99|Chamfer 99 - 0.06 mm|differs|0.06|setback|auto|100;100|New chamfer (100)|new||||",
+    chamfers: "99|Chamfer 99 - 0.06 mm|differs|0.06|setback|auto|100|;100|New chamfer (100)|new|||||",
     slot: "99", kind: "add", facts: "sel=9999;excluded=;mem=0", force: "replace" },
   // 2. Past it. The summary's wording is not frozen -- it has been rewritten
   // twice already -- so the bar is measured against a line longer than today's,
@@ -281,7 +292,7 @@ var CASES = [
   { name: "bar: summary longer than any real one (headroom)", minWindow: 1280,
     bit: "12.4deg V-bit",
     angle: "12.4", dia: "0.25", size: "0.031250", units: "mm", percent: "100",
-    chamfers: "99|Chamfer 99 - 0.06 mm|differs|0.06|setback|auto|100;100|New chamfer (100)|new||||",
+    chamfers: "99|Chamfer 99 - 0.06 mm|differs|0.06|setback|auto|100|;100|New chamfer (100)|new|||||",
     slot: "99", kind: "add", facts: "sel=9999;excluded=;mem=0", force: "replace",
     forceSummary: "Will replace <b>Chamfer 99</b> · 9999 shapes · " +
                   "<b>0.03125000 mm</b> @ 100% · 12.4° bit · headroom" },
@@ -292,7 +303,11 @@ var CASES = [
     angle: "60", dia: "0.5", size: "0.030", helpFail: true }
 ];
 
-function seed(c) {
+function seed(c, viewW, viewH) {
+  // Defaults to the sweep's own viewport so every existing call site (the
+  // design-size pass) is unaffected; the small-viewport second pass (below)
+  // passes 1278x650 explicitly.
+  viewW = viewW || VIEW_W; viewH = viewH || VIEW_H;
   var s = html;
   s = s.replace('id="BitName" name="BitName" value=""', 'id="BitName" name="BitName" value="' + c.bit + '"');
   // Simulates Aspire's buddy-label write. AddToolPicker resolves the seeded bit
@@ -327,6 +342,15 @@ function seed(c) {
   if (c.mode)
     s = s.replace('id="Mode" name="Mode" value="setback"',
                   'id="Mode" name="Mode" value="' + c.mode + '"');
+  // v1.11.0 sharp corners: Side is the detector the checkbox gates on, and
+  // Sharp is the tick itself -- both seeded the same optional-key way as the
+  // other hidden round-trip fields above.
+  if (c.side)
+    s = s.replace('id="Side" name="Side" value="auto"',
+                  'id="Side" name="Side" value="' + c.side + '"');
+  if (c.sharp)
+    s = s.replace('id="Sharp" name="Sharp" value="0"',
+                  'id="Sharp" name="Sharp" value="' + c.sharp + '"');
   if (c.note)
     s = s.replace('id="HiddenNote" name="HiddenNote" value=""', 'id="HiddenNote" name="HiddenNote" value="' + c.note + '"');
   if (c.units)
@@ -372,8 +396,8 @@ function seed(c) {
   // body:relative makes #Scroll/#Bar resolve against this fixed box instead of
   // the browser viewport. In Aspire the two are identical (body is height:100%
   // of the viewport), so this changes nothing about what is measured.
-  s = s.replace("</head>", "<style>html,body{height:" + VIEW_H + "px !important;" +
-    "width:" + VIEW_W + "px !important;} body{position:relative !important;}</style></head>");
+  s = s.replace("</head>", "<style>html,body{height:" + viewH + "px !important;" +
+    "width:" + viewW + "px !important;} body{position:relative !important;}</style></head>");
   // Report measurements through <title> so --dump-dom carries them out.
   s = s.replace("</body>", "<script>setTimeout(function(){" +
     "var sc=document.getElementById('Scroll'), bar=document.getElementById('Bar')," +
@@ -433,12 +457,21 @@ function seed(c) {
     "var helpW=hb?Math.round(hb.width):0;" +
     "var helpX=hb?Math.round(hb.left-br.left):-1;" +
     "var noteOn=hn?1:0, sumOn=sm?1:0;" +
+    // v1.11.0 sharp corners: the checkbox lives on the Side row and is live
+    // exactly when Side = Inside. -1 means the element itself is missing
+    // (the RED case before the box exists), 0/1 its real disabled/checked
+    // state otherwise. capOn mirrors offsetWidth so a display:none caption
+    // that still occupies layout space cannot read as hidden.
+    "var sb=document.getElementById('SharpBox'), scap=document.getElementById('SharpCap');" +
+    "var sharpDis=sb?(sb.disabled?1:0):-1, sharpChk=sb?(sb.checked?1:0):-1;" +
+    "var capOn=(scap&&scap.offsetWidth>0)?1:0;" +
     "document.title='MEASURE over='+over+' content='+real+' avail='+sc.clientHeight+" +
-    "' okBottom='+Math.round(r.bottom)+' viewH=" + VIEW_H + "'+" +
+    "' okBottom='+Math.round(r.bottom)+' viewH=" + viewH + "'+" +
     "' ink='+(Math.round(ink*10)/10)+" +
     "' hdrInk='+hdrInk+' hdrPair='+hdrPair+' hdrGap='+hdrGap+" +
     "' helpW='+helpW+' helpX='+helpX+' helpGap='+helpGap+' barGap='+barGap+" +
-    "' barOver='+barOver+' noteOn='+noteOn+' sumOn='+sumOn;" +
+    "' barOver='+barOver+' noteOn='+noteOn+' sumOn='+sumOn+" +
+    "' sharpDis='+sharpDis+' sharpChk='+sharpChk+' capOn='+capOn;" +
     "},1500);</script></body>");
   return s;
 }
@@ -531,30 +564,38 @@ var failed = 0;
 
 console.log("Viewport " + VIEW_W + "x" + VIEW_H + "  (window " + WIN_W + "x" + WIN_H + " less frame)\n");
 
-CASES.forEach(function (c) {
+// Hoisted so a case can be rendered more than once at different viewports --
+// v1.11.0 needs the sharp-corners checkbox proven not just at the design
+// size but at the small default window (1280x700, CO.DEFAULT_SIZE, the
+// window every unmeasured machine gets), where its greyed caption has the
+// least room. label overrides the console/tmp-file name so the second pass
+// reads distinctly from the first.
+function runCase(c, viewW, viewH, label) {
+  var name = label || c.name;
   if (c.minWindow && WIN_W < c.minWindow) {
-    console.log("skip  " + c.name + "  (needs a window >= " + c.minWindow + " wide)");
+    console.log("skip  " + name + "  (needs a window >= " + c.minWindow + " wide)");
     return;
   }
-  var f = path.join(tmp, c.name.replace(/[^a-z0-9]/gi, "_") + ".htm");
-  fs.writeFileSync(f, seed(c));
+  var f = path.join(tmp, name.replace(/[^a-z0-9]/gi, "_") + ".htm");
+  fs.writeFileSync(f, seed(c, viewW, viewH));
   var out = cp.execFileSync(CHROME, [
     "--headless=new", "--disable-gpu", "--hide-scrollbars",
     "--virtual-time-budget=4000",
-    "--window-size=" + VIEW_W + "," + VIEW_H,
+    "--window-size=" + viewW + "," + viewH,
     "--dump-dom", "file:///" + f.replace(/\\/g, "/")
   ], { encoding: "utf8", maxBuffer: 40 * 1024 * 1024 });
 
-  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d)/.exec(out);
-  if (!m) { console.log("FAIL  " + c.name + "  (no measurement - page error?)"); failed++; return; }
+  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d) sharpDis=(-?\d) sharpChk=(-?\d) capOn=(\d)/.exec(out);
+  if (!m) { console.log("FAIL  " + name + "  (no measurement - page error?)"); failed++; return; }
 
-  var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH = +m[5], ink = +m[6];
+  var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH2 = +m[5], ink = +m[6];
   var hdrInk = +m[7], hdrPair = +m[8], hdrGap = +m[9];
   var helpW = +m[10], helpX = +m[11], helpGap = +m[12], barGap = +m[13], barOver = +m[14];
   var noteOn = +m[15], sumOn = +m[16];
+  var sharpDis = +m[17], sharpChk = +m[18], capOn = +m[19];
   var bad = [];
   if (over > 0) bad.push("content overflows by " + over + "px");
-  if (okBottom > viewH) bad.push("OK button below the fold");
+  if (okBottom > viewH2) bad.push("OK button below the fold");
   // The section's viewBox is 1000 wide and clipped, so this is the one
   // constraint on the drawing that the overflow measurement structurally cannot
   // enforce: ink past the edge is silently cut off instead of pushing anything.
@@ -727,11 +768,33 @@ CASES.forEach(function (c) {
     if (!sectionDrewStock(out)) bad.push("section view drew nothing");
   }
 
-  console.log((bad.length ? "FAIL  " : "ok    ") + c.name +
+  // v1.11.0 sharp corners: the checkbox is live exactly when Side = Inside,
+  // greyed with its remedy caption otherwise. Lua is the real gate (this is
+  // UX only), but a checkbox that renders enabled when it should be greyed,
+  // or a caption that fails to show, would mislead the operator into
+  // thinking a tick is doing something it isn't.
+  if (c.expectSharp) {
+    if (sharpDis !== c.expectSharp.dis)
+      bad.push("SharpBox disabled=" + sharpDis + " want " + c.expectSharp.dis);
+    if (sharpChk !== c.expectSharp.chk)
+      bad.push("SharpBox checked=" + sharpChk + " want " + c.expectSharp.chk);
+    if (capOn !== c.expectSharp.cap)
+      bad.push("SharpCap visible=" + capOn + " want " + c.expectSharp.cap);
+  }
+
+  console.log((bad.length ? "FAIL  " : "ok    ") + name +
     "  content " + content + " / " + avail + " avail, slack " + (avail - content) + "px" +
     ", bar gap " + barGap + "px" +
     (bad.length ? "  <-- " + bad.join("; ") : ""));
   if (bad.length) failed++;
+}
+
+CASES.forEach(function (c) {
+  runCase(c, VIEW_W, VIEW_H);
+  // The small default window: 1280x700 less the 2x50 frame. Every unlisted
+  // machine gets this size (CO.DEFAULT_SIZE), so it is the real worst case
+  // for the greyed caption's headroom, not a hypothetical.
+  if (c.small) runCase(c, 1278, 650, c.name + " @1280x700");
 });
 
 // ---- MessageDialog.htm ---------------------------------------------------

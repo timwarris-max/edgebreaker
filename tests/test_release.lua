@@ -169,6 +169,32 @@ CHECK(no_start == nil and string.find(start_why, "re-save", 1, true),
       "a template with no patchable start depth is refused")
 CO.find_start_depth_offset = orig_find_start
 
+-- v1.11.0: the MV and sharpen fields become template obligations, checked
+-- at validation time rather than failing at first use -- the v1.6.0 start-depth
+-- precedent. The shipped template carries both (pinned above), so this only
+-- ever catches a genuinely broken re-save. Allowance is deliberately NOT a
+-- requirement here -- R1 dropped the allowance patch entirely (spec 15:
+-- Aspire locks and discards it while sharpening is on), so a template with no
+-- readable allowance offset must still validate.
+for _, probe in ipairs({ "find_mv_value_offset", "find_sharpen_offset" }) do
+   local orig = CO[probe]
+   CO[probe] = function() return nil, "gone" end
+   local ok_v, why_v = CO.validate_template(shippedT, "in")
+   CHECK(ok_v == nil and type(why_v) == "string"
+         and string.find(why_v, "re-save", 1, true) ~= nil,
+         "a template failing " .. probe .. " is refused with the re-save hint")
+   CO[probe] = orig
+end
+do
+   local orig = CO.find_allowance_offset
+   CO.find_allowance_offset = function() return nil, "gone" end
+   CHECK(CO.validate_template(shippedT, "in") == true,
+         "a template with no readable allowance offset still validates -- R1 dropped that requirement")
+   CO.find_allowance_offset = orig
+end
+CHECK(CO.validate_template(shippedT, "in") == true,
+      "the shipped template still validates with both sharp fields required")
+
 -- An absent units tag must not block an otherwise-good template: silence is
 -- not evidence of a mismatch.
 local orig_units = CO.read_template_units
@@ -357,7 +383,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.10.5", "version gate: 1.10.5")
+CHECK(CO.VERSION == "1.11.0", "version gate: 1.11.0")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -515,4 +541,79 @@ do
    CHECK(qbody == nil or (qbody:find("show_message", 1, true) == nil and
                           qbody:find("DisplayMessageBox", 1, true) == nil),
          "asking Windows never speaks")
+end
+
+-- v1.11.0 sharp corners: the Inside code and flag encodings are pinned against
+-- an ASPIRE-AUTHORED fixture (saved from the Profile form at the Task 1
+-- sitting, 2026-07-31), not inferred. MV_CODES had 1 = inside inferred-only
+-- until this. The fixture is committed at
+-- tests/fixtures/mv-inside-sharp.ToolpathTemplate; the SKIP branch below is
+-- defensive only, in case the fixture file ever goes missing.
+do
+   local sharpFxFile = io.open("tests/fixtures/mv-inside-sharp.ToolpathTemplate", "rb")
+   if sharpFxFile == nil then
+      print("SKIP: mv-inside-sharp fixture missing (test_release.lua sharp pins)")
+   else
+      sharpFxFile:close()
+      local sharpFx = slurp("tests/fixtures/mv-inside-sharp.ToolpathTemplate")
+      CHECK(CO.read_machine_vectors(sharpFx) == "inside",
+            "fixture pins the Inside code (MV_CODES inference confirmed by Aspire bytes)")
+      CHECK(sharpFx:byte(CO.find_sharpen_offset(sharpFx)) == 1,
+            "fixture pins the sharpen flag byte = 1")
+      do
+         local off = CO.find_allowance_offset(sharpFx)
+         CHECK(type(off) == "number", "fixture's allowance is findable under the F\\0 rule")
+         -- The 2026-07-31 sitting found Aspire LOCKS the allowance field while
+         -- sharpening is on and stores 0 regardless -- an allowance can never
+         -- ride along with sharp corners, so R1 deleted the allowance patch;
+         -- compensation moves to where the offset vectors are drawn (R2).
+         CHECK(sharpFx:sub(off, off + 7) == CO.encode_double(0),
+               "fixture's allowance is 0: Aspire discards allowance under sharpening")
+      end
+      -- What we patch is what Aspire saves: the patched shipped template reads the
+      -- same MV name as the fixture.
+      CHECK(CO.read_machine_vectors(CO.patch_template_sharp(shippedT))
+            == CO.read_machine_vectors(sharpFx),
+            "the patcher writes the code Aspire itself stores for Inside")
+   end
+end
+
+-- v1.11.0: the dialog's greying is UX -- these two calls are what actually
+-- decide. If either disappears, a ticked box on a non-Inside run would apply
+-- sharp (or an Inside run would silently not), and nothing offline but this
+-- would notice.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   CHECK(src:find("CO%.sharp_applies%(side, sharp%)") ~= nil,
+         "main() gates sharp through CO.sharp_applies(side, sharp)")
+   CHECK(src:find('AddTextField%("Sharp"') ~= nil,
+         "main() seeds the dialog's Sharp field")
+end
+
+-- R2: sdk_offset_loop and main() are SDK-touching and cannot run offline, so
+-- the sharp distance shift and the sharp_run local (computed once, reused at
+-- both the offset site and the template-patch call) are pinned by source
+-- rather than executed.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   CHECK(src:find("local sharp_run = CO%.sharp_applies%(side, sharp%)") ~= nil,
+         "main() computes sharp_run once")
+   CHECK(src:find("sharp_run and %(dist %+ CO%.sharp_offset_shift%(s%.d, angle%)%) or nil") ~= nil,
+         "a sharp run shifts the offset distance by CO.sharp_offset_shift(s.d, angle)")
+   CHECK(src:find("CO%.sdk_offset_loop%(job, loop%.obj, dist, sharp_dist%)") ~= nil,
+         "main() passes both the normal dist and sharp_dist into sdk_offset_loop")
+   CHECK(src:find("tool, sharp_run%)") ~= nil,
+         "main() reuses sharp_run at the template-patch call")
+   CHECK(src:find("function CO%.sdk_offset_loop%(job, obj, dist, sharp_dist%)") ~= nil,
+         "sdk_offset_loop takes the normal dist and the sharp_dist flag/shift separately")
+   CHECK(src:find("sg:MakeOffsetsSquare%(math%.abs%(sharp_dist%), true, math%.abs%(sharp_dist%) %* 2%)") ~= nil,
+         -- No longer inferred: OffsetSquareProbe (2026-07-31) read the real
+         -- signature off luabind's overload error --
+         --    bool MakeOffsetsSquare(ContourGroup*, double, bool, double)
+         -- -- and measured both flag values on the same rectangle. The middle
+         -- argument MUST be true; false squares nothing and still returns true,
+         -- which is exactly how it reached a live sitting.
+         "sdk_offset_loop applies MakeOffsetsSquare with the squaring flag TRUE")
 end

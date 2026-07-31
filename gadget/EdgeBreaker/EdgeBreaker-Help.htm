@@ -71,7 +71,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </head>
 <body>
 <header>
-  <div class="name">EdgeBreaker<span class="ver">v1.10.5</span></div>
+  <div class="name">EdgeBreaker<span class="ver">v1.11.0</span></div>
   <div class="sub">Help &mdash; works offline</div>
 </header>
 <main>
@@ -83,6 +83,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <li><a href="#notes">Notes</a></li>
 <li><a href="#where-on-the-flute-you-cut">Where on the flute you cut</a></li>
 <li><a href="#start-depth">Start depth</a></li>
+<li><a href="#sharp-inside-corners">Sharp inside corners</a></li>
 <li><a href="#the-section-view">The section view</a></li>
 <li><a href="#what-a-chamfer-remembers">What a chamfer remembers</a></li>
 <li><a href="#more-than-one-chamfer-in-a-job">More than one chamfer in a job</a></li>
@@ -138,6 +139,17 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <p><strong>Start depth is how far below the top of the stock the edge sits</strong> — a pocket floor, a second level, a top you have already skimmed. Leave it at <strong>0</strong> for an edge at the top of the material, which is the usual case.</p>
 <p>It does not change the chamfer itself. The size, the cut position and the bit geometry all describe the bit against the edge, and that relationship is the same wherever the edge happens to sit — a start depth simply moves the whole cut down. So the machine reaches <strong>start depth + cut depth</strong> into the material, and that total is what the depth-vs-stock warning measures and what the section view draws.</p>
 <p>Each chamfer remembers its <strong>own</strong> start depth, and a <strong>new</strong> chamfer always opens at 0. Unlike the chamfer size, it is deliberately not carried over from your last run: a leftover 0.25 in from yesterday's pocket applied to today's flat job would cut a quarter inch too deep without looking wrong on screen.</p>
+</section>
+<section>
+<h2 id="sharp-inside-corners">Sharp inside corners</h2>
+<p>A chamfer's inside corners normally come out rounded — at one depth, the bit can only get so far into a corner. Tick <strong>Sharp inside corners</strong> and the bit rises as it drives into each corner, so the two edges meet in a crisp point.</p>
+<ul>
+<li>It's there when <strong>Chamfer side</strong> is <strong>Inside</strong> — pockets and holes. On Auto or Outside the box is greyed out.</li>
+<li>Each chamfer remembers its own setting, so a rebuild keeps what you chose.</li>
+<li>The corner moves cut closer to the bit's tip than the position you picked — that's the only way into a corner, and it's a tiny share of the cut.</li>
+<li>Outside corners still come out rounded.</li>
+<li>The orange line sits a touch outside the pocket's edge on purpose — that's the line the machine steers by, not the cut. The cut still lands exactly where it always does.</li>
+</ul>
 </section>
 <section>
 <h2 id="the-section-view">The section view</h2>

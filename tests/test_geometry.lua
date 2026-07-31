@@ -193,6 +193,63 @@ CHECK(nl ~= nil and #nl == #nolist, "an absent pass-list mirror is tolerated, no
 local snone, serr = CO.find_start_depth_offset("not a template")
 CHECK(snone == nil and type(serr) == "string", "missing start-depth anchor reports an error")
 
+-- Sharp inside corners (v1.11.0): two more fixed-size in-place patches, the
+-- depth-patch class of edit. Codes and encodings pinned against the
+-- Aspire-authored fixture in test_release.lua; here the patcher's own
+-- behaviour on the shipped bytes.
+local shf = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.ToolpathTemplate", "rb"))
+local shipped_sharp = shf:read("*a"); shf:close()
+
+-- The allowance needle really does collide with _ppdAllowanceFormula: the raw
+-- needle hits twice, the finder resolves exactly one. If the collision ever
+-- disappears the F\0 skip is untestable, so pin both counts.
+do
+   local needle = ("_ppdAllowance"):gsub(".", "%0\0")
+   local n, init = 0, 1
+   while true do
+      local s, e = string.find(shipped_sharp, needle, init, true)
+      if s == nil then break end
+      n = n + 1; init = e + 1
+   end
+   CHECK(n == 2, "the raw _ppdAllowance needle hits twice (Formula collision is real)")
+end
+local al_off = CO.find_allowance_offset(shipped_sharp)
+CHECK(type(al_off) == "number", "allowance finder resolves the collision to one offset")
+CHECK(shipped_sharp:sub(al_off, al_off + 7) == CO.encode_double(0),
+      "shipped template's allowance is 0.0 where the finder points")
+local mv_off = CO.find_mv_value_offset(shipped_sharp)
+CHECK(type(mv_off) == "number", "MV finder finds the int value")
+CHECK(shipped_sharp:byte(mv_off) == 2, "shipped template's MV int reads 2 (On)")
+local sh_off = CO.find_sharpen_offset(shipped_sharp)
+CHECK(type(sh_off) == "number", "sharpen finder finds the flag byte")
+CHECK(shipped_sharp:byte(sh_off) == 0, "shipped template's sharpen flag is off")
+
+local sharp = CO.patch_template_sharp(shipped_sharp)
+CHECK(type(sharp) == "string" and #sharp == #shipped_sharp,
+      "sharp patch preserves the file length")
+CHECK(CO.read_machine_vectors(sharp) == "inside",
+      "patched MV reads back as Inside through the existing reader")
+CHECK(sharp:byte(CO.find_sharpen_offset(sharp)) == 1, "sharpen flag reads back 1")
+CHECK(sharp:sub(CO.find_allowance_offset(sharp), CO.find_allowance_offset(sharp) + 7)
+      == CO.encode_double(0), "allowance is left untouched -- Aspire ignores it under sharpening")
+-- Nothing else moves: the two fields are the only difference.
+do
+   local diff = 0
+   for i = 1, #shipped_sharp do
+      if shipped_sharp:byte(i) ~= sharp:byte(i) then diff = diff + 1 end
+   end
+   CHECK(diff == 2, "only the two patched fields change (got " .. diff .. " differing bytes)")
+end
+CHECK(CO.find_depth_offset(sharp) == CO.find_depth_offset(shipped_sharp),
+      "sharp patch leaves the depth field where it was")
+CHECK(CO.read_template_layers(sharp)[1] == CO.read_template_layers(shipped_sharp)[1],
+      "sharp patch leaves the layer restriction alone")
+CHECK(CO.read_template_units(sharp) == CO.read_template_units(shipped_sharp),
+      "sharp patch leaves the units flag alone")
+-- Refusal: junk bytes name the missing tag.
+local nope, nerr = CO.patch_template_sharp("junk")
+CHECK(nope == nil and type(nerr) == "string", "junk bytes are refused with a reason")
+
 -- Tool geometry now comes from Aspire's tool library, not a filename (1.1.0).
 -- 1.2.0: renamed from tool_dia_in_job_units -- the same rules now serve a stock
 -- thickness as well as a tool diameter. Both are lengths in the job's units.
@@ -318,3 +375,53 @@ CHECK(CO.offset_count_phrase(1, 1) == "1 vector(s)",
 -- CO.dialog_size moved to tests/test_dialog_size.lua on 2026-07-29. The two
 -- assertions here required an unknown machine to get the DESIGN size, which is
 -- the defect a user reported from the field -- they pinned it as correct.
+
+-- Spec 9, the compatibility contract, asserted DIRECTLY: with the feature off
+-- the pipeline's bytes are identical to composing the three v1.10.x patches by
+-- hand. Not "close" -- identical, the v1.6.0 "at S = 0" pattern.
+do
+   local base = CO.patch_template_layer(
+      CO.patch_template_start_depth(
+         CO.patch_template_depth(shipped_sharp, 0.0838), 0.05), 3)
+   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, nil) == base,
+         "sharp off: patch_template_run is byte-identical to the old pipeline")
+   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, true)
+         == CO.patch_template_sharp(base),
+         "sharp on: exactly the old pipeline plus the sharp patch")
+end
+do
+   local bad, err = CO.patch_template_run("junk", 0.1, 0, 1, nil)
+   CHECK(bad == nil and type(err) == "string", "pipeline propagates a patch failure")
+end
+
+-- R2: the sharp-run offset shift. On a sharp run the offset loops are drawn
+-- shifted by the bit's own radius at the cut depth (spec 15a fact 7, measured
+-- 2026-07-31, two bits) -- this is what stands in for the allowance R1 deleted.
+NEAR(CO.sharp_offset_shift(0.0953, 90), 0.0953, 1e-6,
+     "sharp shift, 90 deg bit: r = D*tan(45) = D")
+NEAR(CO.sharp_offset_shift(0.0953, 60), 0.0953 * math.tan(math.rad(30)), 1e-6,
+     "sharp shift, 60 deg bit: r = D*tan(30)")
+
+-- Finding 2 (2026-07-31 review): the algebraic invariant the whole shift
+-- design rests on. s.d = (W + s.g) / tan(a), so shifting s.d back by
+-- tan(a) (== CO.sharp_offset_shift(s.d, angle)) always recovers exactly
+-- W + s.g -- so starting from -s.g (the forced-inward sharp distance) and
+-- adding the shift always lands on +W, for ANY bit/size/percent/angle. If a
+-- future edit ever flips a sign or swaps g/d, this catches it immediately
+-- rather than waiting on a live sitting.
+do
+   local combos = {
+      { dia = 0.5,   W = 0.05, percent = 0,   deg = 90 },
+      { dia = 0.5,   W = 0.05, percent = 100, deg = 90 },
+      { dia = 0.25,  W = 0.02, percent = 50,  deg = 60 },
+      { dia = 1.0,   W = 0.10, percent = 20,  deg = 30 },
+      { dia = 0.375, W = 0.03, percent = 80,  deg = 120 },
+   }
+   for _, c in ipairs(combos) do
+      local a = CO.half_angle(c.deg)
+      local s = CO.solve(c.percent, c.dia, c.W, a)
+      NEAR(-s.g + CO.sharp_offset_shift(s.d, c.deg), c.W, 1e-9,
+           string.format("sharp invariant holds: dia=%g W=%g pct=%d deg=%d",
+                          c.dia, c.W, c.percent, c.deg))
+   end
+end

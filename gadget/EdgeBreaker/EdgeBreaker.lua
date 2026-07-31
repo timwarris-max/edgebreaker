@@ -23,7 +23,7 @@ CO.TIP_MARGIN      = 0.15   -- bottom of safe band: contact clears the tip
 CO.PRESETS         = { 0, 20, 40, 60, 80, 100 }
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.10.5"
+CO.VERSION         = "1.11.0"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -597,6 +597,24 @@ function CO.resolve_directions(loops, side)
    return CO.classify_directions(loops)
 end
 
+-- Sharp inside corners (v1.11.0). Applied ONLY when the user forced
+-- Side = Inside: Auto can never resolve a run all-inward (the outermost loop
+-- always resolves outward), so the Side dropdown is a complete detector and
+-- Lua stays authoritative whatever the dialog's checkbox field claims
+-- (spec 5). The stored value is the raw checkbox; this is the gate.
+function CO.sharp_applies(side, sharp)
+   return side == "inside" and tonumber(sharp) == 1
+end
+
+-- Sharp inside corners: Aspire discards any allowance while sharpening is on
+-- (proven live 2026-07-31), so on a sharp run compensation moves to the offset
+-- loops themselves -- drawn shifted by the bit's own radius at the cut depth,
+-- the same amount the machine will shift back (spec 15a fact 7, measured
+-- 2026-07-31 on two bits).
+function CO.sharp_offset_shift(depth, included_deg)
+   return depth * math.tan(CO.half_angle(included_deg))
+end
+
 -- Pure-Lua IEEE-754 little-endian double encoder. No frexp (removed in 5.4),
 -- no string.pack (absent before 5.3) — works on any Lua Aspire might embed.
 function CO.encode_double_pure(x)
@@ -831,6 +849,65 @@ function CO.read_machine_vectors(bytes)
    return name
 end
 
+-- Sharp inside corners (v1.11.0). Two fixed-size fields, patched in memory
+-- only for a run that applies the feature -- the depth-patch class of edit
+-- (same length, same offsets), which is the class Aspire provably accepts.
+-- The file on disk never changes, and a run with the feature off never calls
+-- this at all: that is the byte-identical contract, pinned in
+-- tests/test_geometry.lua.
+-- Both codes are pinned by the Aspire-authored fixture
+-- tests/fixtures/mv-inside-sharp.ToolpathTemplate (test_release.lua), not
+-- inferred. The allowance field is deliberately NOT patched here: the
+-- 2026-07-31 sitting (spec 15) found Aspire LOCKS and discards the Allowance
+-- offset while Sharpen Corners is on -- the fixture itself stores 0 there
+-- regardless of the bit -- so patching it would be dead code. Compensation
+-- for the lost allowance lives in the offset geometry instead: see
+-- CO.sharp_offset_shift and its use in main()/CO.sdk_offset_loop.
+-- _ppdCutDirection is deliberately untouched.
+local SHARPEN_NEEDLE   = ("_ppdCornerSharpen"):gsub(".", "%0\0")
+local ALLOWANCE_NEEDLE = ("_ppdAllowance"):gsub(".", "%0\0")
+local MV_INSIDE = 1                    -- MV_CODES[1] == "inside"; fixture-pinned
+
+local function find_value_once(bytes, needle, tag, skip_formula)
+   local hits, init = {}, 1
+   while true do
+      local s, e = string.find(bytes, needle, init, true)
+      if s == nil then break end
+      if not (skip_formula and bytes:sub(e + 1, e + 2) == "F\0") then
+         hits[#hits + 1] = e
+      end
+      init = e + 1
+   end
+   if #hits ~= 1 then
+      return nil, "expected exactly one " .. tag .. " in template, found " .. #hits
+   end
+   return hits[1] + 5   -- skip the 4-byte tag between name and value (1-based)
+end
+
+function CO.find_mv_value_offset(bytes)
+   return find_value_once(bytes, MV_NEEDLE, "_ppdProfileType", false)
+end
+
+function CO.find_sharpen_offset(bytes)
+   return find_value_once(bytes, SHARPEN_NEEDLE, "_ppdCornerSharpen", false)
+end
+
+function CO.find_allowance_offset(bytes)
+   return find_value_once(bytes, ALLOWANCE_NEEDLE, "_ppdAllowance", true)
+end
+
+function CO.patch_template_sharp(bytes)
+   local mv_at, mverr = CO.find_mv_value_offset(bytes)
+   if mv_at == nil then return nil, mverr end
+   local sh_at, sherr = CO.find_sharpen_offset(bytes)
+   if sh_at == nil then return nil, sherr end
+   -- Same-length writes: every offset found above stays valid throughout.
+   local out = bytes:sub(1, mv_at - 1) .. string.char(MV_INSIDE, 0, 0, 0)
+             .. bytes:sub(mv_at + 4)
+   out = out:sub(1, sh_at - 1) .. string.char(1) .. out:sub(sh_at + 1)
+   return out
+end
+
 -- Job-units flag the template was saved from, stored after the UTF-16LE tag
 -- "_vcgfInMM" (1=mm, 0=in). Verified against fixtures: reads 1 in
 -- mm-sample.ToolpathTemplate, 0 in mv-on/mv-outside/wrong-layer/sample.
@@ -846,11 +923,14 @@ function CO.read_template_units(bytes)
 end
 
 -- Check the single strategy template. The bit no longer comes from here, so
--- nothing is read from the filename any more — only the four things Aspire
+-- nothing is read from the filename any more — only the six things Aspire
 -- bakes into the file that we cannot set ourselves: that it has a cut depth
--- and a start depth we can patch, that it is scoped to our offset layer, and
--- that it machines On rather than Outside/Inside. Returns true, or nil + a
--- reason written for the summary box.
+-- and a start depth we can patch, that it is scoped to our offset layer, that
+-- it machines On rather than Outside/Inside, and that it carries the two
+-- sharp-corner fields patched per run (Machine Vectors value, Sharpen
+-- Corners). Allowance is deliberately not one of them -- Aspire discards it
+-- under sharpening (see CO.patch_template_sharp), so nothing requires it.
+-- Returns true, or nil + a reason written for the summary box.
 function CO.validate_template(bytes, job_units)
    if bytes == nil then
       return nil, "The template file '" .. CO.TEMPLATE_NAME .. "' could not be read."
@@ -867,6 +947,18 @@ function CO.validate_template(bytes, job_units)
    if serr then
       return nil, "'" .. CO.TEMPLATE_NAME .. "' has no start depth we can set - "
                   .. "re-save it from Aspire or VCarve (see Help)."
+   end
+   -- v1.11.0: sharp corners patch two more fields per run, so a template
+   -- missing either would fail at first use of the checkbox instead of here.
+   -- Required, not optional -- the shipped template has both, so this only
+   -- ever catches a genuinely broken re-save. Allowance is NOT required: R1
+   -- dropped the allowance patch (Aspire discards it under sharpening, spec
+   -- 15), so a template with no readable allowance offset is still usable.
+   local _, mverr2 = CO.find_mv_value_offset(bytes)
+   local _, sherr2 = CO.find_sharpen_offset(bytes)
+   if mverr2 or sherr2 then
+      return nil, "'" .. CO.TEMPLATE_NAME .. "' is missing a setting EdgeBreaker "
+                  .. "needs for sharp corners - re-save it from Aspire or VCarve (see Help)."
    end
    -- The restriction is REQUIRED as of v1.4.0: it is what the per-slot patch
    -- rewrites, so an unscoped template has nothing to aim and would cut every
@@ -912,7 +1004,7 @@ end
 -- "template" was dropped in 1.1.0: there is only one template now, and the BIT
 -- is remembered by Aspire itself via ToolDBId (see CO.TOOL_SECTION). An old
 -- file still containing template= parses fine and the key is simply ignored.
-CO.SETTINGS_KEYS = { "units", "mode", "side", "percent", "size" }
+CO.SETTINGS_KEYS = { "units", "mode", "side", "percent", "size", "sharp" }
 
 function CO.serialize_settings(s)
    local out = { "# EdgeBreaker last-used settings - safe to delete" }
@@ -974,6 +1066,9 @@ function CO.apply_settings(saved, unit)
    local st = tonumber(saved.start)
    if st and st >= 0 and saved.units == unit.suffix then seed.start = st
    else seed.start = 0 end
+   -- Sharp is unitless and safe to carry (unlike start depth): visible on the
+   -- dialog and gated by CO.sharp_applies at run time regardless.
+   seed.sharp = (tonumber(saved.sharp) == 1) and 1 or 0
    return seed
 end
 
@@ -1007,7 +1102,8 @@ function CO.encode_memory(mem)
                  -- units no longer match the job's, exactly as it does for the
                  -- last-used settings file.
                  "units=" .. tostring(mem.units or ""),
-                 "start=" .. num(mem.start or 0), "tool=" .. tool }
+                 "start=" .. num(mem.start or 0), "sharp=" .. num(mem.sharp or 0),
+                 "tool=" .. tool }
    for _, fp in ipairs(mem.fps or {}) do
       out[#out + 1] = string.format("fp=%s,%s,%s,%s",
          num(fp.cx), num(fp.cy), num(fp.xlen), num(fp.ylen))
@@ -1033,6 +1129,7 @@ function CO.decode_memory(text)
       elseif k == "side" then mem.side = v
       elseif k == "units" then mem.units = v
       elseif k == "start" then mem.start = tonumber(v)
+      elseif k == "sharp" then mem.sharp = tonumber(v)
       elseif k == "tool" then mem.tool = v
       elseif k == "fp" then
          local cx, cy, xl, yl = v:match("^([^,]+),([^,]+),([^,]+),([^,]+)$")
@@ -1221,11 +1318,11 @@ local function safe_label(text)
    return (tostring(text):gsub("[;|]", " "))
 end
 
--- The Chamfer dropdown, as one string for the dialog: seven |-separated fields
--- "slot|label|relation|size|mode|side|percent" per record, records joined by
--- ";". The relation badges each entry against the CURRENT selection, so
+-- The Chamfer dropdown, as one string for the dialog: eight |-separated fields
+-- "slot|label|relation|size|mode|side|percent|sharp" per record, records joined
+-- by ";". The relation badges each entry against the CURRENT selection, so
 -- changing chamfer in the dialog re-colours the banner without another trip
--- into Lua; the four seeds let it re-seed the form at the same moment. A
+-- into Lua; the five seeds let it re-seed the form at the same moment. A
 -- chamfer with no memory carries empty seeds and the dialog keeps whatever
 -- Lua put in the Mode/Side/Percent/Size fields. next_slot is nil only when all
 -- 99 are in use, and then no "New chamfer" entry is offered -- existing ones
@@ -1244,18 +1341,19 @@ function CO.encode_chamfer_list(chamfers, next_slot, sel_fps, eps)
       if c.missing_all then label = label .. " - shapes missing or moved" end
       local relation = CO.chamfer_relation(sel_fps or {}, c, eps)
       if c.missing_all then relation = "nomem" end
-      local size, mode, side, percent = "", "", "", ""
+      local size, mode, side, percent, sharp = "", "", "", "", ""
       if c.memory then
          size    = num(c.memory.size or 0)
          mode    = safe_label(c.memory.mode or "")
          side    = safe_label(c.memory.side or "")
          percent = num(c.memory.percent or 0)
+         sharp   = num(c.memory.sharp or 0)
       end
-      out[#out + 1] = string.format("%d|%s|%s|%s|%s|%s|%s",
-                                    c.slot, label, relation, size, mode, side, percent)
+      out[#out + 1] = string.format("%d|%s|%s|%s|%s|%s|%s|%s",
+                                    c.slot, label, relation, size, mode, side, percent, sharp)
    end
    if next_slot ~= nil then
-      out[#out + 1] = string.format("%d|New chamfer (%d)|new||||", next_slot, next_slot)
+      out[#out + 1] = string.format("%d|New chamfer (%d)|new|||||", next_slot, next_slot)
    end
    return table.concat(out, ";")
 end
@@ -2013,7 +2111,18 @@ end
 --
 -- Leaves obj as the only selected object. main() MUST clear the selection before
 -- doing anything else with it.
-function CO.sdk_offset_loop(job, obj, dist)
+--
+-- sharp_dist (v1.11.0): nil on a normal run. On a sharp run it carries the
+-- shifted offset distance, and the result is passed through Aspire's
+-- MakeOffsetsSquare before being returned -- a rounded loop cuts rounded
+-- corners (live fact 11), so a sharp run refuses rather than draw one
+-- silently. dist is ALWAYS the plain, unshifted distance: on a sharp run the
+-- shifted distance is always outward (spec 15b) and so can never collapse on
+-- its own, which would make the too-narrow safety net structurally silent
+-- (Finding 1, 2026-07-31 review). So dist is offset first, purely as a
+-- viability probe -- its group is thrown away -- and only when that probe
+-- comes back non-empty does the real sharp offset at sharp_dist happen.
+function CO.sdk_offset_loop(job, obj, dist, sharp_dist)
    local ok, res, err = pcall(function()
       job.Selection:Clear()
       job.Selection:Add(obj, true, true)
@@ -2050,7 +2159,52 @@ function CO.sdk_offset_loop(job, obj, dist)
          return nil, "could not read the offset result (Count)"
       end
       if n < 1 then return nil end
-      return g
+      if sharp_dist == nil then return g end
+      -- The probe above passed (this loop is wide enough at the normal
+      -- distance), so now do the real sharp offset at the shifted distance
+      -- and square its corners. sharp_dist can never collapse this the way
+      -- the probe can (it is always shifted outward), so a nil/empty result
+      -- here is unexpected rather than routine -- reported as a failure, not
+      -- a silent skip.
+      local sg = src:Offset(sharp_dist, math.abs(sharp_dist), 1, true)
+      if sg == nil then
+         return nil, "the sharp offset failed after the probe passed (unexpected)"
+      end
+      local sn = sg.Count
+      if type(sn) ~= "number" then
+         return nil, "could not read the sharp offset result (Count)"
+      end
+      if sn < 1 then
+         return nil, "the sharp offset failed after the probe passed (unexpected)"
+      end
+      -- Signature, from the luabind overload error raised by every wrong arity
+      -- (OffsetSquareProbe, 2026-07-31):
+      --    bool MakeOffsetsSquare(ContourGroup*, double, bool, double)
+      -- The BOOL IS THE SQUARING SWITCH and it must be true. The Task 9 sitting
+      -- caught this shipping as false: the call returns true either way -- with
+      -- false it succeeds at doing nothing -- so a wrong flag reads as success
+      -- and cuts round corners silently. Probe, same rectangle, offset outward:
+      -- false -> 8 spans / 4 arcs (rounded), true -> 4 spans / 0 arcs (mitred).
+      -- Returns a plain bool, so the userdata branch below is dead in practice;
+      -- it stays because the guard costs nothing and a future Aspire could
+      -- return the group instead. A false return is a real failure: refuse,
+      -- never a silent round-cornered cut.
+      local sq = sg:MakeOffsetsSquare(math.abs(sharp_dist), true, math.abs(sharp_dist) * 2)
+      if type(sq) == "userdata" or type(sq) == "table" then
+         local sqn = sq.Count
+         if type(sqn) == "number" and sqn >= 1 then
+            sg = sq
+         else
+            return nil, "could not square the offset corners (MakeOffsetsSquare gave "
+                .. "an unreadable result)"
+         end
+      elseif sq == true then
+         -- kept sg: post-process worked in place
+      else
+         return nil, "could not square the offset corners (MakeOffsetsSquare gave "
+             .. tostring(sq) .. ")"
+      end
+      return sg
    end)
    if not ok then return nil, tostring(res) end
    return res, err
@@ -2188,19 +2342,31 @@ end
 --   recalc fails -> old rule: recalc-all only when the job had no toolpaths
 -- Success returns a table { n, renamed, status = "calculated" | "loaded" };
 -- failure returns nil, err.
-function CO.sdk_apply_template(dir, filename, depth, start, slot, new_name, tool)
+-- The whole per-run patch set, pure so the off path is testable offline:
+-- with sharp nil/false the output is BYTE-IDENTICAL to what v1.10.x
+-- produced (spec 9's contract, pinned in tests/test_geometry.lua). A chamfer
+-- that never ticks the box cannot change in any way.
+function CO.patch_template_run(bytes, depth, start, slot, sharp)
+   local patched, err = CO.patch_template_depth(bytes, depth)
+   if patched == nil then return nil, err end
+   patched, err = CO.patch_template_start_depth(patched, start or 0)
+   if patched == nil then return nil, err end
+   patched, err = CO.patch_template_layer(patched, slot)
+   if patched == nil then return nil, err end
+   if sharp then
+      patched, err = CO.patch_template_sharp(patched)
+      if patched == nil then return nil, err end
+   end
+   return patched
+end
+
+function CO.sdk_apply_template(dir, filename, depth, start, slot, new_name, tool, sharp)
    local src = dir .. "\\" .. filename
    local f = io.open(src, "rb")
    if f == nil then return nil, "cannot read template: " .. src end
    local bytes = f:read("*a"); f:close()
-   local patched, perr = CO.patch_template_depth(bytes, depth)
+   local patched, perr = CO.patch_template_run(bytes, depth, start, slot, sharp)
    if patched == nil then return nil, perr .. " (" .. filename .. ")" end
-   local serr
-   patched, serr = CO.patch_template_start_depth(patched, start or 0)
-   if patched == nil then return nil, serr .. " (" .. filename .. ")" end
-   local lerr
-   patched, lerr = CO.patch_template_layer(patched, slot)
-   if patched == nil then return nil, lerr .. " (" .. filename .. ")" end
    -- Read the restriction back out of the bytes we are about to hand Aspire.
    -- A template aimed at the wrong layer cuts the wrong vectors at the wrong
    -- depth without complaining, so this is checked, never assumed.
@@ -2562,6 +2728,7 @@ function main(script_path)
    dlg:AddTextField("HiddenNote", template_ok and "" or template_err)
    dlg:AddTextField("Mode", seed.mode)
    dlg:AddTextField("Side", seed.side)
+   dlg:AddTextField("Sharp", tostring(seed.sharp or 0))
    dlg:AddDoubleField("Percent", seed.percent)
    dlg:AddDoubleField("Size", seed.size)
    dlg:AddDoubleField("StartDepth", seed.start)
@@ -2635,6 +2802,12 @@ function main(script_path)
    local ok_kind, kind_read = pcall(function() return dlg:GetTextField("KindOut") end)
    if ok_kind and type(kind_read) == "string" and kind_read ~= "" then kind_out = kind_read end
 
+   -- Sharp inside corners: read nil-tolerantly, same shape as KindOut -- a
+   -- dialog file that never sets it must degrade to off, never break the run.
+   local sharp = 0
+   local ok_sharp, sharp_read = pcall(function() return dlg:GetTextField("Sharp") end)
+   if ok_sharp and tonumber(sharp_read) == 1 then sharp = 1 end
+
    -- The dialog hands back a slot number and nothing else: replacing a slot
    -- that does not exist yet IS creating it, so "new" needs no separate case.
    local slot = tonumber(dlg:GetTextField("Slot"))
@@ -2689,7 +2862,8 @@ function main(script_path)
    -- Remember what was entered, whatever happens next: a run that then fails a
    -- safety check is exactly when reopening with the same bit and size helps.
    CO.save_settings({ units = unit.suffix, mode = mode,
-                      side = side, percent = tonumber(percent), size = size })
+                      side = side, percent = tonumber(percent), size = size,
+                      sharp = sharp })
 
    local r = CO.evaluate(mode, size, angle, dia)
    if not r.ok then
@@ -2776,6 +2950,9 @@ function main(script_path)
       loops[#loops + 1] = { pts = CO.polygonize(rl.spans, 0.001), obj = rl.obj, bbox = rl.bbox }
    end
    local dirs = CO.resolve_directions(loops, side)
+   -- Computed once, reused at the offset site below and at the template-patch
+   -- call further down -- one gate, not two chances to disagree.
+   local sharp_run = CO.sharp_applies(side, sharp)
    -- Rebuilding an ADOPTED v1.4.x chamfer migrates it: this run replaces its
    -- layer and its toolpath with the EdgeBreaker-named pair, so the old ones
    -- have to go with it or the number owns two of each.
@@ -2818,7 +2995,20 @@ function main(script_path)
    local n_out, n_in, skipped_narrow, drawn, built_fps = 0, 0, 0, {}, {}
    for i, loop in ipairs(loops) do
       local dist = (dirs[i] == "outward") and s.g or -s.g
-      local group, oerr = CO.sdk_offset_loop(job, loop.obj, dist)
+      -- sharp_dist is nil on a normal run. On a sharp run it carries the
+      -- shifted distance -- Aspire discards any allowance under sharpening
+      -- (R1), so the compensation rides on the offset distance itself: shift
+      -- by the bit's own radius at the cut depth, the same amount the
+      -- machine will shift back. For the forced-Inside sharp case every
+      -- dirs[i] is inward, so in practice this is -s.g + shift, normally
+      -- landing outside the wall -- correct and intended (spec 15b).
+      -- sdk_offset_loop still gets the plain dist too: on a sharp run the
+      -- shifted distance is always outward and can never collapse, so
+      -- dist (the normal distance) is what it uses as the too-narrow
+      -- viability probe (Finding 1) -- without it, sharp runs would draw a
+      -- toolpath into a pocket too narrow for the chamfer.
+      local sharp_dist = sharp_run and (dist + CO.sharp_offset_shift(s.d, angle)) or nil
+      local group, oerr = CO.sdk_offset_loop(job, loop.obj, dist, sharp_dist)
       if oerr then
          CO.sdk_leave_user_layer(job)
          CO.show_message(gadget_dir, {
@@ -2924,7 +3114,7 @@ function main(script_path)
       -- depth stored in job units (docs/m0-results.md, mm-sample)
       local tp_name = CO.toolpath_name(size, unit.suffix, slot)
       local ok_tp, res, terr = pcall(CO.sdk_apply_template, gadget_dir, CO.TEMPLATE_NAME,
-                                     s.d, start, slot, tp_name, tool)
+                                     s.d, start, slot, tp_name, tool, sharp_run)
       if ok_tp and type(res) == "table" then
          local shown = res.renamed and ("'" .. tp_name .. "' ") or ""
          if res.status == "calculated" then
@@ -2964,7 +3154,7 @@ function main(script_path)
          local taught = tp ~= nil and CO.sdk_write_memory(tp, {
             fps = built_fps, size = size, mode = mode, side = side,
             percent = tonumber(percent), units = unit.suffix, start = start,
-            tool = geom.name })
+            sharp = sharp, tool = geom.name })
          if taught then
             -- The bit itself cannot go in the blob (a ToolDBId has no text
             -- form), so it is parked in Aspire's own tool defaults under this

@@ -103,6 +103,26 @@ input[type=text] { width: 200px; font-size: 24px; padding: 6px 10px;
 input[type=radio] { zoom: 2.5; }
 #ModeGroup label, #SideGroup label { width: auto; margin-right: 26px; font-weight: normal;
                                      font-size: 26px; }
+/* width:auto overrides the generic `label{width:230px}` rule (same reason
+   #ModeGroup/#SideGroup label do): without it SharpWrap's own text wraps
+   INSIDE the 230px box, doubling its own height, which is what actually blew
+   the row's budget (measured: check-dialog-layout.js) -- not the row running
+   out of width, which it does too (the row's own label + three radios leave
+   ~100px trailing, nowhere near the checkbox's real width, so it wraps to a
+   second line regardless). */
+#SharpWrap { width: auto; font-weight: normal; margin-left: 18px; font-size: 22px; }
+#SharpWrap.off { color: #9aa0a6; }
+/* .modecap is display:block everywhere else it's used (it is always alone on
+   its row), but here that would push the caption to a THIRD line even
+   though it easily fits beside the checkbox on the second -- so #SharpCap
+   overrides it back to inline. */
+#SharpCap { display: inline; margin-left: 14px; }
+/* Trims .row's default 16px bottom margin to 2px, and forces line-height:1
+   (default "normal" adds leading on top of the checkbox/caption line that
+   this row doesn't have room for) -- the row is now two lines instead of
+   one, and the tightest real layout (start depth + a wrapped depth warning)
+   overflowed the gate without both trims. */
+#SideRow { margin-bottom: 2px; line-height: 1; }
 
 /* Banner: the whole point of v1.5.0 -- it says what OK will do before it does
    it. Four states, coloured per spec 2. */
@@ -181,7 +201,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.10.5</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.11.0</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -219,6 +239,8 @@ input[type=radio] { zoom: 2.5; }
           <label><input type="radio" name="SideRadio" value="outside"> Outside</label>
           <label><input type="radio" name="SideRadio" value="inside"> Inside</label>
         </span>
+        <label id="SharpWrap"><input type="checkbox" id="SharpBox"> Sharp inside corners</label>
+        <span class="modecap" id="SharpCap">needs Side: Inside</span>
       </div>
       <!-- Named for what it holds, not "Help": the button in the bar is now the
            Help, and two controls called Help on one dialog would mean two
@@ -267,6 +289,9 @@ input[type=radio] { zoom: 2.5; }
           &mdash; right when you select an outline together with its holes. It cannot
           recognize a pocket edge or a hole selected on its own: pick <b>Inside</b> for those.
           <b>Outside</b> forces every selected vector to chamfer on its outer side.<br><br>
+          <b>Sharp inside corners:</b> only with Side set to <b>Inside</b>. The bit rises
+          into each corner so the two edges meet in a point instead of a round. The corner
+          moves cut nearer the tip than your chosen position &mdash; that's the only way in.<br><br>
           <b>Start depth:</b> how far <b>below the top of the stock</b> the edge sits &mdash;
           a pocket floor, a second level, a skimmed top. Leave it at <b>0</b> for an edge at
           the top, which is the usual case. It does not change the chamfer itself, only how
@@ -379,8 +404,8 @@ input[type=radio] { zoom: 2.5; }
        a character the operator sees and nothing has to be HTML-escaped. -->
   <span id="BitGeom" style="display:none"></span>
   <input type="hidden" id="Thickness" name="Thickness" value="">
-  <!-- v1.5.0: what the selection MEANS. Chamfers carries one seven-field record
-       per chamfer (slot|label|relation|size|mode|side|percent); Kind is the
+  <!-- v1.5.0: what the selection MEANS. Chamfers carries one eight-field record
+       per chamfer (slot|label|relation|size|mode|side|percent|sharp); Kind is the
        state the dialog opens in; BannerFacts the counts it quotes. -->
   <input type="hidden" id="Chamfers" name="Chamfers" value="">
   <input type="hidden" id="Kind" name="Kind" value="add">
@@ -388,6 +413,7 @@ input[type=radio] { zoom: 2.5; }
   <!-- HTML -> Lua round trip: the user's choices, read back after OK -->
   <input type="hidden" id="Mode" name="Mode" value="setback">
   <input type="hidden" id="Side" name="Side" value="auto">
+  <input type="hidden" id="Sharp" name="Sharp" value="0">
   <input type="hidden" id="Percent" name="Percent" value="80">
   <input type="hidden" id="Slot" name="Slot" value="1">
   <input type="hidden" id="KindOut" name="KindOut" value="add">
@@ -506,9 +532,9 @@ var CHAMFERS = [], FACTS = { sel: 0, excluded: [], mem: 0 }, STATE = "add";
 
 function el(id) { return document.getElementById(id); }
 
-// "slot|label|relation|size|mode|side|percent" records joined by ";". Anything
-// that does not split into seven fields is dropped rather than guessed at: a
-// half-parsed record would aim a rebuild at the wrong chamfer.
+// "slot|label|relation|size|mode|side|percent|sharp" records joined by ";".
+// Anything that does not split into eight fields is dropped rather than
+// guessed at: a half-parsed record would aim a rebuild at the wrong chamfer.
 function parseChamfers() {
   var raw = el("Chamfers").value;
   var out = [];
@@ -516,9 +542,9 @@ function parseChamfers() {
   var rows = raw.split(";");
   for (var i = 0; i < rows.length; i++) {
     var f = rows[i].split("|");
-    if (f.length < 7) continue;
+    if (f.length < 8) continue;
     out.push({ slot: f[0], label: f[1], relation: f[2],
-               size: f[3], mode: f[4], side: f[5], percent: f[6] });
+               size: f[3], mode: f[4], side: f[5], percent: f[6], sharp: f[7] });
   }
   return out;
 }
@@ -683,7 +709,9 @@ function seedFrom(rec) {
     var p = parseFloat(rec.percent);
     if (!isNaN(p)) { currentPercent = p; el("Percent").value = p; applyPresetSelection(); }
     if (rec.mode !== "") { currentMode = rec.mode; el("Mode").value = rec.mode; updateModeVisibility(); }
+    if (rec.sharp !== "") { el("Sharp").value = rec.sharp; }
     if (rec.side !== "") { el("Side").value = rec.side; applySideDefault(); }
+    applySharpState();
   }
 }
 
@@ -796,13 +824,33 @@ function initModeRadios() {
 function initSideRadios() {
   var radios = document.getElementsByName("SideRadio");
   for (var i = 0; i < radios.length; i++) {
-    radios[i].onclick = function () { el("Side").value = this.value; };
+    radios[i].onclick = function () { el("Side").value = this.value; applySharpState(); };
   }
 }
 function applySideDefault() {
   var sv = el("Side").value || "auto";
   var radios = document.getElementsByName("SideRadio");
   for (var i = 0; i < radios.length; i++) radios[i].checked = (radios[i].value === sv);
+  applySharpState();
+}
+
+// The checkbox is live exactly when Side = Inside -- the dropdown is the
+// detector (spec 5). Greying is UX; Lua applies sharp only when side ==
+// "inside" whatever the Sharp field says, so a tick set while greyed is
+// harmless and survives flipping Side away and back.
+function applySharpState() {
+  var box = el("SharpBox");
+  if (!box) return;
+  var live = el("Side").value === "inside";
+  box.disabled = !live;
+  el("SharpWrap").className = live ? "" : "off";
+  el("SharpCap").style.display = live ? "none" : "";
+  box.checked = el("Sharp").value === "1";
+}
+function initSharp() {
+  el("SharpBox").onclick = function () {
+    el("Sharp").value = this.checked ? "1" : "0";
+  };
 }
 
 function initPresets() {
@@ -1383,6 +1431,7 @@ var t = setInterval(function() {
     initBit();
     initModeRadios();
     initSideRadios();
+    initSharp();
     initPresets();
     // There is no event to hook: Aspire writes into the live page and tells
     // nobody. So watch the carrier. 250ms is imperceptible against a person
