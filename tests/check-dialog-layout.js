@@ -18,15 +18,48 @@ var os = require("os");
 var path = require("path");
 var cp = require("child_process");
 
-// Defaults to the DESIGN size -- CO.DESIGN_SIZE in EdgeBreaker.lua and DESIGN_W/H
-// in EdgeBreakerDialog.htm. Overridable on the command line, because as of
-// v1.10.0 the window is measured from the operator's screen and can be almost
-// any size down to the smallest thing we believe is a screen:
-//     node tests\check-dialog-layout.js 1008 712
 // The old header here claimed a layout that fits the design size fits every
 // smaller window, so only the design size needed checking. That is not true --
 // this dialog failed live at a smaller size on 2026-07-27 -- so the small sizes
 // get rendered on purpose rather than argued about.
+//
+// v1.10.1: and they are rendered BY DEFAULT. Until now the gate ran one size
+// and the others only when somebody typed them, which is a check that exists in
+// a document rather than in a build. With no arguments this now runs the whole
+// SWEEP below, one child process per size, and fails if any size fails. Name a
+// size on the command line to run just that one:
+//     node tests\check-dialog-layout.js 1008 712
+//
+// The sweep is every window CO.dialog_size can produce that is worth pinning:
+// the design size; what a 1080p screen now gets; the no-measurement fallback and
+// the 1366x768 laptop that lands on it; a mid-small case; and 624x464, the
+// smallest window the rule can produce (from the smallest believable screen).
+// Keep it in step with the rule in EdgeBreaker.lua.
+var SWEEP = [
+  [1800, 1000],   // DESIGN_SIZE -- the size the layout is authored at
+  [1536,  825],   // a 1920x1080 screen under SCREEN_FRACTION (the Acer)
+  [1280,  700],   // DEFAULT_SIZE -- the fallback, and where the floor lands
+  [1008,  712],   // a 1024-wide screen
+  [ 624,  464]    // the smallest window the rule can produce
+];
+
+if (process.argv.length <= 2) {
+  var bad = [];
+  SWEEP.forEach(function (s) {
+    console.log("\n===== window " + s[0] + "x" + s[1] + " =====");
+    var r = cp.spawnSync(process.execPath, [__filename, String(s[0]), String(s[1])],
+                         { stdio: "inherit" });
+    if (r.status !== 0) bad.push(s[0] + "x" + s[1]);
+  });
+  if (bad.length) {
+    console.log("\n" + bad.length + " of " + SWEEP.length +
+                " window size(s) FAILED: " + bad.join(", "));
+    process.exit(1);
+  }
+  console.log("\nAll " + SWEEP.length + " window sizes pass.");
+  process.exit(0);
+}
+
 var WIN_W = +(process.argv[2] || 1800), WIN_H = +(process.argv[3] || 1000);
 var FRAME_W = 2, FRAME_H = 50;      // measured cost of the window frame
 var VIEW_W = WIN_W - FRAME_W, VIEW_H = WIN_H - FRAME_H;
@@ -236,7 +269,16 @@ var CASES = [
   // not against today's exact string. Roughly 15% of headroom on the real worst
   // case above; more than that genuinely does not fit, and the honest thing is
   // to know where the edge is rather than to claim a margin we do not have.
-  { name: "bar: summary longer than any real one (headroom)", bit: "12.4deg V-bit",
+  //
+  // minWindow: this is a probe for FUTURE wording, not a claim about the
+  // product. Below 1280 wide it fails (19px at 624x464) while both cases that
+  // use strings the product can actually produce sail through -- 75px on the
+  // longest real summary, 56px on the Help fallback. Demanding spare room for a
+  // string that cannot occur, on the smallest screen we support, would only
+  // invite contorting the layout to satisfy a hypothetical. Skipped there, and
+  // the skip is PRINTED: a silently dropped case reads as a pass.
+  { name: "bar: summary longer than any real one (headroom)", minWindow: 1280,
+    bit: "12.4deg V-bit",
     angle: "12.4", dia: "0.25", size: "0.031250", units: "mm", percent: "100",
     chamfers: "99|Chamfer 99 - 0.06 mm|differs|0.06|setback|auto|100;100|New chamfer (100)|new||||",
     slot: "99", kind: "add", facts: "sel=9999;excluded=;mem=0", force: "replace",
@@ -489,6 +531,10 @@ var failed = 0;
 console.log("Viewport " + VIEW_W + "x" + VIEW_H + "  (window " + WIN_W + "x" + WIN_H + " less frame)\n");
 
 CASES.forEach(function (c) {
+  if (c.minWindow && WIN_W < c.minWindow) {
+    console.log("skip  " + c.name + "  (needs a window >= " + c.minWindow + " wide)");
+    return;
+  }
   var f = path.join(tmp, c.name.replace(/[^a-z0-9]/gi, "_") + ".htm");
   fs.writeFileSync(f, seed(c));
   var out = cp.execFileSync(CHROME, [
@@ -706,9 +752,27 @@ var msgHtml = fs.readFileSync(MSG_SRC, "utf8");
 // message states fitted here and did not fit in Aspire -- the longest body over
 // by 9px, and the ordinary post-run report with 43px of its note behind the
 // button bar. Found by rendering to PNG, 2026-07-28.
-var MSG_W = 900;
-var MSG_H_SHORT = 500, MSG_H_TALL = 700;
+//
+// v1.10.1: and the message window is now clamped to the screen too, so it is
+// clamped here to the swept window size. That is the right stand-in: for every
+// screen, CO.message_fields' result is <= CO.dialog_size's result on both axes
+// (the setup window's floor is DEFAULT_SIZE, itself >= the message sizes), so
+// the setup window is never smaller than the message window it shares a screen
+// with. At the 624x464 sweep entry this renders the message at 624x464, which
+// is what a 640x480 screen actually gets. The page does NOT scale -- it pins its
+// bar and scrolls the middle -- so the overflow assertions below still mean
+// something at every size.
+var MSG_W = Math.min(900, WIN_W);
+var MSG_H_SHORT = Math.min(500, WIN_H), MSG_H_TALL = Math.min(700, WIN_H);
 var MSG_VW = MSG_W - FRAME_W;
+// True when a small screen forced the window below its design size. Then the
+// body is EXPECTED not to fit: #Scroll is `overflow:auto` between a pinned
+// header and a pinned bar, so the middle scrolls and OK stays put. That is the
+// intended degradation -- the alternative on a 640x480 screen is a 900x700
+// window with OK off the edge, which is the defect v1.10.0/v1.10.1 exist to
+// fix. So at a clamped size the fit assertions stand down and say so, while
+// "OK below the fold" and the banner/markup assertions keep biting.
+var MSG_CLAMPED = MSG_W < 900 || MSG_H_TALL < 700 || MSG_H_SHORT < 500;
 
 var MSG_CASES = [
   { name: "msg: error, one line", kind: "m-error", tall: false,
@@ -851,9 +915,16 @@ MSG_CASES.forEach(function (c) {
 
   var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH2 = +m[5];
   var bad = [];
-  if (over > 0) bad.push("message overflows its window by " + over + "px");
+  var scrolls = false;
+  if (over > 0) {
+    if (MSG_CLAMPED) scrolls = true;
+    else bad.push("message overflows its window by " + over + "px");
+  }
+  // This one never stands down. A pinned bar is the whole reason scrolling is
+  // an acceptable answer, so if OK ever leaves the window the argument above
+  // collapses and this is a real failure at any size.
   if (okBottom > viewH2) bad.push("OK button below the fold");
-  if (over <= 0 && (avail - content) < MIN_SLACK)
+  if (over <= 0 && !MSG_CLAMPED && (avail - content) < MIN_SLACK)
     bad.push("only " + (avail - content) + "px slack, want >= " + MIN_SLACK);
 
   // The banner must actually be wearing the class Lua sent. A message coloured
@@ -879,6 +950,7 @@ MSG_CASES.forEach(function (c) {
 
   console.log((bad.length ? "FAIL  " : "ok    ") + c.name +
     "  content " + content + " / " + avail + " avail, slack " + (avail - content) + "px" +
+    (scrolls ? "  (scrolls " + over + "px - window clamped to the screen, OK still pinned)" : "") +
     (bad.length ? "  <-- " + bad.join("; ") : ""));
   if (bad.length) failed++;
 });

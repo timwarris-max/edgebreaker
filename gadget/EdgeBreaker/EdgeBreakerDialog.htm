@@ -181,7 +181,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.10.1</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.10.2</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -400,10 +400,15 @@ input[type=radio] { zoom: 2.5; }
 <script type="text/javascript">
 // The layout is authored at ONE size -- the viewport of an 1800x1000 window --
 // and scaled down to whatever window Lua opened (CO.dialog_size picks a smaller
-// one on smaller screens). Scaling is uniform, so a layout that fits the design
-// size fits every smaller window too; that is why tests\check-dialog-layout.js
-// only has to check the design size. Keep DESIGN_W/H in step with WIN_W/H there
-// (they are the window less the 2x50px frame).
+// one on smaller screens). Keep DESIGN_W/H in step with WIN_W/H in
+// tests\check-dialog-layout.js (they are the window less the 2x50px frame).
+//
+// This comment used to claim that uniform scaling means a layout fitting the
+// design size fits every smaller window, so only the design size needed
+// checking. That is FALSE -- the dialog failed live at a smaller size on
+// 2026-07-27. Scaling is uniform but text is not: a font floors at a minimum
+// and lines rewrap, so proportions do not survive the shrink. The gate checks
+// the real sizes the rule can produce; do not reinstate the shortcut.
 //
 // `zoom` is used rather than a CSS transform because Trident supports it (the
 // radio buttons already rely on it) and it reflows text properly. #Fit is then

@@ -23,7 +23,7 @@ CO.TIP_MARGIN      = 0.15   -- bottom of safe band: contact clears the tip
 CO.PRESETS         = { 0, 20, 40, 60, 80, 100 }
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.10.1"
+CO.VERSION         = "1.10.2"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -136,10 +136,27 @@ end
 
 -- Pure: no SDK contact, so the whole of the logic is exercised by the unit
 -- suite. Returns the flat field set the page reads, plus the window size.
-function CO.message_fields(msg)
+-- v1.10.1: the size is now clamped to the screen, the same defect class the
+-- setup dialog fixed in v1.10.0 -- a 700-tall message window does not fit a
+-- 1280x720 screen, so OK landed under the taskbar. Clamping is safe here for a
+-- reason worth stating: MessageDialog.htm does NOT scale to its window the way
+-- the setup dialog does. It has a pinned header, a pinned button bar and
+-- `overflow:auto` between them, so a short window scrolls the middle and keeps
+-- OK reachable. Shrinking costs a scrollbar; not shrinking costs the button.
+--
+-- No SCREEN_FRACTION here and no floor: this window is small enough already
+-- that breathing room is not the problem, and a floor would defeat the point.
+-- An unbelievable or absent screen leaves the size exactly as it was.
+function CO.message_fields(msg, screen_w, screen_h)
    local cls = CO.MESSAGE_KINDS[msg.kind] or CO.MESSAGE_KINDS.error
    local has_rows = msg.rows ~= nil and #msg.rows > 0
    local size = has_rows and CO.MESSAGE_SIZE_TALL or CO.MESSAGE_SIZE_SHORT
+   local w, h = size[1], size[2]
+   if CO.believable_screen(screen_w, screen_h) then
+      w = math.floor(math.min(w, tonumber(screen_w) - CO.SCREEN_MARGIN))
+      h = math.floor(math.min(h, tonumber(screen_h) - CO.SCREEN_MARGIN))
+   end
+   size = { w, h }
    return {
       MKind    = cls,
       MHead    = msg.headline or "",
@@ -167,7 +184,10 @@ function CO.show_message(gadget_dir, msg)
       local probe = io.open(gadget_dir .. "\\MessageDialog.htm", "r")
       if probe == nil then return end
       probe:close()
-      local fields, w, h = CO.message_fields(msg)
+      -- The stored screen, so this window fits it too. load_screen returns nil
+      -- on every failure and message_fields then leaves the size alone.
+      local sw, sh = CO.load_screen()
+      local fields, w, h = CO.message_fields(msg, sw, sh)
       local dlg = HTML_Dialog(false, "file:" .. gadget_dir .. "\\MessageDialog.htm",
                               w, h, "EdgeBreaker v" .. CO.VERSION)
       for _, k in ipairs(CO.MESSAGE_FIELD_NAMES) do
