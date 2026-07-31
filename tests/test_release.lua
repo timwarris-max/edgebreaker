@@ -357,7 +357,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.10.3", "version gate: 1.10.3")
+CHECK(CO.VERSION == "1.10.5", "version gate: 1.10.5")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -495,4 +495,24 @@ do
       local w, h, off = CO.parse_screen_field("1920x1032 off")
       CHECK(w == 1920 and off == true, "Lua parses the suffix the pages send")
    end
+
+   -- v1.10.4 ASK WINDOWS. The PowerShell line and the Lua parser share two
+   -- tokens, APP and MON, with no way to see each other. A drift in either
+   -- silently returns nil and every run falls back to the stored measurement --
+   -- correct-looking, wrong-monitor, the exact defect this exists to end.
+   CHECK(lua:find("CO%.PS_MONITORS") ~= nil, "the PowerShell ask exists")
+   do
+      local _, apps = lua:gsub("APP ", "")
+      local _, mons = lua:gsub("MON ", "")
+      CHECK(apps >= 2, "APP appears in both the emitter and the parser")
+      CHECK(mons >= 2, "MON appears in both the emitter and the parser")
+   end
+   CHECK(lua:find("io%.popen") ~= nil, "the ask goes through io.popen")
+   -- Sizing stays silent on this path too, and the ask itself must be inside
+   -- the same contract: any failure is nil, never a message.
+   local qbody = lua:match("function CO%.sdk_query_monitors.-\nend\n")
+   CHECK(qbody ~= nil, "sdk_query_monitors exists")
+   CHECK(qbody == nil or (qbody:find("show_message", 1, true) == nil and
+                          qbody:find("DisplayMessageBox", 1, true) == nil),
+         "asking Windows never speaks")
 end

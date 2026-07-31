@@ -31,16 +31,17 @@ var cp = require("child_process");
 //     node tests\check-dialog-layout.js 1008 712
 //
 // The sweep is every window CO.dialog_size can produce that is worth pinning:
-// the design size; what a 1080p screen now gets; the no-measurement fallback and
-// the 1366x768 laptop that lands on it; a mid-small case; and 624x464, the
-// smallest window the rule can produce (from the smallest believable screen).
-// Keep it in step with the rule in EdgeBreaker.lua.
+// the design size; what a 1080p screen gets; the no-measurement fallback; the
+// 1366x720 laptop panel (v1.10.4: the floor is gone, so the fraction rules and
+// the panel gets 80%); and 512x384, the smallest window the rule can produce
+// (80% of the smallest believable screen). Keep it in step with the rule in
+// EdgeBreaker.lua.
 var SWEEP = [
   [1800, 1000],   // DESIGN_SIZE -- the size the layout is authored at
-  [1536,  825],   // a 1920x1080 screen under SCREEN_FRACTION (the Acer)
-  [1280,  700],   // DEFAULT_SIZE -- the fallback, and where the floor lands
-  [1008,  712],   // a 1024-wide screen
-  [ 624,  464]    // the smallest window the rule can produce
+  [1536,  825],   // a 1920x1080 screen under SCREEN_FRACTION (the Acer's primary)
+  [1280,  700],   // DEFAULT_SIZE -- the no-knowledge fallback
+  [1092,  576],   // the Acer's 1366x720 laptop panel under the fraction
+  [ 512,  384]    // the smallest window the rule can produce
 ];
 
 if (process.argv.length <= 2) {

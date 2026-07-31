@@ -71,7 +71,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </head>
 <body>
 <header>
-  <div class="name">EdgeBreaker<span class="ver">v1.10.3</span></div>
+  <div class="name">EdgeBreaker<span class="ver">v1.10.5</span></div>
   <div class="sub">Help &mdash; works offline</div>
 </header>
 <main>
@@ -122,7 +122,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <li>The gadget owns every toolpath whose name contains <code>[EdgeBreaker NN]</code>, and a run only touches its own number: building Chamfer 2 deletes and recreates <code>[EdgeBreaker 02]</code> and leaves <code>[EdgeBreaker 01]</code> alone. <strong>Toolpath deletions cannot be undone.</strong> To keep a chamfer toolpath forever, rename it so the marker is gone — the gadget will never touch it again, and it also forgets everything that chamfer remembered. Renaming it to a <em>different</em> number hands it to that chamfer instead.</li>
 <li>The gadget calculates its own toolpath and leaves your other toolpaths alone. If the software refuses the single-toolpath calculation, the message says so — then open the toolpath and click Calculate yourself.</li>
 <li>A chamfer with no memory of its own falls back to your <strong>last run's</strong> entries, kept in <code>%APPDATA%\EdgeBreaker-settings.txt</code> (a <code>ChamferOffset-settings.txt</code> left by an older version is still read). Anything that no longer applies falls back to the default — a size from an inch job when the open job is metric. Delete the file to start fresh.</li>
-<li><strong>EdgeBreaker sizes its window to fit your screen.</strong> The first time you run it you'll see a small window flash up while it checks — you shouldn't see it again. Two monitors? It sizes for your main one, and opens smaller on the other. The first run after you move Aspire to a different monitor can come out the wrong size — run it again and it sorts itself out.</li>
+<li><strong>EdgeBreaker sizes its window to fit your screen.</strong> The first time you run it you'll see a small window flash up while it checks — you shouldn't see it again. Two monitors? It asks Windows which screen Aspire is on and sizes for that one, every run.</li>
 <li><strong>Depth warning.</strong> A shallow-angle V-bit plunges a long way for a small chamfer — a 12.4° bit needs 0.90 in of depth for a 0.020 in chamfer. If the cut would go deeper than the stock thickness in Job Setup, the dialog says so and names the flute position that fits. It warns, it does not block, and it stays quiet when Job Setup has no thickness.</li>
 </ul>
 </section>

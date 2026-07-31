@@ -23,7 +23,7 @@ CO.TIP_MARGIN      = 0.15   -- bottom of safe band: contact clears the tip
 CO.PRESETS         = { 0, 20, 40, 60, 80, 100 }
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.10.3"
+CO.VERSION         = "1.10.5"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -184,13 +184,19 @@ function CO.show_message(gadget_dir, msg)
       local probe = io.open(gadget_dir .. "\\MessageDialog.htm", "r")
       if probe == nil then return end
       probe:close()
-      -- The stored screen, so this window fits it too. load_screen returns nil
-      -- on every failure and message_fields then leaves the size alone. Off the
-      -- primary the numbers describe the wrong monitor, so they are discarded
-      -- the same way -- the unclamped 900x700 fits any panel 768 tall or more,
-      -- which is the smallest laptop screen there is.
-      local sw, sh, off = CO.load_screen()
-      if off then sw, sh = nil, nil end
+      -- The screen this RUN is on, stashed by main() from the ask-Windows
+      -- answer, so the report fits the same monitor as the dialog did. A
+      -- message with no run behind it (or a failed ask) falls back to the
+      -- stored measurement; off the primary the numbers describe the wrong
+      -- monitor, so they are discarded -- the unclamped 900x700 fits any panel
+      -- 768 tall or more, which is the smallest laptop screen there is.
+      local sw, sh
+      if CO.RUN_SCREEN ~= nil then
+         sw, sh = CO.RUN_SCREEN[1], CO.RUN_SCREEN[2]
+      else
+         local lw, lh, off = CO.load_screen()
+         if not off then sw, sh = lw, lh end
+      end
       local fields, w, h = CO.message_fields(msg, sw, sh)
       local dlg = HTML_Dialog(false, "file:" .. gadget_dir .. "\\MessageDialog.htm",
                               w, h, "EdgeBreaker v" .. CO.VERSION)
@@ -211,6 +217,95 @@ end
 -- The measuring window. Small, because it says one sentence; it is an OUTER
 -- window size like every other one here, so the page gets 358x150.
 CO.MEASURE_SIZE = { 360, 200 }
+
+-- ASK WINDOWS (v1.10.4). Trident can only ever see the primary monitor
+-- (ScreenProbe round 1, 2026-07-30), which made every measured size wrong the
+-- moment Aspire sat on any other monitor. Windows itself knows every monitor
+-- AND which one Aspire is on, and Aspire's sandbox keeps io.popen (ScreenProbe
+-- round 2, same night, ~1s on the Acer): one PowerShell line returns both.
+-- APP is the work area of the monitor under Aspire's main window -- the one
+-- the dialog will open on -- and MON lines are every monitor, primary flagged.
+CO.PS_MONITORS =
+   'powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; ' ..
+   '$p = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and ' ..
+   '($_.MainWindowTitle -like \'*Aspire*\' -or $_.MainWindowTitle -like \'*VCarve*\') } | ' ..
+   'Select-Object -First 1; ' ..
+   'if ($p) { $w = [System.Windows.Forms.Screen]::FromHandle($p.MainWindowHandle).WorkingArea; ' ..
+   '\'APP \' + $w.X + \' \' + $w.Y + \' \' + $w.Width + \' \' + $w.Height }; ' ..
+   '[System.Windows.Forms.Screen]::AllScreens | ForEach-Object { ' ..
+   '$w = $_.WorkingArea; $f = 0; if ($_.Primary) { $f = 1 }; ' ..
+   '\'MON \' + $w.X + \' \' + $w.Y + \' \' + $w.Width + \' \' + $w.Height + \' \' + $f }"'
+
+-- Pure, so the whole contract is testable offline. Returns nil unless the text
+-- carries both an APP line and a primary MON line with believable sizes --
+-- half an answer is no answer, exactly like parse_screen_field.
+function CO.parse_monitor_output(text)
+   if type(text) ~= "string" then return nil end
+   local app, primary, count = nil, nil, 0
+   for line in text:gmatch("[^\r\n]+") do
+      local w, h = line:match("^APP %-?%d+ %-?%d+ (%d+) (%d+)%s*$")
+      if w ~= nil then app = { w = tonumber(w), h = tonumber(h) } end
+      local mw, mh, pf = line:match("^MON %-?%d+ %-?%d+ (%d+) (%d+) ([01])%s*$")
+      if mw ~= nil then
+         count = count + 1
+         if pf == "1" then primary = { w = tonumber(mw), h = tonumber(mh) } end
+      end
+   end
+   if app == nil or primary == nil then return nil end
+   if not CO.believable_screen(app.w, app.h) then return nil end
+   if not CO.believable_screen(primary.w, primary.h) then return nil end
+   return { app = app, primary = primary, count = count }
+end
+
+-- Should this run pay for the ask? (v1.10.5) The ask costs about a second and
+-- a console blink -- the price of the right answer on a machine where the
+-- answer can vary. On a machine the last ask saw as SINGLE-monitor the answer
+-- cannot vary, so the stored measurement is already right and the run stays
+-- instant. An unknown count (no ask has ever run, or a pre-1.10.5 file) asks;
+-- a close that landed off the primary asks, because off-primary on a
+-- "single-monitor" machine means the count is stale (remember_screen also
+-- clears it). Pure, so the whole decision table is tested.
+function CO.should_ask_windows(count, off)
+   if off then return true end
+   if count == nil then return true end
+   return count > 1
+end
+
+-- Windows answers in ITS pixels; Trident wants its own (logical x systemDPI/96
+-- -- session 047). The conversion factor is sitting in data we already have:
+-- the stored measurement is the primary in Trident's unit, Windows' MON line
+-- is the same monitor in Windows' unit, and their ratio is the factor. On an
+-- unscaled machine (the Acer: 96/96/96) it is exactly 1. No stored measurement
+-- or a ratio too strange to be a DPI scale -> factor 1, which errs toward a
+-- SMALLER window on scaled-up machines and can never overflow.
+function CO.screen_for_run(mons, stored_primary_w)
+   local factor = 1
+   local sw = tonumber(stored_primary_w)
+   if mons == nil then return nil end
+   if sw ~= nil and mons.primary.w > 0 then
+      local r = sw / mons.primary.w
+      if r >= 0.5 and r <= 4 then factor = r end
+   end
+   return math.floor(mons.app.w * factor), math.floor(mons.app.h * factor)
+end
+
+-- The impure shell: one popen, everything else is the pure pair above. Any
+-- failure -- popen removed, PowerShell missing, garbage output -- returns nil
+-- and the caller falls back to v1.10.3's stored-measurement behaviour. Costs
+-- about a second (measured live on the Acer); sizing the window right is what
+-- the second buys.
+function CO.sdk_query_monitors()
+   local mons = nil
+   pcall(function()
+      if io.popen == nil then return end
+      local p = io.popen(CO.PS_MONITORS)
+      if p == nil then return end
+      local out = p:read("*a") or ""
+      p:close()
+      mons = CO.parse_monitor_output(out)
+   end)
+   return mons
+end
 
 -- Ask the screen how big it is, on a machine we have never sized. Runs once per
 -- machine, ever: after this the setup dialog reports its own screen on the way
@@ -249,7 +344,16 @@ end
 function CO.remember_screen(dlg)
    pcall(function()
       local w, h, off = CO.parse_screen_field(dlg:GetTextField("Screen"))
-      if w ~= nil then CO.save_screen(w, h, off) end
+      if w == nil then return end
+      -- Carry the monitor count through: this write knows nothing about
+      -- monitors and must not erase what the last ask-Windows learned --
+      -- EXCEPT when the dialog just closed off the primary on a machine
+      -- believed single-monitor: that count is provably stale (a second
+      -- monitor exists and is in use), and clearing it makes the next run
+      -- ask again.
+      local _, _, _, count = CO.load_screen()
+      if off and count == 1 then count = nil end
+      CO.save_screen(w, h, off, count)
    end)
 end
 
@@ -264,24 +368,29 @@ function CO.believable_screen(w, h)
    return true
 end
 
--- The whole rule: usable screen, less a margin, capped at the design size AND
--- at SCREEN_FRACTION of the screen, then floored at DEFAULT_SIZE -- except that
--- the floor can never push the window back off the screen it just fitted, so it
--- is itself clamped to screen-less-margin. Pure -- no SDK, no environment, no
--- file -- so tests/test_dialog_size.lua covers every case. Each dimension is
--- worked out independently.
+-- The whole rule: usable screen, less a margin, capped at the design size and
+-- at SCREEN_FRACTION of the screen. Pure -- no SDK, no environment, no file --
+-- so tests/test_dialog_size.lua covers every case. Each dimension is worked out
+-- independently.
+--
+-- v1.10.4 REMOVED the DEFAULT_SIZE floor that v1.10.1 added here. The floor
+-- existed so small screens would not be shrunk below 1280x700 -- and then Tim
+-- looked at exactly that window on the Acer's 1366-wide panel and called it
+-- comically large (94% of the screen), while calling the same 1280x700 at 67%
+-- of the big monitor perfect. The verdict is that PROPORTION is the product,
+-- so the fraction now rules at every size. A 1366x720 panel gets 1092x576;
+-- legibility comes from the page scaling down, and the smallest believable
+-- screen (640x480) gets 512x384, which no real machine has.
 function CO.dialog_size(screen_w, screen_h)
    if not CO.believable_screen(screen_w, screen_h) then
       return CO.DEFAULT_SIZE[1], CO.DEFAULT_SIZE[2]
    end
-   local function axis(screen, design, default)
-      local fits  = screen - CO.SCREEN_MARGIN
-      local size  = math.min(fits, design, screen * CO.SCREEN_FRACTION)
-      local floor = math.min(default, fits)
-      return math.floor(math.max(size, floor))
+   local function axis(screen, design)
+      return math.floor(math.min(screen - CO.SCREEN_MARGIN, design,
+                                 screen * CO.SCREEN_FRACTION))
    end
-   return axis(tonumber(screen_w), CO.DESIGN_SIZE[1], CO.DEFAULT_SIZE[1]),
-          axis(tonumber(screen_h), CO.DESIGN_SIZE[2], CO.DEFAULT_SIZE[2])
+   return axis(tonumber(screen_w), CO.DESIGN_SIZE[1]),
+          axis(tonumber(screen_h), CO.DESIGN_SIZE[2])
 end
 
 -- Display units follow the open job (job.InMM). ~0.5mm and 0.020in are
@@ -1292,25 +1401,27 @@ end
 -- a locked, missing or unreadable file must never interrupt a run. Sizing is a
 -- convenience -- it can make the dialog awkward, it can never make a wrong cut.
 -- Third return: was the dialog OFF the primary monitor last time it closed?
--- A v1.10.0-2 file has no offprimary key and reads back false, which keeps the
--- old behaviour exactly.
+-- Fourth (v1.10.5): how many monitors the last ask-Windows saw, nil if none
+-- ever ran. A v1.10.0-4 file has neither key and reads back false, nil --
+-- older stores keep their old meaning.
 function CO.load_screen()
    local path = CO.screen_path()
    if path == nil then return nil end
-   local ok, w, h, off = pcall(function()
+   local ok, w, h, off, count = pcall(function()
       local f = io.open(path, "r")
       if f == nil then return nil end
       local text = f:read("*a"); f:close()
       local t = CO.parse_settings(text)
       if t == nil then return nil end
       if not CO.believable_screen(t.screenw, t.screenh) then return nil end
-      return tonumber(t.screenw), tonumber(t.screenh), t.offprimary == "1"
+      return tonumber(t.screenw), tonumber(t.screenh), t.offprimary == "1",
+             tonumber(t.monitors)
    end)
-   if ok then return w, h, off end
+   if ok then return w, h, off, count end
    return nil
 end
 
-function CO.save_screen(w, h, off)
+function CO.save_screen(w, h, off, count)
    if not CO.believable_screen(w, h) then return false end
    local path = CO.screen_path()
    if path == nil then return false end
@@ -1320,6 +1431,9 @@ function CO.save_screen(w, h, off)
       f:write(string.format("screenw=%d\nscreenh=%d\noffprimary=%d\n",
                             math.floor(tonumber(w)), math.floor(tonumber(h)),
                             off and 1 or 0))
+      if tonumber(count) ~= nil then
+         f:write(string.format("monitors=%d\n", math.floor(tonumber(count))))
+      end
       f:close()
    end))
 end
@@ -2352,18 +2466,38 @@ function main(script_path)
    -- something only a page can measure: see CO.sdk_measure_screen. The measuring
    -- window appears once per machine and never again, because the setup dialog
    -- reports its own screen on the way out.
-   local screen_w, screen_h, off_primary = CO.load_screen()
+   local screen_w, screen_h, off_primary, mon_count = CO.load_screen()
    if screen_w == nil then
       screen_w, screen_h, off_primary = CO.sdk_measure_screen(gadget_dir)
    end
-   -- v1.10.3: last time, the dialog closed on a monitor that is NOT the primary
-   -- -- and the measurement is always the primary's, because Trident cannot see
-   -- any other (ScreenProbe sitting, 2026-07-30). So the stored numbers describe
-   -- the wrong screen, and the honest size is the conservative DEFAULT, which is
-   -- what discarding them here produces. Self-healing with one run of lag each
-   -- way: the dialog re-reports its position on every close, OK and Cancel alike.
-   if off_primary then screen_w, screen_h = nil, nil end
-   local win_w, win_h = CO.dialog_size(screen_w, screen_h)
+   -- v1.10.4: ask Windows which monitor Aspire is on and how big it is --
+   -- the one thing Trident can never see (it only reports the primary). When
+   -- the answer comes back, it wins outright: the stored measurement's only
+   -- job on this path is the DPI conversion inside screen_for_run.
+   -- When it does not (popen blocked, PowerShell missing, or v1.10.5 decided
+   -- this single-monitor machine need not pay for it), the fallback stands:
+   -- use the stored primary measurement, unless the dialog last closed OFF the
+   -- primary, in which case the numbers describe the wrong screen and the
+   -- conservative DEFAULT is the honest size.
+   local run_w, run_h
+   if CO.should_ask_windows(mon_count, off_primary) then
+      local mons = CO.sdk_query_monitors()
+      if mons ~= nil and screen_w ~= nil then
+         -- The count rides along so the NEXT run can skip the ask on a
+         -- single-monitor machine. Only stored when there is a measurement to
+         -- store it beside -- the file's believability gate needs one.
+         pcall(function() CO.save_screen(screen_w, screen_h, off_primary, mons.count) end)
+      end
+      run_w, run_h = CO.screen_for_run(mons, screen_w)
+   end
+   if run_w == nil then
+      run_w, run_h = screen_w, screen_h
+      if off_primary then run_w, run_h = nil, nil end
+   end
+   -- Stashed for show_message, so the post-run report fits the same monitor
+   -- without paying for a second popen.
+   CO.RUN_SCREEN = run_w ~= nil and { run_w, run_h } or nil
+   local win_w, win_h = CO.dialog_size(run_w, run_h)
    local dlg = HTML_Dialog(false, "file:" .. gadget_dir .. "\\EdgeBreakerDialog.htm",
                            win_w, win_h, "EdgeBreaker v" .. CO.VERSION)
 

@@ -210,6 +210,31 @@ do
    CHECK(CO.save_screen(1920, 1040, true) == true, "the off-primary flag saves")
    local ow, oh, ooff = CO.load_screen()
    CHECK(ow == 1920 and ooff == true, "and reads back true")
+
+   -- v1.10.5: the monitor count rides in the same file. Absent (a pre-1.10.5
+   -- file, or no ask ever ran) it reads nil, which means "ask".
+   CHECK(CO.save_screen(1920, 1040, false, 2) == true, "a monitor count saves")
+   local cw, ch, coff, ccount = CO.load_screen()
+   CHECK(cw == 1920 and ccount == 2, "and reads back as a number")
+   CHECK(CO.save_screen(1920, 1040, false) == true, "saving without a count")
+   local _, _, _, ncount = CO.load_screen()
+   CHECK(ncount == nil, "leaves it absent -> nil -> the next run asks")
+
+   -- remember_screen carries a stored count through an ordinary close, and
+   -- CLEARS a count of 1 when the dialog just closed off the primary -- a
+   -- "single-monitor" machine provably is not one any more.
+   CHECK(CO.save_screen(1920, 1040, false, 1) == true, "seed: single-monitor machine")
+   CO.remember_screen({ GetTextField = function() return "1920x1032" end })
+   local _, _, _, kept = CO.load_screen()
+   CHECK(kept == 1, "an ordinary on-primary close keeps the count")
+   CO.remember_screen({ GetTextField = function() return "1920x1032 off" end })
+   local _, _, roff, cleared = CO.load_screen()
+   CHECK(roff == true and cleared == nil,
+         "an off-primary close on a count-1 machine clears the count")
+   CHECK(CO.save_screen(1920, 1040, false, 2) == true, "seed: two-monitor machine")
+   CO.remember_screen({ GetTextField = function() return "1920x1032 off" end })
+   local _, _, _, still2 = CO.load_screen()
+   CHECK(still2 == 2, "an off-primary close on a two-monitor machine keeps its count")
    do
       local f = assert(io.open(path, "w"))
       f:write("# EdgeBreaker measured screen size - safe to delete\n")
