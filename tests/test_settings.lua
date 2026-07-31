@@ -137,3 +137,87 @@ NEAR(CO.apply_settings({ start = "-1", units = "in" }, IN).start, 0, 1e-12,
 NEAR(CO.apply_settings({ start = "banana", units = "in" }, IN).start, 0, 1e-12,
      "a garbled remembered start depth is dropped")
 NEAR(CO.apply_settings({}, IN).start, 0, 1e-12, "no memory at all seeds 0")
+
+-- ==================== v1.10.0: the measured screen ====================
+-- The screen size lives in its OWN file, not in the settings file. save_settings
+-- writes the whole table from the keys its caller passes, so a screen size
+-- living in CO.SETTINGS_KEYS would be erased by every ordinary save unless every
+-- call site remembered to carry it. A separate file also gives a clean remedy
+-- for a stuck value: delete it and the next run measures again.
+CHECK(CO.screen_path() ~= CO.settings_path(), "the screen size has its own file")
+CHECK(CO.screen_path():find("EdgeBreaker%-screen%.txt") ~= nil, "and its own name")
+do
+   local keys = table.concat(CO.SETTINGS_KEYS, ",")
+   CHECK(keys:find("screen") == nil, "no screen key rides in the settings file")
+end
+
+-- The shape a page writes into its hidden field.
+do
+   local w, h = CO.parse_screen_field("1920x1040")
+   CHECK(w == 1920 and h == 1040, "a page's WxH field parses")
+   local w2, h2 = CO.parse_screen_field("  1366 x 728  ")
+   CHECK(w2 == 1366 and h2 == 728, "spaces around the x are tolerated")
+   CHECK(CO.parse_screen_field("") == nil, "an empty field is nothing, not zero")
+   CHECK(CO.parse_screen_field(nil) == nil, "a missing field is nothing")
+   CHECK(CO.parse_screen_field("1920") == nil, "half a measurement is nothing")
+   CHECK(CO.parse_screen_field("widexhigh") == nil, "words are nothing")
+   CHECK(CO.parse_screen_field(1920) == nil, "a non-string is nothing, not a crash")
+   -- Believability is enforced here too, so a nonsense value never reaches disk.
+   CHECK(CO.parse_screen_field("100x100") == nil, "too small to be a screen -> nothing")
+   CHECK(CO.parse_screen_field("99999x99999") == nil, "absurdly large -> nothing")
+end
+
+-- Round trip through the real file, then put the user's own file back exactly
+-- as it was. This test writes to %APPDATA% on the machine running it.
+do
+   local path = CO.screen_path()
+   local prior = nil
+   do
+      local f = io.open(path, "rb")
+      if f then prior = f:read("*a"); f:close() end
+   end
+   -- This block also calls CO.save_settings below, which overwrites the real
+   -- settings file -- save it and put it back too, same as the screen file.
+   local settings_path = CO.settings_path()
+   local settings_prior = nil
+   do
+      local f = io.open(settings_path, "rb")
+      if f then settings_prior = f:read("*a"); f:close() end
+   end
+
+   CHECK(CO.save_screen(1920, 1040) == true, "a believable screen saves")
+   local w, h = CO.load_screen()
+   CHECK(w == 1920 and h == 1040, "and reads back as numbers")
+
+   CHECK(CO.save_screen(10, 10) == false, "an unbelievable screen is refused, not written")
+   local w2, h2 = CO.load_screen()
+   CHECK(w2 == 1920 and h2 == 1040, "and the refused write left the good value alone")
+
+   -- Garbage on disk reads as nothing, which lands on the default window.
+   do
+      local f = assert(io.open(path, "w"))
+      f:write("this is not a screen size\n"); f:close()
+      CHECK(CO.load_screen() == nil, "a mangled file reads as no measurement")
+   end
+
+   -- The two files do not disturb each other, in either direction.
+   CHECK(CO.save_screen(1366, 728) == true, "save a screen")
+   CO.save_settings({ units = "in", mode = "setback", side = "auto", percent = 80, size = 0.02 })
+   local w3, h3 = CO.load_screen()
+   CHECK(w3 == 1366 and h3 == 728, "saving settings leaves the screen size alone")
+   local s = CO.load_settings()
+   CHECK(s ~= nil and s.size == "0.02", "and the settings file is still readable")
+
+   -- No file at all is the first-run state.
+   os.remove(path)
+   CHECK(CO.load_screen() == nil, "no file means no measurement")
+
+   if prior then
+      local f = assert(io.open(path, "wb")); f:write(prior); f:close()
+   end
+   if settings_prior then
+      local f = assert(io.open(settings_path, "wb")); f:write(settings_prior); f:close()
+   else
+      os.remove(settings_path)
+   end
+end

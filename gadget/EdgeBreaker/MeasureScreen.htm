@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>EdgeBreaker</title>
+<style>
+/* px ONLY. Trident multiplies pt by ~2.7 and the layout gate stops meaning
+   anything. Same rule as every other page here. */
+html, body { height: 100%; margin: 0; padding: 0; }
+body { font-family: "Segoe UI", Arial, sans-serif; background: #f4f6f8;
+       color: #1f2b36; overflow: hidden; }
+#Box { padding: 14px 20px 0; }
+#Head { font-size: 19px; font-weight: 600; margin-bottom: 6px; }
+#Body { font-size: 14px; line-height: 1.3; color: #43525f; }
+</style>
+</head>
+<body>
+  <div id="Box">
+    <div id="Head">Checking your screen size</div>
+    <div id="Body">One moment &mdash; EdgeBreaker's just working out how big to
+      open. You shouldn't see this again.</div>
+  </div>
+  <input type="hidden" id="Screen" name="Screen" value="">
+  <!-- Aspire binds OK/Cancel by NAME. The button sits off the visible area
+       rather than display:none, because a hidden button cannot be clicked in
+       Trident and the operator needs a real one if the script never runs. -->
+  <input id="ButtonOK" name="ButtonOK" type="button" value="OK"
+         style="position:absolute; left:26px; bottom:16px;">
+<script type="text/javascript">
+// The one thing this page exists to do. availWidth/availHeight already exclude
+// the taskbar, which is what the window has to fit inside.
+function reportScreen() {
+  try {
+    document.getElementById("Screen").value =
+      screen.availWidth + "x" + screen.availHeight;
+  } catch (e) { /* leave it empty; Lua falls back to the default size */ }
+}
+// Close ourselves so the operator sees a flash and nothing else. Clicking OK is
+// the only way a page can dismiss its own dialog -- HTML_Dialog is modal and Lua
+// gets no control back until OK or Cancel. The delay is deliberate: Aspire wires
+// the buttons AND injects field values after load, so an immediate write/click
+// can land before either exists -- the measurement is taken right here, just
+// before the click, so nothing can overwrite it afterward.
+setTimeout(function () {
+  reportScreen();
+  var b = document.getElementById("ButtonOK");
+  if (b && b.click) b.click();
+}, 400);
+</script>
+</body>
+</html>

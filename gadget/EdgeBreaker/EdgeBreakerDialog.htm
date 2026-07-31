@@ -181,7 +181,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.9.2</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.10.0</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -391,6 +391,11 @@ input[type=radio] { zoom: 2.5; }
   <input type="hidden" id="Percent" name="Percent" value="80">
   <input type="hidden" id="Slot" name="Slot" value="1">
   <input type="hidden" id="KindOut" name="KindOut" value="add">
+  <!-- HTML -> Lua, v1.10.0: how big this screen is, so the NEXT run opens at the
+       right size. Written once, after Aspire's field injection has landed (see
+       reportScreen() below); Lua reads it after the dialog closes, on the OK
+       and Cancel paths alike. -->
+  <input type="hidden" id="Screen" name="Screen" value="">
 
 <script type="text/javascript">
 // The layout is authored at ONE size -- the viewport of an 1800x1000 window --
@@ -404,6 +409,19 @@ input[type=radio] { zoom: 2.5; }
 // radio buttons already rely on it) and it reflows text properly. #Fit is then
 // given the window size divided by the scale, so it still fills the window.
 var DESIGN_W = 1798, DESIGN_H = 950;
+
+// The measurement that sizes the NEXT run's window. availWidth/availHeight
+// already exclude the taskbar, which is what the window has to fit inside.
+// Lua reads this field after the dialog closes (CO.remember_screen). Written
+// from the #Units/#BitName poll below, NOT here at parse time -- Aspire injects
+// field values AFTER load, and an early write here would just get overwritten
+// back to empty by that injection.
+function reportScreen() {
+  try {
+    document.getElementById("Screen").value =
+      screen.availWidth + "x" + screen.availHeight;
+  } catch (e) { /* leave it empty; the stored value simply stays as it was */ }
+}
 function fitToWindow() {
   var fit = document.getElementById("Fit");
   // body, NOT documentElement: on the root element clientWidth/Height report the
@@ -1338,6 +1356,9 @@ var t = setInterval(function() {
   attempts++;
   if (el("Units").value || el("BitName").value || attempts > 10) {
     clearInterval(t);
+    // Injection (or the give-up timeout) has happened by now, so this is safe
+    // from the race described above.
+    reportScreen();
     initChamfers();
     initFromDefaults();
     initBit();

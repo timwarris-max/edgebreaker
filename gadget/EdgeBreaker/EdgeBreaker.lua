@@ -23,7 +23,7 @@ CO.TIP_MARGIN      = 0.15   -- bottom of safe band: contact clears the tip
 CO.PRESETS         = { 0, 20, 40, 60, 80, 100 }
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.9.2"
+CO.VERSION         = "1.10.0"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -63,31 +63,25 @@ function CO.check_tool_geometry(angle, dia)
    return true
 end
 
--- Dialog window size, in physical pixels, per machine. The page is authored at
--- one fixed size and scales itself down to whatever window it is given (see
--- EdgeBreakerDialog.htm), so a machine with a smaller screen gets a smaller window
--- rather than a cramped layout.
--- A dialog cannot resize itself, so this must be right before it opens.
+-- Dialog window size, in physical pixels. The page is authored at one fixed
+-- size and scales itself DOWN to whatever window it is given (see
+-- EdgeBreakerDialog.htm), so a smaller screen gets a smaller window rather
+-- than a cramped layout. A dialog cannot resize itself, so this must be right
+-- before it opens.
+--
+-- Until v1.10.0 this was a guess keyed on COMPUTERNAME: our two machines were
+-- listed and every other machine on earth got a default. Getting that wrong is
+-- invisible here and unusable there -- it shipped, and a VCarve Pro user's OK
+-- button landed off the bottom of his screen. Now the page MEASURES the screen
+-- (CO.dialog_size below, fed by CO.load_screen) and the guess survives only as
+-- the fallback for when there is no measurement to use.
 --
 -- DESIGN_SIZE is what the LAYOUT is authored against -- keep it in step with
 -- DESIGN_W/H in EdgeBreakerDialog.htm and WIN_W/H in the layout gate. It is
--- deliberately NOT the default window any more.
---
--- DEFAULT_SIZE is what an unlisted machine opens at, and every machine but ours
--- is unlisted. It has to fit a screen we have never seen, so it is sized for
--- 1366x768 -- the ordinary laptop. Until 2026-07-29 the default WAS the design
--- size, which is bigger than that screen in both directions, and because the
--- OK/Cancel bar is pinned to the bottom of the window the buttons went off the
--- bottom of the screen. Reported from the field by a VCarve Pro 12.510 user; the
--- table used to list the one small screen and default to the big one, and now
--- lists the big screens and defaults to small. Getting this wrong is invisible
--- here and unusable there, so it is pinned by tests/test_dialog_size.lua.
+-- also the cap: the page never scales UP, so a bigger window is dead space.
 CO.DESIGN_SIZE  = { 1800, 1000 }        -- keep in step with EdgeBreakerDialog.htm
-CO.DEFAULT_SIZE = { 1280, 700 }         -- anyone we do not know: fits 1366x768
-CO.SCREEN_SIZES = {
-   ["FASTTRACKS2026"] = { 1800, 1000 }, -- 5120x1440 ultrawide desktop
-   ["HAAS-LAPTOP"]    = { 1280, 720 },  -- Acer A315-54, 1920x1080 @ 100%
-}
+CO.DEFAULT_SIZE = { 1280, 700 }         -- no measurement: fits 1366x768
+CO.SCREEN_MARGIN = 16                   -- so the window is not flush to the screen edge
 
 -- Styled messages (see docs/superpowers/specs/2026-07-28-edgebreaker-styled-messages-design.md).
 -- The class names are the setup dialog's own banner palette under different
@@ -180,12 +174,72 @@ function CO.show_message(gadget_dir, msg)
    end
 end
 
--- Unknown machine -> the design size, i.e. exactly what shipped before. Sizes
--- must never exceed the design size: the page only ever scales down.
-function CO.dialog_size(computer_name)
-   local s = CO.SCREEN_SIZES[string.upper(computer_name or "")]
-   s = s or CO.DEFAULT_SIZE
-   return s[1], s[2]
+-- The measuring window. Small, because it says one sentence; it is an OUTER
+-- window size like every other one here, so the page gets 358x150.
+CO.MEASURE_SIZE = { 360, 200 }
+
+-- Ask the screen how big it is, on a machine we have never sized. Runs once per
+-- machine, ever: after this the setup dialog reports its own screen on the way
+-- out (CO.remember_screen) and there is nothing left to measure.
+--
+-- Silent on every path, including its own failures. A cancelled probe, a missing
+-- page, scripting turned off and a garbage value all return nil, and nil means
+-- CO.dialog_size falls back to DEFAULT_SIZE -- exactly what v1.9.2 always did.
+-- Telling the operator about it would be noise in the one gadget that worked
+-- hard to stay quiet, and there is nothing they could do with the news.
+function CO.sdk_measure_screen(gadget_dir)
+   local w, h
+   pcall(function()
+      local probe = io.open(gadget_dir .. "\\MeasureScreen.htm", "r")
+      if probe == nil then return end
+      probe:close()
+      local dlg = HTML_Dialog(false, "file:" .. gadget_dir .. "\\MeasureScreen.htm",
+                              CO.MEASURE_SIZE[1], CO.MEASURE_SIZE[2], "EdgeBreaker")
+      dlg:AddTextField("Screen", "")
+      -- The return value is ignored on purpose. The page dismisses itself by
+      -- clicking OK, and a Cancel (or the X) is not a failure either -- what
+      -- matters is whether a number came back.
+      dlg:ShowDialog()
+      w, h = CO.parse_screen_field(dlg:GetTextField("Screen"))
+   end)
+   if w == nil then return nil end
+   CO.save_screen(w, h)
+   return w, h
+end
+
+-- Read a dialog's Screen field and remember it. Called after the setup dialog
+-- closes, on BOTH the OK and Cancel paths: a run someone abandoned still tells
+-- us how big their screen is, and that is the whole reason the measuring window
+-- never has to appear twice. Tolerant of a dialog with no such field, so an
+-- older page cannot break a run.
+function CO.remember_screen(dlg)
+   pcall(function()
+      local w, h = CO.parse_screen_field(dlg:GetTextField("Screen"))
+      if w ~= nil then CO.save_screen(w, h) end
+   end)
+end
+
+-- Is this pair of numbers a screen? Anything else is discarded rather than
+-- repaired: a garbage value we silently clamp is a garbage value we keep.
+-- The comparisons also reject NaN (which fails every one) and infinity.
+function CO.believable_screen(w, h)
+   w, h = tonumber(w), tonumber(h)
+   if w == nil or h == nil then return false end
+   if w < 640 or h < 480 then return false end
+   if w > 30000 or h > 30000 then return false end
+   return true
+end
+
+-- The whole rule: usable screen, less a margin, capped at the design size.
+-- Pure -- no SDK, no environment, no file -- so tests/test_dialog_size.lua
+-- covers every case. Each dimension is capped independently.
+function CO.dialog_size(screen_w, screen_h)
+   if not CO.believable_screen(screen_w, screen_h) then
+      return CO.DEFAULT_SIZE[1], CO.DEFAULT_SIZE[2]
+   end
+   local w = math.min(tonumber(screen_w) - CO.SCREEN_MARGIN, CO.DESIGN_SIZE[1])
+   local h = math.min(tonumber(screen_h) - CO.SCREEN_MARGIN, CO.DESIGN_SIZE[2])
+   return math.floor(w), math.floor(h)
 end
 
 -- Display units follow the open job (job.InMM). ~0.5mm and 0.020in are
@@ -1159,6 +1213,60 @@ end
 -- writes the new file and the old one is simply left alone.
 function CO.old_settings_path()
    return settings_path_for("ChamferOffset-settings.txt")
+end
+
+-- The measured screen size, in its own file beside the settings. Its own file
+-- on purpose: CO.save_settings writes exactly the keys in CO.SETTINGS_KEYS from
+-- the table its caller passes, so a screen size stored there would be wiped by
+-- every ordinary save unless every call site carried it. Deleting this file is
+-- also the whole remedy if a value ever gets stuck -- the next run measures again.
+function CO.screen_path()
+   return settings_path_for("EdgeBreaker-screen.txt")
+end
+
+-- "1920x1040" -> 1920, 1040. This is the shape a page writes into its hidden
+-- field, and the only shape either dialog ever sends. Anything that is not two
+-- believable numbers is nothing at all: nonsense is discarded here so it can
+-- never reach the file.
+function CO.parse_screen_field(text)
+   if type(text) ~= "string" then return nil end
+   local w, h = text:match("^%s*(%d+)%s*[xX]%s*(%d+)%s*$")
+   if w == nil then return nil end
+   w, h = tonumber(w), tonumber(h)
+   if not CO.believable_screen(w, h) then return nil end
+   return w, h
+end
+
+-- Both halves are best-effort and silent, exactly like the settings pair above:
+-- a locked, missing or unreadable file must never interrupt a run. Sizing is a
+-- convenience -- it can make the dialog awkward, it can never make a wrong cut.
+function CO.load_screen()
+   local path = CO.screen_path()
+   if path == nil then return nil end
+   local ok, w, h = pcall(function()
+      local f = io.open(path, "r")
+      if f == nil then return nil end
+      local text = f:read("*a"); f:close()
+      local t = CO.parse_settings(text)
+      if t == nil then return nil end
+      if not CO.believable_screen(t.screenw, t.screenh) then return nil end
+      return tonumber(t.screenw), tonumber(t.screenh)
+   end)
+   if ok then return w, h end
+   return nil
+end
+
+function CO.save_screen(w, h)
+   if not CO.believable_screen(w, h) then return false end
+   local path = CO.screen_path()
+   if path == nil then return false end
+   return (pcall(function()
+      local f = assert(io.open(path, "w"))
+      f:write("# EdgeBreaker measured screen size - safe to delete\n")
+      f:write(string.format("screenw=%d\nscreenh=%d\n",
+                            math.floor(tonumber(w)), math.floor(tonumber(h))))
+      f:close()
+   end))
 end
 
 -- Both halves are best-effort and silent: remembering is a convenience, and a
@@ -2183,10 +2291,15 @@ function main(script_path)
 
    -- First arg is local_html, NOT modal: false is required with a file: URL
    -- (Aspire renders the URL as text otherwise) — same as Inlay Doctor's dialogs.
-   -- Physical pixels, NOT scaled by Windows DPI — the stylesheet is px-only for
+   -- Physical pixels, NOT scaled by Windows DPI -- the stylesheet is px-only for
    -- exactly that reason, so the dialog is the same block of pixels on every
-   -- machine. That makes the size a per-screen choice: see CO.dialog_size.
-   local win_w, win_h = CO.dialog_size(os.getenv("COMPUTERNAME"))
+   -- machine. Which makes the size a per-SCREEN choice, and the screen is
+   -- something only a page can measure: see CO.sdk_measure_screen. The measuring
+   -- window appears once per machine and never again, because the setup dialog
+   -- reports its own screen on the way out.
+   local screen_w, screen_h = CO.load_screen()
+   if screen_w == nil then screen_w, screen_h = CO.sdk_measure_screen(gadget_dir) end
+   local win_w, win_h = CO.dialog_size(screen_w, screen_h)
    local dlg = HTML_Dialog(false, "file:" .. gadget_dir .. "\\EdgeBreakerDialog.htm",
                            win_w, win_h, "EdgeBreaker v" .. CO.VERSION)
 
@@ -2263,8 +2376,16 @@ function main(script_path)
    dlg:AddTextField("KindOut", cls.kind)
    dlg:AddTextField("BannerFacts", CO.encode_banner_facts(cls, #sel_fps,
       (target and target.memory) and #target.memory.fps or 0))
+   -- Seeded empty; the page fills it in with the real screen size after Aspire's
+   -- own field injection runs, and CO.remember_screen reads it back below.
+   dlg:AddTextField("Screen", "")
 
-   if not dlg:ShowDialog() then return false end   -- user cancelled
+   -- Remember the screen whichever way this went. A cancelled run is still a run
+   -- that told us how big the screen is, and taking it here is what keeps the
+   -- measuring window a once-per-machine event.
+   local pressed_ok = dlg:ShowDialog()
+   CO.remember_screen(dlg)
+   if not pressed_ok then return false end         -- user cancelled
 
    -- The cut is built from the bit the picker is holding when OK is pressed,
    -- never from whatever the preview happened to draw. Same sequence main() has

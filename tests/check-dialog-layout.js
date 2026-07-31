@@ -9,18 +9,25 @@
 //
 //   node tests\check-dialog-layout.js
 //
-// Window size below is the DESIGN size -- CO.DESIGN_SIZE in EdgeBreaker.lua and
-// DESIGN_W/H in EdgeBreakerDialog.htm. Machines with smaller screens open a smaller
-// window (CO.SCREEN_SIZES) and the page scales the same layout down uniformly, so
-// checking the design size checks them all: nothing can overflow at a smaller
-// scale that fits here.
+// Window size defaults to the DESIGN size and can be overridden on the command
+// line (see below). CO.SCREEN_SIZES is gone as of v1.10.0: the window is now
+// measured from the screen, so there is no fixed list of sizes to check.
 
 var fs = require("fs");
 var os = require("os");
 var path = require("path");
 var cp = require("child_process");
 
-var WIN_W = 1800, WIN_H = 1000;     // must match EdgeBreaker.lua
+// Defaults to the DESIGN size -- CO.DESIGN_SIZE in EdgeBreaker.lua and DESIGN_W/H
+// in EdgeBreakerDialog.htm. Overridable on the command line, because as of
+// v1.10.0 the window is measured from the operator's screen and can be almost
+// any size down to the smallest thing we believe is a screen:
+//     node tests\check-dialog-layout.js 1008 712
+// The old header here claimed a layout that fits the design size fits every
+// smaller window, so only the design size needed checking. That is not true --
+// this dialog failed live at a smaller size on 2026-07-27 -- so the small sizes
+// get rendered on purpose rather than argued about.
+var WIN_W = +(process.argv[2] || 1800), WIN_H = +(process.argv[3] || 1000);
 var FRAME_W = 2, FRAME_H = 50;      // measured cost of the window frame
 var VIEW_W = WIN_W - FRAME_W, VIEW_H = WIN_H - FRAME_H;
 var MIN_SLACK = 24;                 // safety margin for Trident vs Chrome
@@ -875,6 +882,57 @@ MSG_CASES.forEach(function (c) {
     (bad.length ? "  <-- " + bad.join("; ") : ""));
   if (bad.length) failed++;
 });
+
+// ---- MeasureScreen.htm ---------------------------------------------------
+// A third page with its own viewport. It has one job -- put the screen size in
+// a hidden field -- so this checks the words fit its little window AND that the
+// field is actually filled. The second half is the real point: a page that
+// renders beautifully and reports nothing sends every machine to the fallback
+// size, which is precisely the defect v1.10.0 exists to remove, and no
+// measurement of the layout could ever see it.
+console.log("");
+var SCR_SRC = path.join(__dirname, "..", "gadget", "EdgeBreaker", "MeasureScreen.htm");
+var scrHtml = fs.readFileSync(SCR_SRC, "utf8");
+var SCR_W = 360, SCR_H = 200;            // must match CO.MEASURE_SIZE in EdgeBreaker.lua
+var SCR_VW = SCR_W - FRAME_W, SCR_VH = SCR_H - FRAME_H;
+{
+  // The page clicks OK on a timer, which in Chrome does nothing (there is no
+  // dialog to close) -- so the DOM is still dumpable and the field readable.
+  var s = scrHtml.replace("</head>", "<style>html,body{height:" + SCR_VH + "px !important;" +
+    "width:" + SCR_VW + "px !important;} body{position:relative !important;}</style></head>");
+  s = s.replace("</body>", "<script>setTimeout(function(){" +
+    "var b=document.getElementById('Box'), ok=document.getElementById('ButtonOK');" +
+    "var br=b.getBoundingClientRect(), r=ok.getBoundingClientRect();" +
+    "var got=document.getElementById('Screen').value;" +
+    "document.title='SCR bottom='+Math.round(br.bottom)+' okBottom='+Math.round(r.bottom)+" +
+    "' viewH=" + SCR_VH + " scrollW='+document.body.scrollWidth+' field='+(got||'(empty)');" +
+    "},1200);</script></body>");
+  var f = path.join(tmp, "measurescreen.htm");
+  fs.writeFileSync(f, s);
+  var out = cp.execFileSync(CHROME, [
+    "--headless=new", "--disable-gpu", "--hide-scrollbars",
+    "--virtual-time-budget=4000",
+    "--window-size=" + SCR_VW + "," + SCR_VH,
+    "--dump-dom", "file:///" + f.replace(/\\/g, "/")
+  ], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+  var m = /SCR bottom=(-?\d+) okBottom=(-?\d+) viewH=(\d+) scrollW=(\d+) field=([^<]*)/.exec(out);
+  var bad = [];
+  if (!m) { bad.push("no measurement - page error?"); }
+  else {
+    var textBottom = +m[1], okBottom = +m[2], vh = +m[3], scrollW = +m[4], field = m[5].trim();
+    if (textBottom > vh) bad.push("the text runs " + (textBottom - vh) + "px below the window");
+    if (okBottom > vh) bad.push("OK button below the fold");
+    if (scrollW > SCR_VW) bad.push("the page is " + (scrollW - SCR_VW) + "px too wide");
+    // Chrome reports its headless window here rather than a real monitor, so the
+    // NUMBERS mean nothing offline -- but the SHAPE is the contract Lua parses
+    // (CO.parse_screen_field), and an empty field is the failure worth catching.
+    if (!/^\d+x\d+$/.test(field))
+      bad.push("the Screen field should hold WxH, got '" + field + "'");
+  }
+  console.log((bad.length ? "FAIL  " : "ok    ") + "MeasureScreen.htm  " +
+    SCR_VW + "x" + SCR_VH + (bad.length ? "  <-- " + bad.join("; ") : ""));
+  if (bad.length) failed++;
+}
 
 // ---- Source check: every <svg> is clipped, and sized in pixels -----------
 // Neither rule can be measured here, only read, because Chrome gets both right

@@ -357,7 +357,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.9.2", "version gate: 1.9.2")
+CHECK(CO.VERSION == "1.10.0", "version gate: 1.10.0")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -424,3 +424,55 @@ CHECK(CO.RECEIPT_FIELDS == nil, "receipt: RECEIPT_FIELDS removed")
 CHECK(CO.RECEIPT_SIZE == nil, "receipt: RECEIPT_SIZE removed")
 CHECK(CO.RECEIPT_STATE == nil, "receipt: RECEIPT_STATE removed")
 CHECK(CO.html_escape == nil, "receipt: html_escape removed with its only callers")
+
+-- v1.10.0 SCREEN MEASURING ---------------------------------------------------
+-- The window size now comes from the page, through a hidden field, exactly like
+-- every other value on this dialog. Three things can drift silently and none of
+-- them can be caught by rendering or by running the geometry: the field NAME
+-- (Lua and two pages must agree), the measuring window's SIZE (Lua opens it,
+-- the gate measures it), and the silence contract.
+do
+   local function slurp_text(p)
+      local f = assert(io.open(p, "rb")); local b = f:read("*a"); f:close(); return b
+   end
+   local lua  = slurp_text("gadget/EdgeBreaker/EdgeBreaker.lua")
+   local page = slurp_text("gadget/EdgeBreaker/MeasureScreen.htm")
+   local dlg  = slurp_text("gadget/EdgeBreaker/EdgeBreakerDialog.htm")
+
+   -- One field name, three files. A rename in any one of them means every
+   -- machine silently falls back to the default window -- the v1.9.0 defect,
+   -- back again with no symptom anyone could report.
+   CHECK(page:find('id="Screen" name="Screen"', 1, true) ~= nil,
+         "the measuring page declares the Screen field")
+   CHECK(dlg:find('id="Screen" name="Screen"', 1, true) ~= nil,
+         "the setup dialog declares the Screen field too")
+   CHECK(lua:find('GetTextField%("Screen"%)') ~= nil,
+         "Lua reads the field by that name")
+
+   -- A field that is read but never created (AddTextField) fails silently --
+   -- GetTextField just returns nil/throws inside a pcall, so the measuring
+   -- window returns forever or the size goes stale, with nothing to see
+   -- offline. Exactly two call sites must create it: the measuring dialog and
+   -- the setup dialog.
+   local _, screen_adds = lua:gsub('AddTextField%("Screen"', "")
+   CHECK(screen_adds == 2,
+         "AddTextField(\"Screen\" appears exactly twice: measuring dialog + setup dialog")
+   local dw, dh = lua:match("CO%.MEASURE_SIZE%s*=%s*{%s*(%d+)%s*,%s*(%d+)%s*}")
+   CHECK(dw == "360" and dh == "200",
+         "the measuring window is 360x200 -- keep SCR_W/SCR_H in the layout gate in step")
+
+   -- Both pages must actually read the screen, not just declare a field.
+   CHECK(page:find("screen.availWidth", 1, true) ~= nil,
+         "the measuring page reads availWidth")
+   CHECK(dlg:find("screen.availWidth", 1, true) ~= nil,
+         "the setup dialog reports its screen too, which is what stops the flash returning")
+
+   -- Sizing is a convenience and must never speak. show_message and
+   -- DisplayMessageBox are both shouting; neither belongs on this path.
+   local body = lua:match("function CO%.sdk_measure_screen.-\nend\n")
+   CHECK(body ~= nil, "sdk_measure_screen exists")
+   CHECK(body == nil or body:find("show_message", 1, true) == nil,
+         "measuring never opens a message window")
+   CHECK(body == nil or body:find("DisplayMessageBox", 1, true) == nil,
+         "measuring never opens a message box")
+end
