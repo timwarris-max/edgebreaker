@@ -383,7 +383,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.11.0", "version gate: 1.11.0")
+CHECK(CO.VERSION == "1.12.0", "version gate: 1.12.0")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -461,7 +461,15 @@ do
    local function slurp_text(p)
       local f = assert(io.open(p, "rb")); local b = f:read("*a"); f:close(); return b
    end
-   local lua  = slurp_text("gadget/EdgeBreaker/EdgeBreaker.lua")
+   -- Normalised to LF right after the read: a fresh clone materialises CRLF
+   -- (core.autocrlf, no .gitattributes), and the two "function ... .-\nend\n"
+   -- body-matches below require a bare "\n" right before "end" -- under CRLF
+   -- that byte is "\r", so both silently fail to match. Worse than failing
+   -- loud: both are guarded `body == nil or ...`, so the one automated check
+   -- on "sizing never speaks" goes vacuously true in exactly the environment
+   -- (a fresh public-repo clone) CLAUDE.md requires running this suite in
+   -- before a release.
+   local lua  = slurp_text("gadget/EdgeBreaker/EdgeBreaker.lua"):gsub("\r\n", "\n")
    local page = slurp_text("gadget/EdgeBreaker/MeasureScreen.htm")
    local dlg  = slurp_text("gadget/EdgeBreaker/EdgeBreakerDialog.htm")
 
@@ -484,8 +492,9 @@ do
    CHECK(screen_adds == 2,
          "AddTextField(\"Screen\" appears exactly twice: measuring dialog + setup dialog")
    local dw, dh = lua:match("CO%.MEASURE_SIZE%s*=%s*{%s*(%d+)%s*,%s*(%d+)%s*}")
-   CHECK(dw == "360" and dh == "200",
-         "the measuring window is 360x200 -- keep SCR_W/SCR_H in the layout gate in step")
+   CHECK(dw == "140" and dh == "90",
+         "the blink window is 140x90 -- an OUTER size, so the page gets 138x40; " ..
+         "keep SCR_W/SCR_H in the layout gate in step")
 
    -- Both pages must actually read the screen, not just declare a field.
    CHECK(page:find("screen.availWidth", 1, true) ~= nil,
@@ -493,14 +502,9 @@ do
    CHECK(dlg:find("screen.availWidth", 1, true) ~= nil,
          "the setup dialog reports its screen too, which is what stops the flash returning")
 
-   -- Sizing is a convenience and must never speak. show_message and
-   -- DisplayMessageBox are both shouting; neither belongs on this path.
-   local body = lua:match("function CO%.sdk_measure_screen.-\nend\n")
-   CHECK(body ~= nil, "sdk_measure_screen exists")
-   CHECK(body == nil or body:find("show_message", 1, true) == nil,
-         "measuring never opens a message window")
-   CHECK(body == nil or body:find("DisplayMessageBox", 1, true) == nil,
-         "measuring never opens a message box")
+   -- Sizing is a convenience and must never speak. v1.12.0 renamed the blink's
+   -- function to CO.sdk_ask_page (below, in the same do block); the check for
+   -- it living here would just duplicate that one under the old name.
 
    -- v1.10.3 MULTI-MONITOR. Trident only ever reports the PRIMARY monitor
    -- (ScreenProbe sitting, 2026-07-30), so each page tags its report " off"
@@ -515,32 +519,182 @@ do
    CHECK(page:find("window.screenLeft", 1, true) ~= nil and
          dlg:find("window.screenLeft", 1, true) ~= nil,
          "both pages read their own position -- the one thing Trident is honest about")
-   CHECK(lua:find('offprimary', 1, true) ~= nil,
-         "the store carries the off-primary flag")
+   -- v1.12.0 renamed the persisted flag to `everoff` (sticky -- unlike the
+   -- old per-run offprimary, it never clears). A plain find("offprimary")
+   -- would stay green even with the write AND the back-compat read both
+   -- deleted, because the doc comment alone contains the word. Pin the CODE:
+   -- the write site (which reads store.everoff) and the back-compat read of
+   -- the old key (t.offprimary) -- neither substring appears in any comment.
+   CHECK(lua:find("store.everoff", 1, true) ~= nil,
+         "the store persists the sticky off-primary flag under its own key")
+   CHECK(lua:find("t.offprimary", 1, true) ~= nil,
+         "a pre-v1.12.0 file's offprimary key still seeds the flag on read")
    do
       local w, h, off = CO.parse_screen_field("1920x1032 off")
       CHECK(w == 1920 and off == true, "Lua parses the suffix the pages send")
    end
 
-   -- v1.10.4 ASK WINDOWS. The PowerShell line and the Lua parser share two
-   -- tokens, APP and MON, with no way to see each other. A drift in either
-   -- silently returns nil and every run falls back to the stored measurement --
-   -- correct-looking, wrong-monitor, the exact defect this exists to end.
-   CHECK(lua:find("CO%.PS_MONITORS") ~= nil, "the PowerShell ask exists")
-   do
-      local _, apps = lua:gsub("APP ", "")
-      local _, mons = lua:gsub("MON ", "")
-      CHECK(apps >= 2, "APP appears in both the emitter and the parser")
-      CHECK(mons >= 2, "MON appears in both the emitter and the parser")
+   -- v1.12.0: the layout follows the window. None of these can be rendered
+   -- offline -- the gate never resizes anything -- so they are read instead.
+   -- Restoring the `1` would quietly return the dialog to a layout that sits
+   -- 1:1 in the corner of any window bigger than the design size, which is
+   -- precisely the state Tim photographed on 2026-07-31.
+   --
+   -- Pin 1 used to match one exact spelling of the cap, `Math.min(1, w/...,
+   -- h/...)`. That let `Math.min(w/DESIGN_W, h/DESIGN_H, 1)` -- same cap, args
+   -- reordered -- slip past every assertion here AND the whole sweep, since
+   -- every gate check is a floor and this pin was the task's real red/green
+   -- pair. So instead of matching a spelling, this pulls out the whole
+   -- argument list of the `z = Math.min(...)` line and asserts it carries no
+   -- bare numeric constant at all: none of `w`, `h`, `DESIGN_W`, `DESIGN_H`
+   -- contains a digit, so any digit anywhere in that list can only be a
+   -- smuggled-back cap, in either position.
+   local zargs = dlg:match("var%s+z%s*=%s*Math%.min%(([^%)]*)%)")
+   CHECK(zargs ~= nil, "found the fitToWindow zoom line")
+   CHECK(zargs == nil or zargs:find("%d") == nil,
+         "the zoom argument list carries no bare numeric constant")
+   CHECK(dlg:find("function watchWindowSize%s*%(") ~= nil,
+         "the window-size watcher exists")
+   CHECK(dlg:find("setInterval%(watchWindowSize") ~= nil,
+         "and something actually runs it -- a watcher nobody polls is a no-op")
+
+   -- v1.12.0: the size the operator left the window at travels the same way
+   -- the screen measurement does -- a named hidden field, written by the page,
+   -- read by Lua after the dialog closes. Same drift risk as Screen: rename it
+   -- in one file and every machine silently stops remembering, with nothing to
+   -- see offline.
+   CHECK(dlg:find('id="WinSize" name="WinSize"', 1, true) ~= nil,
+         "the setup dialog declares the WinSize field")
+
+   -- A bare `window.outerWidth` substring pin was tried here first and does
+   -- NOT do the job: that exact string already lives in reportScreen()'s
+   -- off-primary check (window.screenLeft + (window.outerWidth || 0) / 2), so
+   -- it was true before reportWinSize() existed and proves nothing about it --
+   -- the same class of hollow pin Task 1 hit twice (a rename that slipped past
+   -- a substring match, a reordered argument list that slipped past a spelling
+   -- match). Pin the reporter itself instead, anchored the way
+   -- watchWindowSize() is pinned just above: this fails if reportWinSize is
+   -- renamed or deleted.
+   CHECK(dlg:find("function reportWinSize%s*%(") ~= nil,
+         "the WinSize reporter exists")
+
+   -- And a reporter nobody calls is exactly as useless as the watcher-nobody-
+   -- polls case pinned just above -- so pin both call sites too. The
+   -- declaration line reads "function reportWinSize() {", with no semicolon
+   -- after the parens, so counting the call syntax "reportWinSize();"
+   -- (semicolon included) lands on the two call sites alone -- watchWindowSize()'s
+   -- guarded path and the injection poll after reportScreen() -- and skips the
+   -- declaration on its own. Deleting either call site drops this count from
+   -- 2 to 1.
+   local _, winsize_calls = dlg:gsub("reportWinSize%(%);", "")
+   CHECK(winsize_calls == 2,
+         "reportWinSize(); is called exactly twice -- watchWindowSize() and the injection poll")
+
+   -- v1.12.0 defect fix (live, 2026-07-31). Trident freezes
+   -- window.outerWidth/outerHeight at the size the window was CREATED at, so
+   -- reading them here is what made "drag it to the size you want" work in one
+   -- direction only. What the reporter reads is the whole defect, and nothing
+   -- offline can see it -- headless Chrome updates outerWidth quite happily --
+   -- so it is pinned in the source instead.
+   --
+   -- Pinned against the FUNCTION BODY, not the file: `window.outerWidth` also
+   -- lives in reportScreen()'s off-primary check a few lines above, so a
+   -- whole-file absence pin would be red the day it was written (the same
+   -- hollow-pin trap noted just above). reportWinSize's body runs from its
+   -- opening brace to the first "}" at the start of a line -- every brace
+   -- inside it is indented -- so the match cannot overshoot into fitToWindow.
+   local rw = dlg:match("function reportWinSize%(%)%s*{(.-)\n}")
+   CHECK(rw ~= nil, "found reportWinSize's body")
+   CHECK(rw ~= nil and rw:find("outer") == nil,
+         "reportWinSize reads no outer size -- Trident's is frozen at creation")
+   CHECK(rw ~= nil and rw:find("document.body.clientWidth", 1, true) ~= nil,
+         "reportWinSize reads the client box, the only size here that tracks a drag")
+   -- And it must send BOTH boxes: the load-time one is what lets Lua work out
+   -- this machine's frame. Lose it and Lua falls back to treating the client
+   -- box as an outer size, which shrinks the window by its own frame each run.
+   CHECK(rw ~= nil and rw:find('+ "|" + loadW', 1, true) ~= nil,
+         "reportWinSize sends the load-time box behind the current one, after a bar")
+
+   CHECK(lua:find('GetTextField%("WinSize"%)') ~= nil,
+         "Lua reads the remembered window size by that name")
+   local _, win_adds = lua:gsub('AddTextField%("WinSize"', "")
+   CHECK(win_adds == 1,
+         "AddTextField(\"WinSize\" appears exactly once -- only the setup dialog " ..
+         "has a size worth remembering")
+   -- The blink is the ONLY thing left that runs before the dialog, and it must
+   -- stay as silent as everything else on this path.
+   -- Anchored on the exact parameter list, not just the name -- a bare name
+   -- match here would also match a renamed "sdk_ask_pageZ(gadget_dir)", since
+   -- Lua patterns have no word-boundary of their own (the fifth prefix-match
+   -- pin found on this branch).
+   local abody = lua:match("function CO%.sdk_ask_page%(gadget_dir%).-\nend\n")
+   CHECK(abody ~= nil, "sdk_ask_page exists")
+   CHECK(abody == nil or (abody:find("show_message", 1, true) == nil and
+                          abody:find("DisplayMessageBox", 1, true) == nil),
+         "the blink never speaks")
+
+   -- Task 6 code review: every function above has its own unit tests, but
+   -- nothing had proved main() actually WIRES them together -- the suite
+   -- stayed green through all three of the mutations below, because
+   -- everything else with logic in it is pure and separately tested. main()
+   -- itself was the one thing nothing here pinned.
+   --
+   -- main() is the LAST thing this file defines and nothing follows its
+   -- closing "end" (checked with tail -30 against the real file), so its body
+   -- is "from the definition to end of file" -- a "\nend\n" match, like
+   -- qbody/abody above, would stop at the first bare "end" line inside one of
+   -- main()'s own if-blocks, long before the real one.
+   local mstart = lua:find("function main(script_path)", 1, true)
+   CHECK(mstart ~= nil, "found main()")
+   local mbody = mstart ~= nil and lua:sub(mstart) or ""
+
+   -- Mutation: CO.window_size(rem,...) -> CO.dialog_size(screen_w, screen_h)
+   -- silently no-ops the entire feature -- the window goes back to guessing
+   -- a size from the screen alone, never reading or writing a remembered one.
+   CHECK(mbody:find("CO%.window_size%(") ~= nil,
+         "main sizes the dialog through CO.window_size, not the old CO.dialog_size call")
+   -- Mutation: delete CO.remember_screen(dlg, win_w, win_h) -- nothing is ever
+   -- remembered again, on either the OK or the Cancel path. The two arguments
+   -- are pinned with it: the page reports only its own client box, so without
+   -- the size main ASKED for there is no frame to add back, and remember_screen
+   -- stores nothing at all.
+   CHECK(mbody:find("CO%.remember_screen%(dlg, win_w, win_h%)") ~= nil,
+         "main remembers the dialog's report, and hands over the size it asked for")
+   -- Mutation: elseif store.everoff -> elseif true -- the blink fires on
+   -- every run of every machine, breaking "single-monitor machines pay
+   -- nothing" (v1.10.5's principle, carried into this design).
+   CHECK(mbody:find("elseif store%.everoff then") ~= nil,
+         "the blink is gated on the sticky flag -- widen this and every machine pays for it")
+
+   -- Task 7 code review. The three pins above prove main WIRES the new sizing;
+   -- none of them proves it stopped CALLING the old one. The deletion contract
+   -- in test_dialog_size.lua asserts each of these five FIELDS is nil, which is
+   -- a different question: a half-applied revert that reintroduces a bare
+   -- CO.sdk_query_monitors() call here WITHOUT its definition leaves the field
+   -- nil, this whole suite green, and an "attempt to call a nil value" waiting
+   -- for the next run in Aspire. Removing those calls is the entire point of
+   -- v1.12.0 -- they cost up to six seconds a run -- so the call sites are
+   -- pinned as well as the definitions.
+   --
+   -- Bare names, not "CO."-qualified: the file aliases CO to EdgeBreaker, so a
+   -- returning call could be spelled either way and the bare name catches both.
+   -- These are plain (non-pattern) finds, so they are PREFIX matches --
+   -- "screen_for_run" would also match "screen_for_run_v2". For an ABSENCE pin
+   -- that is the safe direction: it can fail on MORE spellings, never fewer,
+   -- and every extra spelling it catches is still the deleted thing coming
+   -- back. None of the five appears anywhere in EdgeBreaker.lua today, comments
+   -- included, so there is nothing to trip on by accident.
+   --
+   -- These cannot go vacuously true on an empty mbody the way a `body == nil
+   -- or ...` pin can: CHECK(mstart ~= nil) and the three presence pins above
+   -- all fail first if the extraction ever stops matching.
+   for _, gone in ipairs({ "PS_MONITORS", "parse_monitor_output",
+                           "should_ask_windows", "screen_for_run",
+                           "sdk_query_monitors" }) do
+      CHECK(mbody:find(gone, 1, true) == nil,
+            "main never mentions " .. gone ..
+            " -- the ask-Windows apparatus is deleted, not merely undefined")
    end
-   CHECK(lua:find("io%.popen") ~= nil, "the ask goes through io.popen")
-   -- Sizing stays silent on this path too, and the ask itself must be inside
-   -- the same contract: any failure is nil, never a message.
-   local qbody = lua:match("function CO%.sdk_query_monitors.-\nend\n")
-   CHECK(qbody ~= nil, "sdk_query_monitors exists")
-   CHECK(qbody == nil or (qbody:find("show_message", 1, true) == nil and
-                          qbody:find("DisplayMessageBox", 1, true) == nil),
-         "asking Windows never speaks")
 end
 
 -- v1.11.0 sharp corners: the Inside code and flag encodings are pinned against

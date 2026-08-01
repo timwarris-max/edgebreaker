@@ -201,7 +201,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.11.0</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.12.0</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -422,11 +422,12 @@ input[type=radio] { zoom: 2.5; }
        reportScreen() below); Lua reads it after the dialog closes, on the OK
        and Cancel paths alike. -->
   <input type="hidden" id="Screen" name="Screen" value="">
+  <input type="hidden" id="WinSize" name="WinSize" value="">
 
 <script type="text/javascript">
 // The layout is authored at ONE size -- the viewport of an 1800x1000 window --
-// and scaled down to whatever window Lua opened (CO.dialog_size picks a smaller
-// one on smaller screens). Keep DESIGN_W/H in step with WIN_W/H in
+// and scaled to whatever window it finds itself in -- down for a small screen,
+// up when the operator drags it larger. Keep DESIGN_W/H in step with WIN_W/H in
 // tests\check-dialog-layout.js (they are the window less the 2x50px frame).
 //
 // This comment used to claim that uniform scaling means a layout fitting the
@@ -467,6 +468,40 @@ function reportScreen() {
     document.getElementById("Screen").value = v;
   } catch (e) { /* leave it empty; the stored value simply stays as it was */ }
 }
+// The size the operator left this window at, reported as "<now>|<at load>" --
+// this page's own client box as it is now, then as it was when the page loaded.
+//
+// It used to report window.outerWidth/outerHeight, and that is exactly what
+// broke "drag it to the size you want" (Aspire, 2026-07-31): Trident freezes
+// those two at the size the window was CREATED at and never updates them on a
+// resize, so the layout followed a drag while the remembered size sat still.
+// ScreenProbe round 1 did say outerWidth reports the true outer size and it was
+// right -- it tested a window that was MOVED, never one that was RESIZED.
+//
+// The client box is the only size on this page that tracks a drag, and it is
+// the INNER size, so the frame is missing. Lua adds it back: it knows the outer
+// size it asked HTML_Dialog for, this tells it what that produced, and asked
+// minus load is the frame. On the machine above that frame is 4 wide and 132
+// tall (asked 1800x1000, client box 1796x868, 150% display scaling), which is
+// neither small nor the 2x50 this project assumed -- it is machine- and
+// DPI-dependent and must never be hardcoded.
+//
+// The load box is simply the first sane reading this function takes.
+// watchWindowSize() calls it the moment the page parses, 200ms ahead of its own
+// first interval tick and long before anyone can get a mouse to the window
+// edge. body, not documentElement -- see fitToWindow() below for why.
+//
+// Guarded and silent, like everything else on this path: a failed read leaves
+// the field alone and Lua simply keeps whatever it already had.
+var loadW = 0, loadH = 0;
+function reportWinSize() {
+  try {
+    var w = document.body.clientWidth, h = document.body.clientHeight;
+    if (!w || !h) return;
+    if (!loadW || !loadH) { loadW = w; loadH = h; }
+    document.getElementById("WinSize").value = w + "x" + h + "|" + loadW + "x" + loadH;
+  } catch (e) { /* leave it; the stored size stays as it was */ }
+}
 function fitToWindow() {
   var fit = document.getElementById("Fit");
   // body, NOT documentElement: on the root element clientWidth/Height report the
@@ -476,12 +511,37 @@ function fitToWindow() {
   var w = document.body.clientWidth;
   var h = document.body.clientHeight;
   if (!fit || !w || !h) return;                 // nothing sane to scale against
-  var z = Math.min(1, w / DESIGN_W, h / DESIGN_H);
+  var z = Math.min(w / DESIGN_W, h / DESIGN_H);
   fit.style.zoom = z;
   fit.style.width  = Math.floor(w / z) + "px";
   fit.style.height = Math.floor(h / z) + "px";
 }
-fitToWindow();
+// The operator can drag this window -- confirmed in Aspire 2026-07-31, after
+// eleven versions of assuming otherwise because window.resizeTo() is blocked.
+// That only ever stopped a SCRIPT resizing it, never a person.
+//
+// Aspire tells nobody when it happens, and whether Trident fires onresize on a
+// dialog it hosts is an open question, so nothing here depends on an event:
+// watch the client box instead. The guard is what makes a 200ms poll free --
+// no change, no work. It is NOT what stops fitToWindow() fighting its own
+// output -- the guard only compares the poll's INPUT across ticks, so if that
+// input ever fed back from fitToWindow()'s own writes the values would simply
+// alternate and the guard would never trip. What actually makes that
+// impossible is body's `overflow: hidden` (:31) plus #Fit being absolutely
+// positioned (:29): #Fit setting its own width/height cannot change
+// document.body.clientWidth/Height, so nothing fitToWindow() does ever
+// reaches back into what this function reads. Remove either of those and
+// this comment's safety claim goes with it.
+var lastFitW = 0, lastFitH = 0;
+function watchWindowSize() {
+  var w = document.body.clientWidth, h = document.body.clientHeight;
+  if (w === lastFitW && h === lastFitH) return;
+  lastFitW = w; lastFitH = h;
+  fitToWindow();
+  reportWinSize();
+}
+watchWindowSize();
+setInterval(watchWindowSize, 200);
 
 // ============================================================
 // Mirror of CO geometry (gadget/EdgeBreaker/EdgeBreaker.lua) — preview
@@ -1426,6 +1486,7 @@ var t = setInterval(function() {
     // Injection (or the give-up timeout) has happened by now, so this is safe
     // from the race described above.
     reportScreen();
+    reportWinSize();
     initChamfers();
     initFromDefaults();
     initBit();

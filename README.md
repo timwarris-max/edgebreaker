@@ -272,10 +272,10 @@ the same units you work in.
   left by an older version is still read). Anything that no longer applies falls
   back to the default — a size from an inch job when the open job is metric.
   Delete the file to start fresh.
-- **EdgeBreaker sizes its window to fit your screen.** The first time you run it
-  you'll see a small window flash up while it checks — you shouldn't see it again.
-  Two monitors? It asks Windows which screen Aspire is on and sizes for that one,
-  every run.
+- **Size the window how you like.** Drag a corner — EdgeBreaker remembers it, so
+  it opens that size again next time. It keeps one size for your main screen and
+  a separate one for a second monitor, so moving Aspire between them never
+  messes up either.
 - **Depth warning.** A shallow-angle V-bit plunges a long way for a small
   chamfer — a 12.4° bit needs 0.90 in of depth for a 0.020 in chamfer. If the
   cut would go deeper than the stock thickness in Job Setup, the dialog says so
@@ -294,7 +294,7 @@ node tests\check-dialog-layout.js  # renders the real dialogs, fails on overflow
 ```
 
 `EdgeBreaker-Help.htm` is the offline help the gadget's Help button opens, and it is
-**generated** from `gadget/EdgeBreaker/README.md` by `build-help.ps1` â€” so don't edit it
+**generated** from `gadget/EdgeBreaker/README.md` by `build-help.ps1` — so don't edit it
 by hand. Edit the README and run the script; the layout check fails if the two are out
 of step.
 
@@ -304,6 +304,6 @@ you read is exactly what runs.
 
 ## Licence
 
-MIT. Use it, change it, ship it in your own work. No warranty â€” it drives a machine that
+MIT. Use it, change it, ship it in your own work. No warranty — it drives a machine that
 removes material, so satisfy yourself it does what you want before you cut anything that
 matters.

@@ -71,8 +71,10 @@ do
    CHECK(w2 == 960 and h2 == 1000, "height capped at the design size, width at the fraction")
 end
 
--- The window never exceeds the design size, because the page only scales DOWN
--- (fitToWindow): a bigger window would leave the layout sitting 1:1 in a corner.
+-- CO.dialog_size never exceeds the design size. Since v1.12.0 that is a
+-- statement about the GUESS, not about the window: fitToWindow() scales above 1
+-- and the operator can drag the window larger, and CO.window_size honours a
+-- remembered size past this cap. This pins the guess only.
 do
    local ok = true
    for _, s in ipairs({ {1920,1080}, {2560,1440}, {5120,1440}, {1366,768} }) do
@@ -117,74 +119,63 @@ do
    CHECK(w == 512 and h == 384, "a believable small screen gets a small window, not the default")
 end
 
--- v1.10.4: asking Windows. The parse and the DPI conversion are pure; the
--- popen shell around them is three guarded lines. Windows' answer looks like
---   APP 0 0 1920 1032
---   MON 1920 395 1366 720 0
---   MON 0 0 1920 1032 1
--- (the real Acer output, 2026-07-30) -- work areas, so the taskbar is already
--- gone, matching what Trident's availWidth/Height exclude.
+-- v1.12.0: the ask-Windows apparatus is GONE, not disabled. It cost up to six
+-- seconds on every run of a multi-monitor machine -- measured 5.57s of a 5.57s
+-- total on 2026-07-31, from a command that takes 0.27s in a console -- because a
+-- child process spawned from a GUI app pays a cold-start cost we cannot tune and
+-- do not control on other people's machines. It could also come back EMPTY and
+-- fall silently into primary-sized guessing, which is the wrong-monitor defect
+-- it was built to fix.
+--
+-- The blink replaces it: a window can be asked where it is, and a window costs
+-- nothing to open. Nothing here should ever spawn a process again.
+CHECK(CO.PS_MONITORS == nil, "the PowerShell line is gone")
+CHECK(CO.parse_monitor_output == nil, "its parser is gone")
+CHECK(CO.should_ask_windows == nil, "the should-we-ask decision is gone")
+CHECK(CO.screen_for_run == nil, "the DPI conversion is gone with it")
+CHECK(CO.sdk_query_monitors == nil, "and the popen shell is gone")
 do
-   local acer = "APP 0 0 1920 1032\nMON 1920 395 1366 720 0\nMON 0 0 1920 1032 1\n"
-   local m = CO.parse_monitor_output(acer)
-   CHECK(m ~= nil and m.app.w == 1920 and m.app.h == 1032, "APP line parses")
-   CHECK(m.primary.w == 1920 and m.primary.h == 1032, "the flagged primary parses")
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   -- Every pin in this block is an ABSENCE pin, so an empty or truncated slurp
+   -- would pass all of them silently while proving nothing. Anchor on
+   -- something that must be there. Line 16's alias is the right anchor twice
+   -- over: it is also what makes the bare-name matching below correct.
+   CHECK(src:find("local CO = EdgeBreaker", 1, true) ~= nil,
+         "the gadget source really was read -- the pins below are absence pins " ..
+         "and an empty read would pass every one of them")
+   CHECK(src:find("io%.popen") == nil, "nothing in the gadget spawns a process")
+   CHECK(src:find("powershell", 1, true) == nil, "and nothing shells out to PowerShell")
 
-   local laptop = "APP 1920 395 1366 720\nMON 1920 395 1366 720 0\nMON 0 0 1920 1032 1\n"
-   local m2 = CO.parse_monitor_output(laptop)
-   CHECK(m2 ~= nil and m2.app.w == 1366 and m2.app.h == 720,
-         "Aspire on the panel: APP is the panel's work area")
-
-   CHECK(CO.parse_monitor_output(nil) == nil, "no text is no answer")
-   CHECK(CO.parse_monitor_output("") == nil, "empty text is no answer")
-   CHECK(CO.parse_monitor_output("MON 0 0 1920 1032 1\n") == nil,
-         "monitors without an APP line is half an answer, which is no answer")
-   CHECK(CO.parse_monitor_output("APP 0 0 1920 1032\nMON 1920 395 1366 720 0\n") == nil,
-         "an APP line without a flagged primary is no answer either")
-   CHECK(CO.parse_monitor_output("APP 0 0 100 100\nMON 0 0 1920 1032 1\n") == nil,
-         "an unbelievable APP size is discarded")
-   CHECK(CO.parse_monitor_output("garbage\nAPP x y w h\n") == nil, "words are nothing")
-end
-
--- The DPI conversion. Windows answers in its own pixels; Trident wants
--- logical x systemDPI/96, and the ratio between the STORED primary measurement
--- (Trident's unit) and Windows' primary line (Windows' unit) is exactly that
--- factor. Unscaled machines get 1; a missing store gets 1, which errs SMALLER
--- on scaled-up machines and can never overflow.
-do
-   local acer = CO.parse_monitor_output(
-      "APP 1920 395 1366 720\nMON 1920 395 1366 720 0\nMON 0 0 1920 1032 1\n")
-   local w, h = CO.screen_for_run(acer, 1920)
-   CHECK(w == 1366 and h == 720, "unscaled machine: Windows' numbers pass through")
-   -- The desktop: primary stored as 2880 (Trident) vs Windows' 1920 -> 1.5.
-   local desk = CO.parse_monitor_output(
-      "APP 0 0 1920 1152\nMON 0 0 1920 1152 1\n")
-   local dw, dh = CO.screen_for_run(desk, 2880)
-   CHECK(dw == 2880 and dh == 1728, "scaled machine: the 1.5 factor converts to Trident's unit")
-   local nw, nh = CO.screen_for_run(desk, nil)
-   CHECK(nw == 1920 and nh == 1152, "no stored measurement: factor 1, errs small, never overflows")
-   local gw, gh = CO.screen_for_run(desk, 100000)
-   CHECK(gw == 1920 and gh == 1152, "a ratio too strange to be a DPI scale is refused, factor 1")
-   CHECK(CO.screen_for_run(nil, 1920) == nil, "no Windows answer is no run screen")
-end
-
--- v1.10.5: the ask costs a second and a console blink, so a machine the last
--- ask saw as single-monitor never pays again -- its answer cannot vary. The
--- whole decision table:
-do
-   CHECK(CO.should_ask_windows(nil, false) == true, "never asked -> ask")
-   CHECK(CO.should_ask_windows(1, false) == false, "one monitor -> never ask again")
-   CHECK(CO.should_ask_windows(2, false) == true, "two monitors -> ask every run")
-   CHECK(CO.should_ask_windows(3, false) == true, "three monitors -> ask every run")
-   CHECK(CO.should_ask_windows(1, true) == true,
-         "off-primary on a 'single-monitor' machine -> the count is stale, ask")
-   CHECK(CO.should_ask_windows(nil, true) == true, "off-primary, never asked -> ask")
-
-   local one = CO.parse_monitor_output("APP 0 0 1920 1032\nMON 0 0 1920 1032 1\n")
-   CHECK(one ~= nil and one.count == 1, "the parse counts one monitor")
-   local two = CO.parse_monitor_output(
-      "APP 0 0 1920 1032\nMON 1920 395 1366 720 0\nMON 0 0 1920 1032 1\n")
-   CHECK(two ~= nil and two.count == 2, "the parse counts two")
+   -- The same five names again, this time across the WHOLE file. The nil-field
+   -- pins above catch a returning DEFINITION; test_release.lua catches a
+   -- returning CALL inside main(), which is the click path and the six
+   -- seconds. Neither of them can see a call anywhere ELSE in the file -- and
+   -- "anywhere else" is not hypothetical: CO.show_message was a caller of this
+   -- apparatus in v1.10.4/v1.10.5 (CO.RUN_SCREEN carried it the monitor
+   -- answer), so it is exactly where a half-applied revert lands. Such a call
+   -- with no definition behind it leaves the field nil, leaves this suite
+   -- green, and leaves "attempt to call a nil value" waiting for the next run
+   -- in Aspire.
+   --
+   -- This matches a CALL -- the name, optional space, open paren -- and
+   -- deliberately not a bare mention: EdgeBreaker.lua's own comments
+   -- legitimately discuss what was deleted and why, and a pin that goes red
+   -- because somebody EXPLAINED the deletion is a pin the next person deletes.
+   -- Don't "simplify" it back to a plain name find.
+   --
+   -- Bare names, not "CO."-qualified: the file aliases CO to EdgeBreaker, so a
+   -- returning call can be spelled either way and the bare name catches both.
+   -- PS_MONITORS was a string constant, never called, so its entry here is
+   -- belt-and-braces -- the io.popen pin above is what really catches that one
+   -- coming back.
+   for _, gone in ipairs({ "PS_MONITORS", "parse_monitor_output",
+                           "should_ask_windows", "screen_for_run",
+                           "sdk_query_monitors" }) do
+      CHECK(src:find(gone .. "%s*%(") == nil,
+            "nothing anywhere in the gadget calls " .. gone ..
+            " -- the ask-Windows apparatus is deleted, not merely undefined")
+   end
 end
 
 -- The per-machine table is GONE. It is the mechanism that caused the v1.9.0
@@ -196,3 +187,103 @@ CHECK(CO.DEFAULT_SIZE[1] == 1280 and CO.DEFAULT_SIZE[2] == 700,
       "the default is unchanged -- it is now only the fallback")
 CHECK(CO.DEFAULT_SIZE[1] <= CO.DESIGN_SIZE[1] and CO.DEFAULT_SIZE[2] <= CO.DESIGN_SIZE[2],
       "the fallback does not exceed the design size")
+
+-- v1.12.0. The window is draggable and the size is remembered, so dialog_size
+-- stops being the answer and becomes the OPENING GUESS. window_size is the
+-- whole decision:
+--
+--                     | on primary                        | off primary
+--   remembered exists | remembered, clamped to the screen | remembered, as-is
+--   nothing remembered| dialog_size(screen)               | dialog_size(1366x720)
+--
+-- A remembered size is a CHOICE and beats every guess. It is still clamped on
+-- the primary because a screen can shrink under a stored value (someone drops
+-- their resolution) and OK off the bottom is the one outcome worth preventing.
+-- It is NOT clamped to SCREEN_FRACTION or DESIGN_SIZE: a fraction is right for
+-- a guess and wrong for a choice -- if the operator drags it to 95% of their
+-- screen, that is the answer, not an error to correct.
+do
+   local w, h = CO.window_size({ 1800, 1000 }, 1920, 1032, false)
+   CHECK(w == 1800 and h == 1000, "a remembered size is used as-is when it fits")
+
+   local w2, h2 = CO.window_size({ 2400, 1300 }, 2560, 1400, false)
+   CHECK(w2 == 2400 and h2 == 1300,
+         "a remembered size past DESIGN_SIZE is honoured -- the page scales up now")
+
+   local w3, h3 = CO.window_size({ 2000, 1200 }, 1920, 1032, false)
+   CHECK(w3 == 1904 and h3 == 1016,
+         "on the primary it is clamped to the screen less the margin (got " ..
+         w3 .. "x" .. h3 .. ")")
+
+   local w3b, h3b = CO.window_size({ 1900, 1000 }, 1920, 1032, false)
+   CHECK(w3b == 1900 and h3b == 1000,
+         "a remembered size that already fits is not touched by the clamp")
+
+   local w4, h4 = CO.window_size({ 1800, 1000 }, 1366, 768, true)
+   CHECK(w4 == 1800 and h4 == 1000,
+         "off the primary a remembered size is NOT clamped -- the screen numbers " ..
+         "describe a different monitor")
+end
+
+-- The table's fifth cell: ON the primary, but the screen measurement itself is
+-- unbelievable. The clamp's guard (`not off and believable_screen(...)`) is
+-- false either way, so this lands on the same "as-is" the table only names for
+-- off-primary -- for a different reason. Pinning current behaviour, not
+-- inventing a new one: see the comment beside the clamp in CO.window_size for
+-- why a real remembered size can never actually arrive here next to a screen
+-- number the store itself refused.
+do
+   local w, h = CO.window_size({ 1800, 1000 }, 100, 100, false)
+   CHECK(w == 1800 and h == 1000,
+         "on the primary, an unbelievable screen measurement skips the clamp -- " ..
+         "the remembered size comes back exactly as stored")
+
+   local w2, h2 = CO.window_size({ 1800, 1000 }, nil, nil, false)
+   CHECK(w2 == 1800 and h2 == 1000,
+         "no screen measurement at all is the same case -- still unclamped")
+end
+
+-- Nothing remembered: guess, and the guess depends only on whether we know
+-- which screen we are on.
+do
+   local w, h = CO.window_size(nil, 1920, 1032, false)
+   CHECK(w == 1536 and h == 825, "on the primary, nothing remembered -> the v1.10.4 rule")
+
+   local w2, h2 = CO.window_size(nil, 5120, 1368, true)
+   CHECK(w2 == 1092 and h2 == 576,
+         "off the primary, nothing remembered -> the safe guess, NOT the primary's size")
+
+   local w3, h3 = CO.dialog_size(CO.SAFE_SCREEN[1], CO.SAFE_SCREEN[2])
+   CHECK(w3 == 1092 and h3 == 576,
+         "the safe guess is the ordinary rule on the smallest likely panel, not a constant")
+   CHECK(CO.SAFE_SCREEN[1] == 1366 and CO.SAFE_SCREEN[2] == 720,
+         "and it is the USABLE screen -- taskbar already gone, like everything " ..
+         "dialog_size is ever fed. 768 here would give 1092x614 and break the row above.")
+
+   local w4, h4 = CO.window_size(nil, nil, nil, false)
+   CHECK(w4 == CO.DEFAULT_SIZE[1] and h4 == CO.DEFAULT_SIZE[2],
+         "no measurement at all still lands on the shipped default")
+end
+
+-- Garbage cannot reach the constructor. A remembered size we do not believe is
+-- not a remembered size, and the run falls through to the guess.
+do
+   local w, h = CO.window_size({ 9, 9 }, 1920, 1032, false)
+   CHECK(w == 1536 and h == 825, "an unbelievable remembered size falls through to the guess")
+   local w2, h2 = CO.window_size({}, 1920, 1032, false)
+   CHECK(w2 == 1536 and h2 == 825, "an empty table falls through too")
+   local w3, h3 = CO.window_size("1800x1000", 1920, 1032, false)
+   CHECK(w3 == 1536 and h3 == 825, "a string is not a pair, and is not a crash")
+   CHECK(select("#", CO.window_size(nil, 1920, 1032, false)) == 2, "window_size returns a pair")
+end
+
+-- The off-primary safe guess fits every panel anyone is likely to have. This is
+-- the assumption written down in the spec: nobody runs Aspire on a secondary
+-- narrower than 1092. If they do, they drag it once and it sticks.
+do
+   local w, h = CO.window_size(nil, nil, nil, true)
+   CHECK(w == 1092 and h == 576,
+         "off primary with no measurement at all is still the safe guess, not the default")
+   CHECK(w <= 1366 - CO.SCREEN_MARGIN and h <= 720 - CO.SCREEN_MARGIN,
+         "and it fits the screen it was derived from")
+end
