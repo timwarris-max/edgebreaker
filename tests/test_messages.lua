@@ -75,3 +75,37 @@ do
          "body, note and rows default to empty strings")
    CHECK(f.MVersion == "v" .. CO.VERSION, "the version is carried through for the header")
 end
+
+-- ============================================================
+-- Task 2: Capacity ceiling message
+-- ============================================================
+-- The ceiling message names both numbers. It replaces v1.12.0's "use a larger
+-- bit or a smaller chamfer", which multi-pass makes almost unreachable: this
+-- only fires past CO.MAX_PASSES.
+-- 0.8 on a 1/4 in bit is genuinely past the ceiling -- 0.75 is not, it is the
+-- exact eight-band bound and it cuts (Task 1).
+local msg = CO.too_big_message("setback", 0.8, 90, 0.25)
+CHECK(type(msg) == "string", "the ceiling message is a string")
+CHECK(msg:find("8 passes", 1, true) ~= nil, "it says how many passes it tried")
+CHECK(msg:find(CO.fmt_len(CO.display_max_size("setback", 90, 0.25)), 1, true) ~= nil,
+      "it prints the biggest chamfer this bit can manage")
+CHECK(msg:find(CO.fmt_len(CO.display_min_dia("setback", 0.8, 90)), 1, true) ~= nil,
+      "it prints the bit that would do the job")
+-- No number it cannot stand behind: a degenerate bit falls back to nil and the
+-- caller uses the generic sentence rather than printing "can cut is 0".
+CHECK(CO.too_big_message("setback", 0.8, 90, 0) == nil,
+      "a degenerate bit produces no numbered message")
+
+-- The post-run report named ONE layer of many (defect 3, found live
+-- 2026-08-02): CO.offset_layer_name defaults band to 1, so a three-pass run
+-- sent the operator looking for their geometry on one of its three layers.
+do
+   CHECK(CO.offset_layer_phrase(1, 1) == "'EdgeBreaker Offset 01-1'",
+         "one pass names one layer, exactly as before")
+   CHECK(CO.offset_layer_phrase(1, 3) ==
+         "'EdgeBreaker Offset 01-1' to 'EdgeBreaker Offset 01-3'",
+         "three passes name the range")
+   CHECK(CO.offset_layer_phrase(7, 2) ==
+         "'EdgeBreaker Offset 07-1' to 'EdgeBreaker Offset 07-2'",
+         "the slot is carried into both ends")
+end

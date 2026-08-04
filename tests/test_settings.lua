@@ -410,10 +410,13 @@ do
    end
 end
 
--- Sharp inside corners (v1.11.0). The checkbox is unitless and safe to carry
--- between runs (unlike start depth): it is visible on the dialog and only
--- ever APPLIED when Side = Inside -- CO.sharp_applies gates in Lua whatever
--- the stored field claims (spec 5).
+-- Sharp corners (v1.11.0; extended to outside runs 2026-08-03). The checkbox is
+-- unitless and safe to carry between runs (unlike start depth): it is visible on
+-- the dialog and only ever APPLIED on a run with a known direction -- Side =
+-- Inside or Outside, never Auto -- and CO.sharp_applies gates in Lua whatever
+-- the stored field claims (spec 5). An old blob carrying sharp=1 with
+-- side=outside deterministically built WITHOUT sharpening before and now builds
+-- with it; that is the intended behaviour change (outside-sharp spec 6).
 CHECK(CO.serialize_settings({ units = "in", mode = "setback", side = "inside",
    percent = 80, size = 0.02, sharp = 1 }):find("sharp=1", 1, true) ~= nil,
       "sharp is a last-used setting")
@@ -424,13 +427,25 @@ CHECK(CO.apply_settings({ sharp = "banana" }, IN).sharp == 0, "garbage sharp see
 CHECK(CO.apply_settings({ sharp = "1", units = "in" }, MM).sharp == 1,
       "sharp is unitless: carried even when the units changed")
 
--- The Side rule itself: Lua authoritative, the dropdown the complete detector.
-CHECK(CO.sharp_applies("inside", 1) == true,  "inside + ticked applies")
-CHECK(CO.sharp_applies("inside", "1") == true, "the dialog's text field form applies too")
-CHECK(CO.sharp_applies("inside", 0) == false, "inside + unticked does not")
-CHECK(CO.sharp_applies("auto", 1) == false,   "auto never applies, whatever the field says")
-CHECK(CO.sharp_applies("outside", 1) == false, "outside never applies")
-CHECK(CO.sharp_applies(nil, nil) == false,     "nothing applies on missing fields")
+-- 2026-08-03: the side left this function entirely. It used to refuse anything
+-- but Inside or Outside, which was both too STRICT (Auto can sharpen - it is the
+-- only side that can sharpen a letter set, because a letter set contains both
+-- directions at once) and too LOOSE (a forced side over a nested selection cut
+-- the nested loops on the wrong side, silently, because Aspire flips them and we
+-- did not). Both are now CO.sharp_nesting_ok's business, and it is a strictly
+-- better detector than the side ever was.
+--
+-- What is left here is the box and the depth. A `side` parameter that no longer
+-- gated anything would be a standing invitation to believe it did, so it is
+-- dropped rather than ignored. These calls use 0 <= 1 as a trivially-satisfied
+-- depth that never itself decides the outcome; the ceiling has its own block
+-- below.
+CHECK(CO.sharp_applies(1, 0, 1) == true,   "ticked applies")
+CHECK(CO.sharp_applies("1", 0, 1) == true, "the dialog's text field form applies too")
+CHECK(CO.sharp_applies(0, 0, 1) == false,  "unticked does not")
+CHECK(CO.sharp_applies(nil, 0, 1) == false, "a missing box is not a ticked one")
+CHECK(CO.sharp_applies("", 0, 1) == false, "nor is an empty field")
+CHECK(CO.sharp_applies("banana", 0, 1) == false, "nor garbage")
 
 -- v1.12.0. The window is draggable, so the store now carries what the operator
 -- left it at -- one size per monitor slot, because one size cannot serve both a
@@ -568,4 +583,136 @@ do
                                       win_on = { 9, 9 } })
    CHECK(t ~= nil and t:find("win_on_w") == nil,
          "an unbelievable remembered size is not written either")
+end
+
+-- Sharpening at multi-pass depths (spec 7, 2026-08-03). Aspire refuses to
+-- sharpen any pass deeper than the tool's cutting-edge depth, and multi-pass is
+-- the first thing this gadget has ever built that can plunge past it. Sharp
+-- corners are a requirement, so the rule is a DEPTH test, not a ban on the
+-- whole multi-pass family.
+--
+-- The ceiling is side-blind and always was: it is a property of the bit and the
+-- pass depth. Since 2026-08-03 the function has no side argument at all, which
+-- makes that structural rather than merely true.
+do
+   local a90 = CO.half_angle(90)
+   local _, _, d_max = CO.safe_band(0.25, 0.05, a90)   -- 1/4in bit: d_max 0.125
+
+   CHECK(CO.sharp_applies(1, 0.10, d_max) == true,
+         "a chamfer inside the cutting edge sharpens")
+   CHECK(CO.sharp_applies(1, 0.1523, d_max) == false,
+         "the depth that failed live is refused")
+   CHECK(CO.sharp_applies(1, d_max, d_max) == true,
+         "exactly at the ceiling still sharpens")
+   CHECK(CO.sharp_applies(0, 0.10, d_max) == false,
+         "and an unticked box never does, at any depth")
+   CHECK(CO.sharp_applies("1", 0.30, d_max) == false,
+         "a forced Sharp field cannot sharpen past the ceiling")
+end
+
+-- Which cut position, if any, still sharpens. Presets only -- the operator
+-- picks from buttons, so an arbitrary percentage would be a number they cannot
+-- reproduce.
+--
+-- Side-blind arithmetic: it takes no side argument and the outside-sharp change
+-- of 2026-08-03 does not touch it. The word "inside" below means "under the
+-- ceiling", not Side = Inside.
+do
+   local a90 = CO.half_angle(90)
+   local dia = 0.25                       -- r = 0.125
+
+   -- A small chamfer: everything fits, so nothing moves.
+   local W1 = 0.05
+   CHECK(CO.sharp_max_percent(dia, W1, W1, a90) == 100,
+         "a chamfer well under the ceiling keeps the full range")
+
+   -- Past 0.85r nothing can save it.
+   CHECK(CO.sharp_max_percent(dia, 0.115, 0.0575, a90) == nil,
+         "past 0.85r no cut position sharpens")
+
+   -- The window that only exists low down: two passes, just above the
+   -- single-pass limit of 0.75r = 0.09375.
+   local W2, n = 0.10, 2
+   local p = CO.sharp_max_percent(dia, W2, CO.band_width(W2, n), a90)
+   CHECK(p ~= nil, "a two-pass chamfer just above the limit can still sharpen")
+   local is_preset = false
+   for _, v in ipairs(CO.PRESETS) do if v == p then is_preset = true end end
+   CHECK(is_preset, "and the answer is one of the preset buttons")
+   -- Whatever it returns must actually satisfy the rule it exists to satisfy.
+   local s = CO.solve_band(p, dia, W2, CO.band_width(W2, n), a90)
+   local _, _, d_max2 = CO.safe_band(dia, CO.band_width(W2, n), a90)
+   CHECK(s.d <= d_max2 + 1e-12, "and it really does fit the ceiling")
+end
+
+-- The nesting gate (2026-08-03, spec section 3c). Once Machine Vectors leaves
+-- "On", a sharp run has TWO opinions about every loop's direction: ours, in
+-- where we drew it, and Aspire's, in which way it displaces the cut. Measured
+-- live: Aspire takes the template's setting at depth 0 and the opposite at
+-- depth 1. This is the comparison, and it returns the direction to write.
+do
+   -- Shorthand: the dirs/depths pair for a letter-shaped selection.
+   local function letter(outer, inner) return { outer, inner, inner }, { 0, 1, 1 } end
+
+   -- Auto over a letter set: outline outward, counters inward. Aspire says
+   -- outside then inside. They agree, and the template gets Outside.
+   local d, z = letter("outward", "inward")
+   CHECK(CO.sharp_nesting_ok(d, z) == "outward", "auto over a letter set sharpens, outward")
+
+   -- The mirror: a pocket edge with an island in it.
+   d, z = letter("inward", "outward")
+   CHECK(CO.sharp_nesting_ok(d, z) == "inward", "the mirror sharpens too, inward")
+
+   -- THE DEFECT. A forced side points every loop the same way; Aspire flips the
+   -- nested ones. Before this gate the run built a wrong cut in silence.
+   d, z = letter("outward", "outward")
+   local ok, why = CO.sharp_nesting_ok(d, z)
+   CHECK(ok == nil, "a forced side over a nested selection refuses")
+   CHECK(why == "nested", "and says which rule failed")
+   d, z = letter("inward", "inward")
+   ok, why = CO.sharp_nesting_ok(d, z)
+   CHECK(ok == nil and why == "nested", "forced Inside over a nested selection refuses too")
+
+   -- No nesting at all: every loop depth 0, any side agrees. This is every run
+   -- the gadget can build today, and it must stay byte-identical.
+   CHECK(CO.sharp_nesting_ok({ "outward" }, { 0 }) == "outward", "one lone loop, outward")
+   CHECK(CO.sharp_nesting_ok({ "inward" }, { 0 }) == "inward", "one lone loop, inward")
+   CHECK(CO.sharp_nesting_ok({ "outward", "outward", "outward" }, { 0, 0, 0 }) == "outward",
+         "several siblings, all forced the same way, sharpen")
+   CHECK(CO.sharp_nesting_ok({ "inward", "inward" }, { 0, 0 }) == "inward",
+         "and the inward mirror of that")
+
+   -- Depth 2 is REFUSED, not guessed at. We measured Aspire at depth 0 and 1
+   -- only; at depth 2 it either alternates (disagreeing with us, because
+   -- classify_directions is two-level) or matches us, and we do not know which.
+   ok, why = CO.sharp_nesting_ok({ "outward", "inward", "inward" }, { 0, 1, 2 })
+   CHECK(ok == nil, "three levels of nesting refuses")
+   CHECK(why == "deep", "and says it is depth, not direction")
+
+   -- Degenerate sets. Neither can arise from real vectors, and neither may be
+   -- allowed to fall through to a direction.
+   ok, why = CO.sharp_nesting_ok({ "inward", "inward" }, { 1, 1 })
+   CHECK(ok == nil and why == "empty", "identical loops leave nothing outermost")
+   ok, why = CO.sharp_nesting_ok({}, {})
+   CHECK(ok == nil and why == "empty", "no loops at all refuses")
+   ok, why = CO.sharp_nesting_ok({ "outward", "inward" }, { 0, 0 })
+   CHECK(ok == nil, "outermost loops pointing different ways refuses")
+   CHECK(why == "mixed", "and says so - one template patch cannot serve both")
+
+   -- Each refusal has a sentence, each sentence is its own, and none is empty.
+   local seen = {}
+   for _, reason in ipairs({ "deep", "nested", "mixed", "empty" }) do
+      local note = CO.sharp_nesting_note(reason)
+      CHECK(type(note) == "string" and #note > 0, reason .. " has a message")
+      CHECK(seen[note] == nil, reason .. "'s message is its own")
+      seen[note] = true
+      CHECK(note:find("Sharp corners", 1, true) ~= nil,
+            reason .. "'s message names the control it is about")
+   end
+   -- The one an operator will actually hit says what to do about it.
+   CHECK(CO.sharp_nesting_note("nested"):find("Auto", 1, true) ~= nil,
+         "the nested message names Auto, which is the fix")
+   -- An unknown reason must still produce something rather than nil, because
+   -- the caller puts it straight into the report.
+   CHECK(type(CO.sharp_nesting_note("banana")) == "string",
+         "an unrecognised reason still yields a sentence")
 end

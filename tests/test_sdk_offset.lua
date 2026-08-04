@@ -137,8 +137,25 @@ CHECK(copy_calls == 0, "selection count 5 (promoted): never reached CreateCopyOf
 -- once at dist (the normal distance) as a viability probe whose group is
 -- thrown away, and -- only if that probe comes back non-empty -- again at
 -- sharp_dist, which is then squared with MakeOffsetsSquare. This is the fix
--- for the sharp path structurally disabling the too-narrow safety net: the
--- shifted distance is always outward, so on its own it can never collapse.
+-- for the sharp path structurally disabling the too-narrow safety net.
+--
+-- 2026-08-03, sharp corners on OUTSIDE runs. The old note here said "the
+-- shifted distance is always outward, so on its own it can never collapse",
+-- and that was only ever the inward half of the story. The sharp loop is the
+-- chamfer's top edge, drawn W toward the MATERIAL: outside a pocket wall on an
+-- inside run, where nothing can collapse it, but INTO the shape on an outside
+-- run, where a stem narrower than two chamfers has no top edge left to draw.
+-- So an EMPTY sharp offset is now the same bare-nil "too narrow, skip it and
+-- count it" answer as an empty probe -- a real limit of the chamfer, not a
+-- fault. Only an UNREADABLE Count is still a failure, because that means a
+-- wrong property name rather than a geometry problem. Both come from the
+-- shared offset_and_check helper, which is why the two paths cannot drift
+-- apart about what an empty offset MEANS (spec 3e / 4a.6).
+--
+-- Every sharp case below runs both ways round: inward (dist negative,
+-- sharp_dist negative) and outward (dist positive, sharp_dist NEGATIVE -- the
+-- loop drawn back into the material). The signs are the whole difference
+-- between the two sides, so they are asserted, not assumed.
 --
 -- NILR is a sentinel meaning "this :Offset call returns nil", so a hole in
 -- the offsets list can be distinguished from "no more calls expected".
@@ -207,13 +224,18 @@ CHECK(#offset_calls == 2, "sharp success: probe then real sharp offset, two :Off
 CHECK(offset_calls[1].dist == -0.05, "sharp success: the probe uses the plain dist")
 CHECK(offset_calls[2].dist == -0.09, "sharp success: the real sharp offset uses sharp_dist")
 
--- The squaring call's own arguments. The flag is the whole feature: with it
--- false the corners come back rounded and the call still reports success, so
--- this assertion -- not the return-value handling -- is what keeps the cut
--- sharp. Probed live 2026-07-31: false -> 4 arcs, true -> 0 arcs.
+-- The squaring call's own arguments. The middle one is the whole feature, and
+-- it is the OFFSET'S DIRECTION, not an on/off switch: true means "offset
+-- outward", false means "offset inward". Get it wrong and the call squares
+-- nothing and still returns true -- indistinguishable from success at the call
+-- site, which is how it reached two separate live sittings. Measured by
+-- SquareProbe 2026-08-03: inward+false and outward+true both give 0 arcs;
+-- inward+true and outward+false both leave the arcs untouched.
+--
+-- This case's sharp_dist is NEGATIVE, so the honest answer is false.
 CHECK(#square_calls == 1, "sharp success: MakeOffsetsSquare called exactly once")
-CHECK(square_calls[1].flag == true,
-      "sharp success: the squaring flag is TRUE (false squares nothing and still returns true)")
+CHECK(square_calls[1].flag == false,
+      "sharp success: an inward sharp offset tells squaring it went INWARD")
 CHECK(square_calls[1].w == 0.09,
       "sharp success: squaring gets the sharp distance's magnitude")
 CHECK(square_calls[1].w2 == 0.18,
@@ -269,15 +291,141 @@ CHECK(group == nil, "sharp, square raises: nil group")
 CHECK(type(err) == "string" and err:find("boom", 1, true) ~= nil,
       "sharp, square raises: error carries the original message text")
 
--- The real sharp offset itself returning nil/empty after the probe passed is
--- unexpected (sharp_dist can never collapse the way the probe can), so it is
--- reported as a failure rather than silently skipped.
+-- (f) The real sharp offset comes back empty after the probe passed. Until
+-- outside sharp runs existed this was reported as an unexpected internal
+-- failure that stopped the whole run; it is now the ordinary too-narrow SKIP
+-- (spec 3e). The shape has no top edge left to draw at this chamfer size --
+-- that is a limit of the chamfer, and aborting a whole letter set over one
+-- thin stem is the wrong answer. Bare nil, no message, and nothing squared.
 install_sharp_copy({ grp(2), NILR })
 job = fake_job(1)
 group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
-CHECK(group == nil, "sharp offset unexpectedly nil after probe passed: nil group")
-CHECK(type(err) == "string" and err:find("unexpected", 1, true) ~= nil,
-      "sharp offset unexpectedly nil after probe passed: error says so")
+CHECK(group == nil, "sharp offset empty after the probe passed: bare nil, the skip case")
+CHECK(err == nil,
+      "sharp offset empty after the probe passed: no error -- too narrow, not a failure")
+CHECK(#square_calls == 0,
+      "sharp offset empty after the probe passed: nothing is squared")
+
+-- (g) ... and the same shape with a zero Count rather than a nil result, which
+-- is the other way Aspire says "nothing left": also a skip, also silent.
+install_sharp_copy({ grp(2), grp(0) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(group == nil, "sharp offset count 0: bare nil, the skip case")
+CHECK(err == nil, "sharp offset count 0: no error")
+CHECK(#square_calls == 0, "sharp offset count 0: nothing is squared")
+
+-- (h) An UNREADABLE Count on the sharp offset is still a failure, and must
+-- stay one: a nil Count means the property name is wrong, not that the shape
+-- is thin, and reporting it as "too narrow" would send the next reader at the
+-- chamfer size instead of at the SDK. The message now comes from the shared
+-- offset_and_check helper, the same words case 4 above gets on the plain
+-- offset.
+install_sharp_copy({ grp(2), { Count = "banana" } })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, -0.09)
+CHECK(group == nil, "sharp offset with an unreadable Count: nil group")
+CHECK(type(err) == "string" and err:find("Count", 1, true) ~= nil,
+      "sharp offset with an unreadable Count: error names the property, not the geometry")
+CHECK(#square_calls == 0, "sharp offset with an unreadable Count: nothing is squared")
+
+-- OUTWARD sharp runs (2026-08-03). Every case above drives inward distances
+-- only, which is where the feature started and no longer where it lives. On an
+-- outside run the plain probe goes OUT into the waste (+dist) and the sharp
+-- loop goes back IN to the material (-sharp_dist) -- opposite signs on the two
+-- calls, which never happens inward. If the signs were ever transposed the cut
+-- would land on the wrong side of the wall, so they are asserted one by one.
+--
+-- (i) Outward success: two :Offset calls, the exact distances in that order,
+-- and a squaring call that still takes the MAGNITUDE (and still true).
+install_sharp_copy({ grp(2), grp(2, grp(7)) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, 0.05, -0.02)
+CHECK(err == nil, "outward sharp success: no error")
+CHECK(type(group) == "table" and group.Count == 7,
+      "outward sharp success: the squared group is adopted")
+CHECK(#offset_calls == 2,
+      "outward sharp success: probe then real sharp offset, two :Offset calls")
+CHECK(offset_calls[1].dist == 0.05,
+      "outward sharp success: the probe goes OUT into the waste")
+CHECK(offset_calls[2].dist == -0.02,
+      "outward sharp success: the sharp loop goes back IN to the material")
+CHECK(offset_calls[2].absdist == 0.02,
+      "outward sharp success: the width arg is the magnitude, not the signed distance")
+CHECK(#square_calls == 1, "outward sharp success: MakeOffsetsSquare called exactly once")
+CHECK(square_calls[1].flag == false,
+      "outward sharp success: an OUTSIDE run offsets INWARD, and says so")
+-- The magnitude is right and the sign does NOT belong here -- signing this
+-- argument was tried live on 2026-08-03 and changed nothing. The direction
+-- rides on the flag above.
+CHECK(square_calls[1].w == 0.02,
+      "outward sharp success: squaring gets abs(sharp_dist), not the negative")
+CHECK(square_calls[1].w2 == 0.04,
+      "outward sharp success: squaring's third argument is twice that magnitude")
+
+-- (i2) The other direction, and until 2026-08-03 nothing pinned it. Every
+-- fixture above drives a NEGATIVE sharp_dist, so a squaring flag hardcoded to
+-- false would have passed the lot -- and the real inside run, the one v1.11.0
+-- ships and Task 9 verified on the machine, is the POSITIVE case: the plain
+-- probe goes into the shape (-dist) and the sharp loop comes back OUT into the
+-- material (+sharp_dist). It must tell squaring it went outward, or v1.11.0's
+-- sharpening silently stops working. Both directions are pinned from here.
+install_sharp_copy({ grp(2), grp(2, grp(6)) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, -0.05, 0.09)
+CHECK(err == nil, "inside sharp success: no error")
+CHECK(offset_calls[1].dist == -0.05, "inside sharp success: the probe goes INTO the shape")
+CHECK(offset_calls[2].dist == 0.09,
+      "inside sharp success: the sharp loop goes OUT to the material")
+CHECK(#square_calls == 1, "inside sharp success: MakeOffsetsSquare called exactly once")
+CHECK(square_calls[1].flag == true,
+      "inside sharp success: an INSIDE run offsets OUTWARD, and says so")
+CHECK(square_calls[1].w == 0.09,
+      "inside sharp success: squaring still gets the magnitude")
+
+-- (j) THE new failure mode, and the reason this whole change exists (spec 3e):
+-- an outward run whose plain probe PASSES -- the shape is wide enough to
+-- chamfer at the normal distance -- but whose sharp loop, drawn W into the
+-- material, collapses because the stem is narrower than two chamfers. Skip it
+-- and count it. It must not stop the run, and it must not square anything.
+install_sharp_copy({ grp(2), NILR })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, 0.05, -0.02)
+CHECK(group == nil, "outward sharp loop collapses: bare nil, the skip case")
+CHECK(err == nil,
+      "outward sharp loop collapses: no error -- the shape has no top edge left, "
+      .. "which is a chamfer limit, not a fault")
+CHECK(#offset_calls == 2,
+      "outward sharp loop collapses: the probe passed, so the sharp offset WAS attempted")
+CHECK(#square_calls == 0, "outward sharp loop collapses: nothing is squared")
+
+-- (k) The same collapse reported as a zero count instead of a nil result.
+install_sharp_copy({ grp(2), grp(0) })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, 0.05, -0.02)
+CHECK(group == nil, "outward sharp loop count 0: bare nil, the skip case")
+CHECK(err == nil, "outward sharp loop count 0: no error")
+CHECK(#square_calls == 0, "outward sharp loop count 0: nothing is squared")
+
+-- (l) An outward run whose PLAIN probe collapses is unchanged: still a skip,
+-- and the sharp offset is still never attempted.
+install_sharp_copy({ NILR })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, 0.05, -0.02)
+CHECK(group == nil, "outward probe collapses: bare nil, the skip case")
+CHECK(err == nil, "outward probe collapses: no error")
+CHECK(#offset_calls == 1,
+      "outward probe collapses: the real sharp offset is never attempted")
+
+-- (m) An unreadable Count on an outward sharp offset is still a failure, the
+-- same as inward: the side changes what can collapse, never what a broken
+-- property name means.
+install_sharp_copy({ grp(2), { Count = "banana" } })
+job = fake_job(1)
+group, err = CO.sdk_offset_loop(job, FAKE_OBJ, 0.05, -0.02)
+CHECK(group == nil, "outward sharp offset with an unreadable Count: nil group")
+CHECK(type(err) == "string" and err:find("Count", 1, true) ~= nil,
+      "outward sharp offset with an unreadable Count: error names the property")
 
 -- A normal run (sharp_dist == nil) must be completely unaffected: one
 -- :Offset call, no MakeOffsetsSquare, exactly the pre-Finding-1 behaviour.
@@ -457,13 +605,16 @@ do
       RemoveObject = function(_, obj) wiped[#wiped + 1] = obj end,
       SetColour = function() end,
    }
-   local job = { LayerManager = { GetLayerWithName = function(_, name)
-      asked[#asked + 1] = name; return layer
-   end } }
-   local got = CO.sdk_prepare_layer(job, 2)
-   CHECK(asked[1] == CO.offset_layer_name(2), "prepare_layer asks for THIS slot's layer")
-   CHECK(#wiped == 2, "prepare_layer still wipes the layer it prepared")
-   CHECK(got == layer, "prepare_layer returns the layer")
+   local job = { LayerManager = {
+      GetHeadPosition = function() return nil end,   -- no other layers to sweep
+      GetLayerWithName = function(_, name)
+         asked[#asked + 1] = name; return layer
+      end,
+   } }
+   local got = CO.sdk_prepare_layers(job, 2, 1, false)
+   CHECK(asked[1] == CO.offset_layer_name(2, 1), "prepare_layers asks for THIS slot's band 1")
+   CHECK(#wiped == 2, "prepare_layers still wipes the layer it prepared")
+   CHECK(got[1] == layer, "prepare_layers returns the layer, one per band")
 end
 
 -- v1.5.0 migration: rebuilding an ADOPTED v1.4.x chamfer has to clear the old
@@ -507,8 +658,8 @@ do
    local old3 = fake_layer({ "other-chamfer" })
    local new_layer, lm = fake_lm({ ["ChamferOffset - Offset 02"] = old2,
                                    ["ChamferOffset - Offset 03"] = old3 }, true)
-   local got, old_left = CO.sdk_prepare_layer({ LayerManager = lm }, 2, true)
-   CHECK(got == new_layer, "migration still returns the new layer to draw on")
+   local got, old_left = CO.sdk_prepare_layers({ LayerManager = lm }, 2, 1, true)
+   CHECK(got[1] == new_layer, "migration still returns the new layer to draw on")
    CHECK(new_layer.wiped == 1, "the new layer is wiped as always")
    CHECK(old2.wiped == 2, "the old layer's offsets are wiped too")
    CHECK(old2.removed == true, "the emptied old layer is removed")
@@ -519,7 +670,7 @@ do
    -- Not asked to migrate: the old layer must not be touched at all.
    local old2b = fake_layer({ "old-a" })
    local nl2, lm2 = fake_lm({ ["ChamferOffset - Offset 02"] = old2b }, true)
-   CO.sdk_prepare_layer({ LayerManager = lm2 }, 2, false)
+   CO.sdk_prepare_layers({ LayerManager = lm2 }, 2, 1, false)
    CHECK(old2b.wiped == nil and old2b.removed == nil,
          "without the migrate flag the old layer is untouched")
 
@@ -528,15 +679,68 @@ do
    -- layer is cosmetic, a failed run is not.
    local old2c = fake_layer({ "old-a" })
    local nl3, lm3 = fake_lm({ ["ChamferOffset - Offset 02"] = old2c }, false)
-   local got3, left3 = CO.sdk_prepare_layer({ LayerManager = lm3 }, 2, true)
-   CHECK(got3 == nl3, "a failed RemoveLayer still returns the new layer")
+   local got3, left3 = CO.sdk_prepare_layers({ LayerManager = lm3 }, 2, 1, true)
+   CHECK(got3[1] == nl3, "a failed RemoveLayer still returns the new layer")
    CHECK(old2c.wiped == 1, "a failed RemoveLayer still leaves the old layer emptied")
    CHECK(left3 == true, "an old layer that could not be removed is reported")
 
    -- Nothing to migrate (the adopted chamfer was a toolpath with no layer).
    local nl4, lm4 = fake_lm({ ["Layer 1"] = fake_layer({}) }, true)
-   local got4, left4 = CO.sdk_prepare_layer({ LayerManager = lm4 }, 2, true)
-   CHECK(got4 == nl4 and left4 == false, "migrating with no old layer is a no-op")
+   local got4, left4 = CO.sdk_prepare_layers({ LayerManager = lm4 }, 2, 1, true)
+   CHECK(got4[1] == nl4 and left4 == false, "migrating with no old layer is a no-op")
+end
+
+-- Multi-pass: n layers out, and the bands a smaller pass count no longer needs
+-- swept away. This is "rebuild a 6-pass chamfer with a bigger bit that needs 2"
+-- -- the surplus bands are real layers full of real vectors, and leaving them
+-- behind would show four orange rings nothing cuts.
+do
+   local function band_layer(name)
+      return {
+         Name = name,
+         objs = { "a" },
+         GetHeadPosition = function(self) return #self.objs > 0 and 1 or nil end,
+         GetNext = function(self, pos)
+            local nxt = pos + 1
+            return self.objs[pos], (nxt <= #self.objs) and nxt or nil
+         end,
+         RemoveObject = function(self) self.wiped = (self.wiped or 0) + 1 end,
+         SetColour = function(self) self.coloured = true end,
+      }
+   end
+   local existing = {}
+   for k = 1, 6 do existing[k] = band_layer(CO.offset_layer_name(2, k)) end
+   -- Another chamfer's bands, and a band of ours that belongs to no slot we own.
+   local other = band_layer(CO.offset_layer_name(3, 5))
+   local mine = { existing[1], existing[2], existing[3], existing[4], existing[5],
+                  existing[6], other }
+   local lm = {
+      GetHeadPosition = function() return 1 end,
+      GetNext = function(_, pos)
+         local nxt = pos + 1
+         return mine[pos], (nxt <= #mine) and nxt or nil
+      end,
+      GetLayerWithName = function(_, name)
+         for _, L in ipairs(existing) do if L.Name == name then return L end end
+         error("asked for an unexpected layer: " .. tostring(name))
+      end,
+      RemoveLayer = function(_, layer) layer.removed = true end,
+   }
+   local got, old_left = CO.sdk_prepare_layers({ LayerManager = lm }, 2, 2, false)
+   CHECK(#got == 2, "two passes get two layers")
+   CHECK(got[1] == existing[1] and got[2] == existing[2],
+         "and they come back in band order")
+   CHECK(existing[1].wiped == 1 and existing[2].wiped == 1,
+         "the bands that survive are emptied for the new run")
+   CHECK(existing[1].removed == nil and existing[2].removed == nil,
+         "and not removed -- they are about to be drawn on")
+   CHECK(existing[3].removed and existing[4].removed
+         and existing[5].removed and existing[6].removed,
+         "the surplus bands are removed")
+   CHECK(existing[6].wiped == 1, "a surplus band's vectors go with it")
+   CHECK(other.wiped == nil and other.removed == nil,
+         "another chamfer's bands are left completely alone")
+   CHECK(old_left == false, "a clean sweep reports nothing left behind")
 end
 
 do
@@ -610,6 +814,89 @@ do
    CHECK(CO.sdk_find_toolpath_by_slot(3) == nil, "a slot with no toolpath finds nothing")
    ToolpathManager = function() error("no toolpath manager") end
    CHECK(CO.sdk_find_toolpath_by_slot(2) == nil, "an SDK failure is nil, never a raise")
+   ToolpathManager = SAVED_TPM
+end
+
+-- Multi-pass: find all toolpaths carrying a slot marker (one exists per pass).
+do
+   local tps = { { Name = "Chamfer 0.06 in " .. CO.toolpath_marker(1) },
+                 { Name = "Chamfer 0.06 in " .. CO.toolpath_marker(1) .. " pass 2" },
+                 { Name = "Chamfer 0.02 in " .. CO.toolpath_marker(2) },
+                 { Name = "my own profile" } }
+   ToolpathManager = function()
+      return {
+         GetHeadPosition = function() return 1 end,
+         GetNext = function(_, pos)
+            local nxt = pos + 1
+            return tps[pos], (nxt <= #tps) and nxt or nil
+         end,
+      }
+   end
+   local found = CO.sdk_find_toolpaths_by_slot(1)
+   CHECK(#found == 2, "every toolpath carrying the slot marker is returned")
+   CHECK(found[1] == tps[1] and found[2] == tps[2],
+         "all passes come back in list order (cut order)")
+   local found2 = CO.sdk_find_toolpaths_by_slot(2)
+   CHECK(#found2 == 1, "a single-pass chamfer returns one toolpath")
+   CHECK(found2[1] == tps[3], "and it is the right one")
+   local found3 = CO.sdk_find_toolpaths_by_slot(3)
+   CHECK(#found3 == 0, "a nonexistent slot returns an empty array")
+   ToolpathManager = function() error("no toolpath manager") end
+   local found_err = CO.sdk_find_toolpaths_by_slot(1)
+   CHECK(type(found_err) == "table" and #found_err == 0,
+         "an SDK failure is an empty array, never a raise")
+   ToolpathManager = SAVED_TPM
+end
+
+-- Write memory to every pass: all pass or all fail.
+do
+   local written = {}
+   local tps = { { Name = "Chamfer 0.06 in " .. CO.toolpath_marker(2),
+                   Notes = "" },
+                 { Name = "Chamfer 0.06 in " .. CO.toolpath_marker(2) .. " pass 2",
+                   Notes = "" } }
+   ToolpathManager = function()
+      return {
+         GetHeadPosition = function() return 1 end,
+         GetNext = function(_, pos)
+            local nxt = pos + 1
+            return tps[pos], (nxt <= #tps) and nxt or nil
+         end,
+      }
+   end
+   -- Mock sdk_write_memory to track calls
+   local orig_write = CO.sdk_write_memory
+   CO.sdk_write_memory = function(tp, mem)
+      written[#written + 1] = { tp = tp, mem = mem }
+      return true
+   end
+   local result = CO.sdk_write_memory_all(2, { size = 0.25 })
+   CHECK(result == true, "write_memory_all returns true when all passes accept it")
+   CHECK(#written == 2, "memory is written to every pass")
+   CHECK(written[1].tp == tps[1] and written[2].tp == tps[2],
+         "both passes are written in order")
+   -- Restore and test failure case
+   written = {}
+   CO.sdk_write_memory = function(tp, mem)
+      written[#written + 1] = { tp = tp, mem = mem }
+      -- Reject the FIRST pass, not the last: rejecting the last one cannot tell
+      -- a short-circuit from a full walk, since both stop at the same place.
+      if tp == tps[1] then return false end
+      return true
+   end
+   local result2 = CO.sdk_write_memory_all(2, { size = 0.25 })
+   CHECK(result2 == false,
+         "write_memory_all returns false when any pass rejects it")
+   CHECK(#written == 2,
+         "but all passes are still attempted (no short-circuit on failure)")
+   -- Empty slot case
+   local result3 = CO.sdk_write_memory_all(3, { size = 0.25 })
+   CHECK(result3 == false, "write_memory_all returns false when no toolpaths exist")
+   -- SDK failure case
+   ToolpathManager = function() error("no toolpath manager") end
+   local result4 = CO.sdk_write_memory_all(2, { size = 0.25 })
+   CHECK(result4 == false, "write_memory_all returns false on SDK failure, never a raise")
+   CO.sdk_write_memory = orig_write
    ToolpathManager = SAVED_TPM
 end
 
@@ -697,4 +984,70 @@ do
    local job, lm = fake_layer_job({})
    CHECK(CO.sdk_leave_user_layer(job) == true, "an empty layer list succeeds")
    CHECK(lm.activated == nil, "and activates nothing")
+end
+
+-- Which layers a rebuild sweeps away. Pure, so it can be checked without a job.
+-- The dangerous direction is FALSE NEGATIVES: a surplus band left on the canvas
+-- is orange geometry that is no longer cut and is indistinguishable by eye from
+-- geometry that is.
+CHECK(CO.doomed_layer("EdgeBreaker Offset 03-4", 3, 2, false) == true,
+      "a band past the new pass count goes")
+CHECK(CO.doomed_layer("EdgeBreaker Offset 03-2", 3, 2, false) == false,
+      "a band the new run still needs stays (it is wiped, not deleted)")
+CHECK(CO.doomed_layer("EdgeBreaker Offset 04-4", 3, 2, false) == false,
+      "another chamfer's surplus band is never touched")
+CHECK(CO.doomed_layer("EdgeBreaker - Offset 03", 3, 2, false) == true,
+      "this slot's v1.12.0 layer always goes")
+CHECK(CO.doomed_layer("EdgeBreaker - Offset 04", 3, 2, false) == false,
+      "another slot's v1.12.0 layer is never touched")
+CHECK(CO.doomed_layer("ChamferOffset - Offset 03", 3, 2, true) == true,
+      "the v1.4.x layer goes when adopting")
+CHECK(CO.doomed_layer("ChamferOffset - Offset 03", 3, 2, false) == false,
+      "and is left alone when not adopting")
+CHECK(CO.doomed_layer("ChamferOffset - Offset", 3, 2, true) == false,
+      "the pre-1.4.0 unnumbered layer is never deleted")
+CHECK(CO.doomed_layer("Tim's vectors", 3, 2, true) == false, "user layers are never touched")
+CHECK(CO.doomed_layer(nil, 3, 2, true) == false, "an unreadable name is never deleted")
+
+-- CO.sdk_offset_group (v1.13.1): the same tri-state contract as
+-- sdk_offset_loop, on a group that is ALREADY a detached copy. It must not
+-- touch the selection and must not copy -- the whole point is that the caller
+-- hands it the finishing pass's group and gets a backed-off sibling.
+do
+   -- A fake ContourGroup whose :Offset returns whatever the test dictates.
+   local function fake_group(result)
+      return { Offset = function(self, d, ad, mode, keep) return result end }
+   end
+
+   local g, err = CO.sdk_offset_group(fake_group({ Count = 3 }), -0.05)
+   CHECK(type(g) == "table" and g.Count == 3, "sdk_offset_group returns the offset group")
+   CHECK(err == nil, "and no error alongside it")
+
+   local g2, err2 = CO.sdk_offset_group(fake_group(nil), -0.05)
+   CHECK(g2 == nil and err2 == nil, "a nil Offset result is the bare-nil 'too narrow' answer")
+
+   local g3, err3 = CO.sdk_offset_group(fake_group({ Count = 0 }), -0.05)
+   CHECK(g3 == nil and err3 == nil, "an empty result is 'too narrow', not a failure")
+
+   local g4, err4 = CO.sdk_offset_group(fake_group({ Count = "?" }), -0.05)
+   CHECK(g4 == nil and type(err4) == "string",
+         "an unreadable Count is a FAILURE, not a silent skip")
+
+   -- A throw inside Aspire must come back as nil+message, never propagate.
+   local thrower = { Offset = function() error("luabind: no overload") end }
+   local g5, err5 = CO.sdk_offset_group(thrower, -0.05)
+   CHECK(g5 == nil and type(err5) == "string" and err5:find("overload") ~= nil,
+         "a thrown Offset is caught and reported")
+
+   -- The magnitude argument is always positive even when the distance is not:
+   -- relief passes on an outward loop offset by a NEGATIVE distance.
+   local seen
+   local spy = { Offset = function(self, d, ad, mode, keep)
+      seen = { d = d, ad = ad, mode = mode, keep = keep }
+      return { Count = 1 }
+   end }
+   CO.sdk_offset_group(spy, -0.09225)
+   NEAR(seen.d, -0.09225, 1e-9, "the signed distance is passed through")
+   NEAR(seen.ad, 0.09225, 1e-9, "the magnitude argument is its absolute value")
+   CHECK(seen.mode == 1 and seen.keep == true, "the 4-arg Offset form is used")
 end

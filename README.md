@@ -98,9 +98,38 @@ barely cuts and wears out first. You pay for it in depth, and each button shows 
 depth it needs, so take the highest one your bit and your stock can reach.
 
 Both ends of the range are there to keep the cut off the two spots a V-bit cuts
-badly: the tip, and the shoulder where the flute runs out. That's also why a big
-chamfer on a small bit gets refused — the chamfer eats into the top of the range,
-and past a certain size there's nothing left in between.
+badly: the tip, and the shoulder where the flute runs out. A chamfer eats into the
+top of that range, so past a certain size there's nothing left in between and the
+bit can't take it in one go. So it takes it in several.
+
+## Big chamfers
+
+Ask for a chamfer bigger than the bit can manage in one bite and EdgeBreaker cuts
+it in more than one pass rather than refusing. You type the size you want; it works
+out how many passes that takes. The dialog says how many, and how much flute each
+one uses, and draws the earlier passes ghosted into the section view.
+
+**Cut them in order, top down.** They come out named `pass 1 of 3`, `pass 2 of 3`
+and so on, in that order in the Toolpaths panel, and the order isn't a preference.
+Every pass but the last cuts with the tool sitting out over the part, and what
+keeps its flute clear is the material the pass above has already taken off. Run
+them backwards and you're burying the bit again, which is the thing the extra
+passes are there to avoid.
+
+That's also why a thin rib or a narrow neck can't take a big chamfer at all —
+there's nothing there for the upper passes to sit over. Those get skipped and
+counted, same as always.
+
+You may see faint lines across the face where the passes meet, one fewer than the
+number of passes. They sand out. A bigger bit does the whole thing in one pass with
+none, so if you have one, use it.
+
+Each pass draws on its own layer: `EdgeBreaker Offset 01-1`, `01-2`, `01-3` for a
+three-pass Chamfer 1, cleared and redrawn every run like any other.
+
+Eight passes is the ceiling. Past that it won't build, and says instead what the
+biggest chamfer this bit will take is, and the smallest bit that would cut the one
+you asked for.
 
 ## Start depth
 
@@ -119,21 +148,34 @@ at 0. Unlike the chamfer size, it is deliberately not carried over from your las
 run: a leftover 0.25 in from yesterday's pocket applied to today's flat job would
 cut a quarter inch too deep without looking wrong on screen.
 
-## Sharp inside corners
+## Sharp corners
 
-A chamfer's inside corners normally come out rounded — at one depth, the bit
-can only get so far into a corner. Tick **Sharp inside corners** and the bit
-rises as it drives into each corner, so the two edges meet in a crisp point.
+A chamfer's corners normally come out rounded — at one depth, the bit can only
+get so far into a corner. Tick **Sharp corners** and the bit rises as it drives
+into each corner, so the two edges meet in a crisp point.
 
-- It's there when **Chamfer side** is **Inside** — pockets and holes. On Auto
-  or Outside the box is greyed out.
+There's a depth limit on it: the machine won't sharpen deeper than the bit's
+cutting edge. If your chamfer is close to that, EdgeBreaker drops the cut
+position lower to make it fit — and says so under the cut position buttons. Too
+big for even that and the box greys out: use a smaller chamfer, or a bigger bit.
+
+- It works on **any** Chamfer side, with one catch: if you've selected shapes
+  that sit inside other shapes — letters with counters, a part with holes — leave
+  Side on **Auto**. Forcing a side can't sharpen those, and it'll tell you so.
+- Raised letters are one chamfer now: select the lot, leave Side on **Auto**, tick
+  the box. It works out which way each shape goes — outward round the outlines,
+  inward into the counters — and the corners come out sharp on both.
+- Two chamfers is still how you do it when you want the outlines and the counters
+  cut *differently*. It's a choice now, not a workaround.
+- On an **Outside** chamfer the guide line is drawn inside the shape, so anything
+  narrower than two chamfers gets skipped and counted with the other too-narrow
+  ones. Go smaller and it fits.
 - Each chamfer remembers its own setting, so a rebuild keeps what you chose.
 - The corner moves cut closer to the bit's tip than the position you picked —
   that's the only way into a corner, and it's a tiny share of the cut.
-- Outside corners still come out rounded.
-- The orange line sits a touch outside the pocket's edge on purpose — that's
-  the line the machine steers by, not the cut. The cut still lands exactly
-  where it always does.
+- The orange line sits a touch over on the material side of your edge on
+  purpose: that's the line the machine steers by, not the cut. The cut still
+  lands exactly where it always does.
 
 ## What a chamfer remembers
 
@@ -186,7 +228,7 @@ so there's no choice to explain.
 A job can hold up to 99 chamfers, each with its own bit, size and cut position —
 a fine chamfer on the lettering and a heavier one on the outline, say.
 
-Each chamfer keeps its own offset layer (`EdgeBreaker - Offset 01`, `02`, …) and
+Each chamfer keeps its own offset layers (`EdgeBreaker Offset 01-1`, `02-1`, …) and
 its own toolpath marker (`[EdgeBreaker 01]`). A run clears and rebuilds **only its
 own number**; every other chamfer is left exactly as it was, and the banner says
 which ones those are before you press OK.
@@ -228,21 +270,22 @@ this gadget wrote itself. The bit inside it is irrelevant — it is swapped for
 the one you picked, and so is the depth.
 
 So is the layer: building Chamfer 3 rewrites the restriction to
-`EdgeBreaker - Offset 03` before the template is loaded — a two-character
-change, nothing else in the file moves — and the gadget reads the name back out
-to confirm it before handing it over. It refuses to build rather than cut a
-layer it did not aim at.
+`EdgeBreaker Offset 03-1`, and again for each further pass, before the template is
+loaded. The new name is exactly as long as the one it replaces, so it goes in
+place and nothing else in the file moves. The gadget then reads the name back out
+to confirm it before handing it over, and refuses to build rather than cut a layer
+it did not aim at.
 
 You should never need to touch this file. If you do re-create it, it must be
-restricted to **`EdgeBreaker - Offset 01`** — the `01` matters, because that is
-the text the gadget rewrites. The **Selector ...** step is not optional either:
-without it the toolpath gets bound to whatever is selected when it
-recalculates, and loops silently drop out. It must also be saved from a job in
+restricted to **`EdgeBreaker - Offset 01`** — the whole name matters, because that
+is the text the gadget finds and rewrites. The **Selector ...** step is not
+optional either: without it the toolpath gets bound to whatever is selected when
+it recalculates, and loops silently drop out. It must also be saved from a job in
 the same units you work in.
 
 ## Notes
 
-- The layers `EdgeBreaker - Offset 01`, `02`, … are gadget-owned. Building a
+- The layers `EdgeBreaker Offset 01-1`, `02-1`, … are gadget-owned. Building a
   chamfer clears **its own** layer and no other, and gadget deletions cannot be
   undone — never keep your own work on one.
 - Vectors must be **closed**. Outer boundaries offset outward, holes inward,

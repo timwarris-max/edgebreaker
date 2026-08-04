@@ -78,3 +78,17 @@ local v1100 = CO.decode_memory("[EdgeBreaker-DATA]EB1|size=1|units=in[/EdgeBreak
 CHECK(v1100.sharp == nil, "an old blob carries no sharp key")
 CHECK(CO.apply_settings(v1100, CO.unit_info(false)).sharp == 0,
       "...and an old chamfer rebuilds with sharp off")
+
+-- The blob has to be readable from ANY pass: an operator who deletes pass 1 by
+-- hand must not silently lose the chamfer's memory. Same content on each, so
+-- the read side does not care which it finds.
+CHECK(type(CO.sdk_write_memory_all) == "function", "there is a write-all")
+CHECK(type(CO.sdk_find_toolpaths_by_slot) == "function", "and a find-all")
+-- The blob itself is unchanged by multi-pass: no pass count is stored, because
+-- it is derived from the size and the bit and a stored copy could contradict it.
+local blob = CO.encode_memory({ fps = {}, size = 0.25, mode = "setback", side = "auto",
+                                percent = 80, units = "in", start = 0, sharp = false,
+                                tool = "90 deg V-bit" })
+CHECK(blob:find("passes", 1, true) == nil, "no pass count is stored in the blob")
+local back = CO.decode_memory(blob)
+CHECK(back ~= nil and back.size == 0.25, "the blob still round-trips")

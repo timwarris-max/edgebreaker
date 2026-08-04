@@ -71,7 +71,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </head>
 <body>
 <header>
-  <div class="name">EdgeBreaker<span class="ver">v1.12.0</span></div>
+  <div class="name">EdgeBreaker<span class="ver">v1.13.0</span></div>
   <div class="sub">Help &mdash; works offline</div>
 </header>
 <main>
@@ -82,8 +82,9 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <li><a href="#how-it-decides-what-to-build">How it decides what to build</a></li>
 <li><a href="#notes">Notes</a></li>
 <li><a href="#where-on-the-flute-you-cut">Where on the flute you cut</a></li>
+<li><a href="#big-chamfers">Big chamfers</a></li>
 <li><a href="#start-depth">Start depth</a></li>
-<li><a href="#sharp-inside-corners">Sharp inside corners</a></li>
+<li><a href="#sharp-corners">Sharp corners</a></li>
 <li><a href="#the-section-view">The section view</a></li>
 <li><a href="#what-a-chamfer-remembers">What a chamfer remembers</a></li>
 <li><a href="#more-than-one-chamfer-in-a-job">More than one chamfer in a job</a></li>
@@ -116,7 +117,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <section>
 <h2 id="notes">Notes</h2>
 <ul>
-<li>The layers <code>EdgeBreaker - Offset 01</code>, <code>02</code>, … are gadget-owned. Building a chamfer clears <strong>its own</strong> layer and no other, and gadget deletions cannot be undone — never keep your own work on one.</li>
+<li>The layers <code>EdgeBreaker Offset 01-1</code>, <code>02-1</code>, … are gadget-owned. Building a chamfer clears <strong>its own</strong> layer and no other, and gadget deletions cannot be undone — never keep your own work on one.</li>
 <li>Vectors must be <strong>closed</strong>. Outer boundaries offset outward, holes inward, automatically.</li>
 <li>A feature too narrow to chamfer at the size you asked for is <strong>skipped</strong>, not approximated: the offset collapses it to nothing, and it comes back with no orange offset beside it. A skip is one of the things that breaks the silence — you get a message naming the count. Ask for a smaller chamfer, or cut nearer the tip, and more of them will fit. Before v1.3.0 these came back inside-out and cut a slot down the middle of the feature.</li>
 <li>One vector can produce <strong>more than one</strong> offset vector. Where an inward offset pinches a neck closed, the offset cuts the loop at the crossing and the valid pieces come back as separate closed loops — so the drawn count need not match what you selected.</li>
@@ -132,7 +133,16 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <p>EdgeBreaker doesn't cut on your line. It draws a new line a little way out into the waste and cuts that one — and <strong><code>G</code> is how far out</strong>. The dialog calls it the standoff.</p>
 <p>That gap is the whole trick. Push the cut further into the waste and the V-bit has to go deeper before its slanted face reaches your edge. Same chamfer, deeper plunge, and a higher spot on the flute doing the work.</p>
 <p>That's what the <strong>0%–100%</strong> buttons pick. <strong>0%</strong> is the smallest gap — the cut sits low, just clear of the tip. <strong>100%</strong> is the largest — up near the top of the flute. Cutting high uses fresh, wide flute instead of the tip, which is a point that barely cuts and wears out first. You pay for it in depth, and each button shows the depth it needs, so take the highest one your bit and your stock can reach.</p>
-<p>Both ends of the range are there to keep the cut off the two spots a V-bit cuts badly: the tip, and the shoulder where the flute runs out. That's also why a big chamfer on a small bit gets refused — the chamfer eats into the top of the range, and past a certain size there's nothing left in between.</p>
+<p>Both ends of the range are there to keep the cut off the two spots a V-bit cuts badly: the tip, and the shoulder where the flute runs out. A chamfer eats into the top of that range, so past a certain size there's nothing left in between and the bit can't take it in one go. So it takes it in several.</p>
+</section>
+<section>
+<h2 id="big-chamfers">Big chamfers</h2>
+<p>Ask for a chamfer bigger than the bit can manage in one bite and EdgeBreaker cuts it in more than one pass rather than refusing. You type the size you want; it works out how many passes that takes. The dialog says how many, and how much flute each one uses, and draws the earlier passes ghosted into the section view.</p>
+<p><strong>Cut them in order, top down.</strong> They come out named <code>pass 1 of 3</code>, <code>pass 2 of 3</code> and so on, in that order in the Toolpaths panel, and the order isn't a preference. Every pass but the last cuts with the tool sitting out over the part, and what keeps its flute clear is the material the pass above has already taken off. Run them backwards and you're burying the bit again, which is the thing the extra passes are there to avoid.</p>
+<p>That's also why a thin rib or a narrow neck can't take a big chamfer at all — there's nothing there for the upper passes to sit over. Those get skipped and counted, same as always.</p>
+<p>You may see faint lines across the face where the passes meet, one fewer than the number of passes. They sand out. A bigger bit does the whole thing in one pass with none, so if you have one, use it.</p>
+<p>Each pass draws on its own layer: <code>EdgeBreaker Offset 01-1</code>, <code>01-2</code>, <code>01-3</code> for a three-pass Chamfer 1, cleared and redrawn every run like any other.</p>
+<p>Eight passes is the ceiling. Past that it won't build, and says instead what the biggest chamfer this bit will take is, and the smallest bit that would cut the one you asked for.</p>
 </section>
 <section>
 <h2 id="start-depth">Start depth</h2>
@@ -141,14 +151,17 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <p>Each chamfer remembers its <strong>own</strong> start depth, and a <strong>new</strong> chamfer always opens at 0. Unlike the chamfer size, it is deliberately not carried over from your last run: a leftover 0.25 in from yesterday's pocket applied to today's flat job would cut a quarter inch too deep without looking wrong on screen.</p>
 </section>
 <section>
-<h2 id="sharp-inside-corners">Sharp inside corners</h2>
-<p>A chamfer's inside corners normally come out rounded — at one depth, the bit can only get so far into a corner. Tick <strong>Sharp inside corners</strong> and the bit rises as it drives into each corner, so the two edges meet in a crisp point.</p>
+<h2 id="sharp-corners">Sharp corners</h2>
+<p>A chamfer's corners normally come out rounded — at one depth, the bit can only get so far into a corner. Tick <strong>Sharp corners</strong> and the bit rises as it drives into each corner, so the two edges meet in a crisp point.</p>
+<p>There's a depth limit on it: the machine won't sharpen deeper than the bit's cutting edge. If your chamfer is close to that, EdgeBreaker drops the cut position lower to make it fit — and says so under the cut position buttons. Too big for even that and the box greys out: use a smaller chamfer, or a bigger bit.</p>
 <ul>
-<li>It's there when <strong>Chamfer side</strong> is <strong>Inside</strong> — pockets and holes. On Auto or Outside the box is greyed out.</li>
+<li>It works on <strong>any</strong> Chamfer side, with one catch: if you've selected shapes that sit inside other shapes — letters with counters, a part with holes — leave Side on <strong>Auto</strong>. Forcing a side can't sharpen those, and it'll tell you so.</li>
+<li>Raised letters are one chamfer now: select the lot, leave Side on <strong>Auto</strong>, tick the box. It works out which way each shape goes — outward round the outlines, inward into the counters — and the corners come out sharp on both.</li>
+<li>Two chamfers is still how you do it when you want the outlines and the counters cut <em>differently</em>. It's a choice now, not a workaround.</li>
+<li>On an <strong>Outside</strong> chamfer the guide line is drawn inside the shape, so anything narrower than two chamfers gets skipped and counted with the other too-narrow ones. Go smaller and it fits.</li>
 <li>Each chamfer remembers its own setting, so a rebuild keeps what you chose.</li>
 <li>The corner moves cut closer to the bit's tip than the position you picked — that's the only way into a corner, and it's a tiny share of the cut.</li>
-<li>Outside corners still come out rounded.</li>
-<li>The orange line sits a touch outside the pocket's edge on purpose — that's the line the machine steers by, not the cut. The cut still lands exactly where it always does.</li>
+<li>The orange line sits a touch over on the material side of your edge on purpose: that's the line the machine steers by, not the cut. The cut still lands exactly where it always does.</li>
 </ul>
 </section>
 <section>
@@ -172,7 +185,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <section>
 <h2 id="more-than-one-chamfer-in-a-job">More than one chamfer in a job</h2>
 <p>A job can hold up to 99 chamfers, each with its own bit, size and cut position — a fine chamfer on the lettering and a heavier one on the outline, say.</p>
-<p>Each chamfer keeps its own offset layer (<code>EdgeBreaker - Offset 01</code>, <code>02</code>, …) and its own toolpath marker (<code>[EdgeBreaker 01]</code>). A run clears and rebuilds <strong>only its own number</strong>; every other chamfer is left exactly as it was, and the banner says which ones those are before you press OK.</p>
+<p>Each chamfer keeps its own offset layers (<code>EdgeBreaker Offset 01-1</code>, <code>02-1</code>, …) and its own toolpath marker (<code>[EdgeBreaker 01]</code>). A run clears and rebuilds <strong>only its own number</strong>; every other chamfer is left exactly as it was, and the banner says which ones those are before you press OK.</p>
 </section>
 <section>
 <h2 id="bits-come-from-your-tool-database">Bits come from your tool database</h2>
@@ -188,8 +201,8 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <section>
 <h2 id="the-strategy-template">The strategy template</h2>
 <p>The gadget ships one file, <code>EdgeBreaker.ToolpathTemplate</code>, which supplies only the <em>strategy</em>: Profile, <strong>Machine Vectors: On</strong>, restricted to the layer <code>EdgeBreaker - Offset 01</code>. It exists because the software will not accept a template this gadget wrote itself. The bit inside it is irrelevant — it is swapped for the one you picked, and so is the depth.</p>
-<p>So is the layer: building Chamfer 3 rewrites the restriction to <code>EdgeBreaker - Offset 03</code> before the template is loaded — a two-character change, nothing else in the file moves — and the gadget reads the name back out to confirm it before handing it over. It refuses to build rather than cut a layer it did not aim at.</p>
-<p>You should never need to touch this file. If you do re-create it, it must be restricted to <strong><code>EdgeBreaker - Offset 01</code></strong> — the <code>01</code> matters, because that is the text the gadget rewrites. The <strong>Selector ...</strong> step is not optional either: without it the toolpath gets bound to whatever is selected when it recalculates, and loops silently drop out. It must also be saved from a job in the same units you work in.</p>
+<p>So is the layer: building Chamfer 3 rewrites the restriction to <code>EdgeBreaker Offset 03-1</code>, and again for each further pass, before the template is loaded. The new name is exactly as long as the one it replaces, so it goes in place and nothing else in the file moves. The gadget then reads the name back out to confirm it before handing it over, and refuses to build rather than cut a layer it did not aim at.</p>
+<p>You should never need to touch this file. If you do re-create it, it must be restricted to <strong><code>EdgeBreaker - Offset 01</code></strong> — the whole name matters, because that is the text the gadget finds and rewrites. The <strong>Selector ...</strong> step is not optional either: without it the toolpath gets bound to whatever is selected when it recalculates, and loops silently drop out. It must also be saved from a job in the same units you work in.</p>
 </section>
 <section>
 <h2 id="quick-start-60-seconds">Quick start (60 seconds)</h2>

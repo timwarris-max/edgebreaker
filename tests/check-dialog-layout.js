@@ -96,11 +96,26 @@ var html = fs.readFileSync(SRC, "utf8");
 // (chamfer side radios) is unconditionally visible, so every case below
 // measures it too.
 var CASES = [
-  { name: "90deg default (as opened)", bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.020" },
+  // The one-pass contract, and it is the assertion most likely to be dropped
+  // for looking like it tests nothing: an ordinary chamfer must say NOTHING
+  // about passes and draw NO seam marks. Multi-pass is meant to be invisible
+  // until it is needed, and a note or a ring appearing on a one-bite cut would
+  // be the whole feature leaking into every run.
+  { name: "90deg default (as opened)", bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.020",
+    expectNote: "", expectSeams: 0 },
   { name: "60deg (mode radios shown)", bit: "60deg V-bit",       angle: "60", dia: "0.5",  size: "0.030" },
   { name: "30deg (deepest flute)",     bit: "30deg V-bit",       angle: "30", dia: "0.5",  size: "0.030" },
-  { name: "oversize (block message)",  bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.120",
-    noSection: true },
+  // v1.13.0 moved this one. 0.120 on this bit is a two-pass cut now, not a
+  // refusal, so from the day multi-pass landed this case and the stock one
+  // below measured a state neither of them described -- and both stayed green,
+  // because noSection only SKIPS a check and asserts nothing at all. 0.9 is
+  // past the eight-pass ceiling, and the refusal now has to SAY so, which is
+  // what stops it happening a third time. It doubles as the over-the-ceiling
+  // case: the refusal renders with no pass note beside it.
+  { name: "oversize (block message)",  bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.9",
+    noSection: true, expectNote: "", expectSeams: 0,
+    expectBlock: "Too big for this bit, even in 8 passes. The most it'll take off is 0.75. " +
+                 "A 0.3 bit would do the 0.9 you asked for." },
   // Task 8: mode radios + the HiddenNote sentence Lua sends when it silently
   // dropped bits (e.g. wrong-unit templates) -- both are unconditionally
   // visible in #Scroll, so this is the real worst case for overflow.
@@ -138,8 +153,9 @@ var CASES = [
     expectWarn: "" },
   // The hard block already refuses this cut; two red messages must not compete.
   { name: "oversize + stock (block wins, silent)", bit: "1/4in 90deg V-bit",
-    angle: "90", dia: "0.25", size: "0.120", thickness: "0.75",
-    expectWarn: "", noSection: true },
+    angle: "90", dia: "0.25", size: "0.9", thickness: "0.75",
+    expectWarn: "", noSection: true,
+    expectBlock: "Too big for this bit, even in 8 passes." },
   // The real layout worst case: everything visible AND the warning present.
   { name: "kitchen sink + warning (worst case)", bit: "60deg V-bit",
     angle: "60", dia: "0.5", size: "0.030", thickness: "0.25", small: true,
@@ -275,16 +291,115 @@ var CASES = [
     angle: "90", dia: "0.25", size: "0.030", pick: "30.000000|0.500000",
     expectCaption: "across the top face", expectInset: "SETBACK" },
 
-  // v1.11.0 sharp corners. The checkbox lives on the Side row, live exactly
-  // when Side = Inside, greyed with its remedy caption otherwise (Lua gates
-  // for real -- this is UX). Both states measured, both at the design size
-  // and at the small default window.
+  // v1.11.0 sharp corners, widened to outside runs 2026-08-03. The checkbox
+  // lives on the Side row and is live exactly when the side is FORCED --
+  // Inside or Outside, never Auto -- greyed with its remedy caption otherwise
+  // (Lua gates for real -- this is UX). Every state measured both at the
+  // design size and at the small default window.
   { name: "sharp: inside + ticked (live)", bit: "60deg V-bit", angle: "60",
     dia: "0.5", size: "0.030", side: "inside", sharp: "1", small: true,
     expectSharp: { dis: 0, chk: 1, cap: 0 } },
-  { name: "sharp: auto (greyed, caption)", bit: "60deg V-bit", angle: "60",
-    dia: "0.5", size: "0.030", small: true,
-    expectSharp: { dis: 1, chk: 0, cap: 1 } },
+  // The mirror, and the hole this fills: until 2026-08-03 the gate had NO
+  // side: "outside" case at all, so "Outside greys the box" -- the v1.11.0
+  // rule -- was asserted nowhere. Now that Outside must NOT grey it, the same
+  // hole would hide the failure the other way round, on the one side the
+  // feature was just extended to.
+  { name: "sharp: outside + ticked (live)", bit: "60deg V-bit", angle: "60",
+    dia: "0.5", size: "0.030", side: "outside", sharp: "1", small: true,
+    expectSharp: { dis: 0, chk: 1, cap: 0 } },
+  // Auto is now the ONLY side that greys, so this is the only case that can
+  // render the side caption -- and the caption itself changed with the
+  // feature ("needs Side: Inside" -> "needs Side: Inside or Outside"), which
+  // is why the words are asserted here and not just the visibility. A caption
+  // naming one side above a working Outside run is worse than no caption.
+  // 2026-08-03: Auto is no longer a reason to grey the box -- it is the only
+  // side that CAN sharpen a letter set, because a letter set contains both
+  // directions at once. The run's real gate is the nesting, and the page cannot
+  // see it (this dialog is shown before the loops are ever read), so the box is
+  // LIVE on Auto and there is no caption.
+  { name: "sharp: auto + ticked (live, no caption)", bit: "60deg V-bit", angle: "60",
+    dia: "0.5", size: "0.030", side: "auto", sharp: "1", small: true,
+    expectSharp: { dis: 0, chk: 1, cap: 0 } },
+  // And the depth ceiling still greys on Auto exactly as it does on a forced
+  // side -- the ceiling is side-blind arithmetic, and since the side left
+  // CO.sharp_applies that is structural rather than merely true.
+  { name: "sharp: auto, impossible at any position", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "auto", sharp: "1", small: true,
+    expectSharp: { dis: 1, chk: 0, cap: 1 },
+    expectCap: "needs a smaller chamfer, or a bigger bit" },
+  // 2026-08-03: the side is not the only way to grey the box -- past the
+  // bit's depth ceiling (W > 0.85r) no cut position sharpens either, and that
+  // caption ("needs a smaller chamfer, or a bigger bit", 39 chars) is far
+  // longer than the side one above ("needs Side: Inside or Outside", 29) but
+  // nothing had ever rendered it until now, so its real width in this row was
+  // unmeasured. The ceiling is side-blind arithmetic (sharpMaxPercent takes no
+  // side), and the pair below is what says so out loud rather than by
+  // argument: same bit, same size, both sides, same greyed state.
+  { name: "sharp: impossible at any position (long caption)", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", small: true,
+    expectSharp: { dis: 1, chk: 0, cap: 1 },
+    expectCap: "needs a smaller chamfer, or a bigger bit" },
+  { name: "sharp: outside, impossible at any position", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "outside", sharp: "1", small: true,
+    expectSharp: { dis: 1, chk: 0, cap: 1 },
+    expectCap: "needs a smaller chamfer, or a bigger bit" },
+  // The drop, said out loud. Ticking the box on a chamfer whose cut position is
+  // too deep to sharpen moves that position on the operator's behalf, and this
+  // note beside the buttons is the only thing that says so. Sharpening and
+  // multi-pass can only ever meet at TWO passes -- sharpening needs W <= 0.85r,
+  // a second pass needs W > 0.75r -- so this is also the only shape in which
+  // both notes are on screen at once, i.e. the tallest #PassNote the page can
+  // produce. Numbers: a 1/4in 90deg bit on a 0.095 chamfer takes 2 passes and
+  // sharpens no higher than 20%, so the seeded 80% opens dropped to 20%.
+  { name: "sharp: the drop says so (two notes at once)", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.095", side: "inside", sharp: "1", small: true,
+    expectSharp: { dis: 0, chk: 1, cap: 0 }, expectSelected: "20%", expectSeams: 1,
+    expectNote: "Dropped to 20% so the corners can be sharp. " +
+                "Untick Sharp corners to go back to 80%." },
+  // The drop is side-blind too, and it has to be: the note names the checkbox
+  // as the way back, so an outside run that silently moved the cut position
+  // and said nothing would leave the operator cutting somewhere they never
+  // chose. Same bit, same size, same numbers as the inside case above --
+  // which is the point. Not marked `small`: the tall #PassNote it produces is
+  // already measured at the small window by the inside case, and this one is
+  // here for the behaviour, not for another copy of the same worst case.
+  { name: "sharp: the drop says so, outside", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.095", side: "outside", sharp: "1",
+    expectSharp: { dis: 0, chk: 1, cap: 0 }, expectSelected: "20%", expectSeams: 1,
+    expectNote: "Dropped to 20% so the corners can be sharp. " +
+                "Untick Sharp corners to go back to 80%." },
+
+  // v1.13.0 multi-pass. The pass note is the tallest new thing in a right
+  // column that was already the tight one, and it is longest at the highest
+  // pass count. The seam rings are the other half: passes-1 of them, never
+  // passes, because the last pass's tip sits out in the waste and leaves no
+  // mark -- an off-by-one there draws a line on the face that will not be
+  // there, or hides one that will. Numbers below are CO.pass_count's, computed
+  // in real Lua on a 1/4in 90deg bit: 0.25 -> 3 passes, 0.7 -> 8, 0.9 -> over
+  // the ceiling.
+  { name: "three passes", bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.25",
+    expectNote: "3 passes, 0.0833 in of flute each. You may see 2 faint lines on the face",
+    expectSeams: 2 },
+  // The worst the note can get: the longest count, the plural seam wording, and
+  // the most rings the section ever has to hold apart.
+  { name: "eight passes (the worst the note can get)", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.7",
+    expectNote: "8 passes, 0.0875 in of flute each. You may see 7 faint lines on the face",
+    expectSeams: 7 },
+  // Everything the multi-pass note can be shown beside, at once: eight passes
+  // AND a start depth AND a stock warning AND the hidden note AND the deepest
+  // banner. Reachable, not contrived -- a 1/4in 90deg bit, a 0.7in chamfer
+  // starting 0.25in down in 3/4in stock, which is exactly the mistake the
+  // warning exists to catch.
+  { name: "all on: 8 passes + start depth + warning + note + banner",
+    bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.7",
+    start: "0.25", thickness: "0.75",
+    note: "2 bits for a different job unit were hidden.",
+    chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40|;3|New chamfer (3)|new|||||",
+    slot: "1", kind: "add", facts: "sel=3;excluded=;mem=4", force: "replace",
+    expectNote: "8 passes, 0.0875 in of flute each. You may see 7 faint lines on the face",
+    expectSeams: 7,
+    expectWarn: "Reaches 0.9688 in even at 0%" },
 
   // The Help button shares the 96px button bar with #Summary, and the summary
   // is the only variable-width thing in there. These three cases walk that slot
@@ -600,6 +715,26 @@ function insetNumbers(out) {
   return hits;
 }
 
+// How many seam rings the section drew. svgEl("circle", ...) is called in
+// exactly two places on the page: the seam ring, appended to #SecG, and the
+// flute chart's position dot, appended to `chart` -- a DIFFERENT svg element.
+// So a circle inside #SecG is a seam ring and nothing else, and secG() captures
+// the whole group because the page nests no <g> inside it (there is no other
+// svgEl("g") or createElementNS on the page at all).
+function seamRings(out) {
+  var g = secG(out);
+  if (g === null) return null;
+  return (g.match(/<circle\b/g) || []).length;
+}
+
+// The pass note's text, tags stripped, the same way the block message is read.
+// Callers must match an ASCII-only fragment: the copy carries an em-dash, and
+// character-encoding round-trips are not what this gate is for.
+function passNoteText(out) {
+  var m = /id="PassNote"[^>]*>([\s\S]*?)<\/div>/.exec(out);
+  return m ? m[1].replace(/<[^>]*>/g, "") : null;
+}
+
 // Did the SECTION's stock block draw? The inset appends two polygons of its own
 // with the same two fills, so a bare polygon count is satisfied by the inset
 // alone. The inset is a corner detail pinned to the right of the frame -- its
@@ -783,6 +918,35 @@ function runCase(c, viewW, viewH, label) {
       bad.push("block message missing '" + c.expectBlock + "', got: " + bt);
   }
 
+  // v1.13.0: the pass note is the only thing that tells the operator this cut
+  // takes more than one bite, in what order, and that the seams are expected.
+  // "" is an assertion in its own right and the important one: at one pass, and
+  // on a refusal, the note must be EMPTY. Note what this does NOT prove -- the
+  // gate renders one state per case, so it cannot see a note left standing from
+  // a PREVIOUS size. That the page clears it on the way through is pinned in
+  // the page's own code, not here; deleting the clear line leaves this green.
+  if (c.expectNote !== undefined) {
+    var pn = passNoteText(out);
+    if (pn === null) {
+      bad.push("no #PassNote element");
+    } else if (c.expectNote === "") {
+      if (pn.replace(/^\s+|\s+$/g, "") !== "") bad.push("expected no pass note, got: " + pn);
+    } else if (pn.indexOf(c.expectNote) === -1) {
+      bad.push("pass note missing '" + c.expectNote + "', got: " + pn);
+    }
+  }
+
+  // There are passes-1 seams, never passes: the final pass's tip is out in the
+  // waste, clear of the finished face, and leaves no mark. The count is drawn
+  // rather than written, so it can be wrong while the note beside it reads
+  // right -- which is the whole reason this is counted rather than trusted.
+  if (c.expectSeams !== undefined) {
+    var rings = seamRings(out);
+    if (rings === null) bad.push("no #SecG group in the DOM");
+    else if (rings !== c.expectSeams)
+      bad.push("expected " + c.expectSeams + " seam ring(s), got " + rings);
+  }
+
   // The banner has to SAY the right thing, not merely fit: a state that
   // renders the wrong headline is a wrong-cut hazard, and it is the one part
   // of this dialog no Lua test can reach.
@@ -866,11 +1030,12 @@ function runCase(c, viewW, viewH, label) {
     if (!sectionDrewStock(out)) bad.push("section view drew nothing");
   }
 
-  // v1.11.0 sharp corners: the checkbox is live exactly when Side = Inside,
-  // greyed with its remedy caption otherwise. Lua is the real gate (this is
-  // UX only), but a checkbox that renders enabled when it should be greyed,
-  // or a caption that fails to show, would mislead the operator into
-  // thinking a tick is doing something it isn't.
+  // v1.11.0 sharp corners: the checkbox is live exactly when the side is
+  // forced -- Inside or Outside since 2026-08-03, never Auto -- and greyed
+  // with its remedy caption otherwise. Lua is the real gate (this is UX
+  // only), but a checkbox that renders enabled when it should be greyed, or a
+  // caption that fails to show, would mislead the operator into thinking a
+  // tick is doing something it isn't.
   if (c.expectSharp) {
     if (sharpDis !== c.expectSharp.dis)
       bad.push("SharpBox disabled=" + sharpDis + " want " + c.expectSharp.dis);
@@ -878,6 +1043,19 @@ function runCase(c, viewW, viewH, label) {
       bad.push("SharpBox checked=" + sharpChk + " want " + c.expectSharp.chk);
     if (capOn !== c.expectSharp.cap)
       bad.push("SharpCap visible=" + capOn + " want " + c.expectSharp.cap);
+  }
+
+  // Which caption, not just whether one showed. There are two of them in the
+  // same slot -- the side one and the depth-ceiling one -- and each names a
+  // different remedy, so showing the wrong one sends the operator to change
+  // the wrong control while capOn above stays perfectly happy. Read from the
+  // DOM the way every other text assertion here is, rather than through the
+  // title line, which carries visibility only.
+  if (c.expectCap !== undefined) {
+    var scm = /id="SharpCap"[^>]*>([\s\S]*?)<\/span>/.exec(out);
+    var scText = scm ? scm[1].replace(/<[^>]*>/g, "") : "(no #SharpCap element)";
+    if (scText.indexOf(c.expectCap) === -1)
+      bad.push("SharpCap reads '" + scText + "', want '" + c.expectCap + "'");
   }
 
   console.log((bad.length ? "FAIL  " : "ok    ") + name +

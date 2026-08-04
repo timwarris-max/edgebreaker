@@ -129,7 +129,7 @@ CHECK(CO.validate_template(shippedT, "in") == true, "good template validates")
 -- The new rule itself: no restriction at all is now a rejection, and the
 -- message has to name the layer the user must re-save against.
 local unscoped, unscoped_why = CO.validate_template(mvOn, "in")
-CHECK(unscoped == nil and unscoped_why:find(CO.offset_layer_name(1), 1, true) ~= nil
+CHECK(unscoped == nil and unscoped_why:find(CO.TEMPLATE_LAYER, 1, true) ~= nil
       and unscoped_why:find("no layer", 1, true) ~= nil,
       "an unscoped template is refused as of v1.4.0, naming the required layer")
 
@@ -249,7 +249,7 @@ if shipped_f then
    CHECK(slayers ~= nil, "shipped template layer list is readable")
    CHECK(slayers ~= nil and #slayers == 1,
          "shipped template names exactly one layer")
-   CHECK(slayers ~= nil and slayers[1] == CO.offset_layer_name(1),
+   CHECK(slayers ~= nil and slayers[1] == CO.TEMPLATE_LAYER,
          "shipped template is scoped to slot 1's layer, not '" .. tostring(slayers and slayers[1]) .. "'")
 end
 
@@ -309,12 +309,14 @@ CHECK(CO.slot_from_toolpath_name("x" .. CO.toolpath_marker(9) .. "y") == 9,
 CHECK(CO.slot_from_toolpath_name(CO.toolpath_marker(1)) ~= 2,
       "slot 1's marker is not slot 2's")
 
--- v1.4.0: the template's layer restriction is rewritten two characters wide so
--- each chamfer cuts its own layer. Same-length means the file's length, record
--- structure and every offset in it are untouched -- the same class of edit as
--- the depth patch, and NOT the record insertion Aspire rejects. The read-back
--- through read_template_layers is the check that actually matters: it proves
--- Aspire's own layout still parses after the swap.
+-- v1.4.0: the template's layer restriction is rewritten so each chamfer cuts
+-- its own layer. v1.13.0 rewrites the WHOLE restriction (not just two digits,
+-- see CO.patch_template_layer) because the band suffix moved the separator.
+-- Same-length means the file's length, record structure and every offset in
+-- it are untouched -- the same class of edit as the depth patch, and NOT the
+-- record insertion Aspire rejects. The read-back through read_template_layers
+-- is the check that actually matters: it proves Aspire's own layout still
+-- parses after the swap.
 local tbytes
 do
    local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.ToolpathTemplate", "rb"))
@@ -323,33 +325,37 @@ end
 
 local shipped_layers = CO.read_template_layers(tbytes)
 CHECK(shipped_layers ~= nil and #shipped_layers == 1
-      and shipped_layers[1] == CO.offset_layer_name(1),
+      and shipped_layers[1] == CO.TEMPLATE_LAYER,
       "shipped template is restricted to slot 1's layer")
 
-local p3 = CO.patch_template_layer(tbytes, 3)
+local p3 = CO.patch_template_layer(tbytes, 3, 1)
 CHECK(type(p3) == "string", "patching to slot 3 succeeds")
 CHECK(p3 ~= nil and #p3 == #tbytes, "patch does not change the file length")
 local back = p3 and CO.read_template_layers(p3)
-CHECK(back ~= nil and #back == 1 and back[1] == CO.offset_layer_name(3),
+CHECK(back ~= nil and #back == 1 and back[1] == CO.offset_layer_name(3, 1),
       "patched template reads back as slot 3's layer")
 
--- Only the digit characters move. "01" -> "03" changes the second digit alone;
--- "01" -> "12" changes both. In UTF-16LE each digit is one ASCII byte plus a
--- zero byte, and the zero bytes never change -- so the counts are 1 and 2.
-local function byte_diff(a, b)
-   local n = 0
-   for i = 1, #a do
-      if a:byte(i) ~= b:byte(i) then n = n + 1 end
-   end
-   return n
-end
-CHECK(p3 and byte_diff(tbytes, p3) == 1, "slot 3 changes exactly one byte")
-local p12 = CO.patch_template_layer(tbytes, 12)
-CHECK(p12 and byte_diff(tbytes, p12) == 2, "slot 12 changes exactly two bytes")
+-- Format-independent stand-in for the old two-digit byte-diff invariant: it
+-- can no longer assert an exact byte count (the whole name is rewritten now,
+-- not two digits), but the underlying guarantee -- nothing outside the layer
+-- restriction moves -- is still fully assertable and strictly stronger than a
+-- diff count, because it also catches a same-length write landing at the
+-- wrong offset or a second incidental mutation elsewhere in the file. Located
+-- by the needle rather than a hardcoded offset, so it survives a future
+-- prefix change too.
+local ns, ne = tbytes:find((CO.TEMPLATE_LAYER):gsub(".", "%0\0"), 1, true)
+CHECK(p3 ~= nil and p3:sub(1, ns - 1) == tbytes:sub(1, ns - 1)
+      and p3:sub(ne + 1) == tbytes:sub(ne + 1),
+      "slot 3's patch touches nothing outside the layer restriction")
+
+local p12 = CO.patch_template_layer(tbytes, 12, 1)
 CHECK(p12 and #p12 == #tbytes, "a two-digit slot still preserves the length")
 local back12 = p12 and CO.read_template_layers(p12)
-CHECK(back12 ~= nil and back12[1] == CO.offset_layer_name(12),
+CHECK(back12 ~= nil and back12[1] == CO.offset_layer_name(12, 1),
       "slot 12 reads back correctly")
+CHECK(p12 ~= nil and p12:sub(1, ns - 1) == tbytes:sub(1, ns - 1)
+      and p12:sub(ne + 1) == tbytes:sub(ne + 1),
+      "slot 12's patch touches nothing outside the layer restriction")
 
 -- Everything else the loader reads must survive untouched.
 CHECK(p3 and CO.read_machine_vectors(p3) == "on", "patch leaves Machine Vectors alone")
@@ -358,9 +364,15 @@ CHECK(p3 and CO.read_template_units(p3) == CO.read_template_units(tbytes),
 CHECK(p3 and CO.find_depth_offset(p3) == CO.find_depth_offset(tbytes),
       "patch leaves the depth field where it was")
 
--- Slot 1 -> slot 1 is a no-op, not an error.
-local p1 = CO.patch_template_layer(tbytes, 1)
-CHECK(p1 == tbytes, "patching to the slot it already names changes nothing")
+-- Slot 1, band 1 is no longer a no-op as of v1.13.0: the shipped template's
+-- v1.12.0-format restriction ('EdgeBreaker - Offset 01') differs from the
+-- banded name even for the first slot/band, because the separator itself
+-- changed. It still patches safely to the same length and reads back right.
+local p1 = CO.patch_template_layer(tbytes, 1, 1)
+CHECK(p1 ~= nil and #p1 == #tbytes, "patching to slot 1, band 1 still preserves length")
+local back1 = p1 and CO.read_template_layers(p1)
+CHECK(back1 ~= nil and back1[1] == CO.offset_layer_name(1, 1),
+      "slot 1, band 1 reads back as the new banded name")
 
 -- Refuse anything that is not the template we shipped. (The plan pointed at
 -- tests/tools/; the fixture actually lives in tests/fixtures/.)
@@ -369,7 +381,7 @@ do
    local f = assert(io.open("tests/fixtures/wrong-layer.ToolpathTemplate", "rb"))
    wrong = f:read("*a"); f:close()
 end
-local bad, berr = CO.patch_template_layer(wrong, 2)
+local bad, berr = CO.patch_template_layer(wrong, 2, 1)
 CHECK(bad == nil and type(berr) == "string",
       "a template restricted to some other layer is refused, not patched")
 
@@ -383,7 +395,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.12.0", "version gate: 1.12.0")
+CHECK(CO.VERSION == "1.13.0", "version gate: 1.13.0")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -393,7 +405,7 @@ do
    CHECK(src:find('<span class="ver">v' .. CO.VERSION .. '</span>', 1, true) ~= nil,
          "the setup dialog's header prints CO.VERSION")
 end
-CHECK(CO.offset_layer_name(7) == "EdgeBreaker - Offset 07", "new layer name")
+CHECK(CO.offset_layer_name(7) == "EdgeBreaker Offset 07-1", "new layer name")
 CHECK(CO.toolpath_marker(7) == "[EdgeBreaker 07]", "new marker")
 CHECK(CO.TEMPLATE_NAME == "EdgeBreaker.ToolpathTemplate", "template name")
 CHECK(CO.slot_from_layer_name("ChamferOffset - Offset 07") == nil, "old layer no longer ours")
@@ -726,21 +738,83 @@ do
       end
       -- What we patch is what Aspire saves: the patched shipped template reads the
       -- same MV name as the fixture.
-      CHECK(CO.read_machine_vectors(CO.patch_template_sharp(shippedT))
+      CHECK(CO.read_machine_vectors(CO.patch_template_sharp(shippedT, "inside"))
             == CO.read_machine_vectors(sharpFx),
             "the patcher writes the code Aspire itself stores for Inside")
    end
 end
 
--- v1.11.0: the dialog's greying is UX -- these two calls are what actually
--- decide. If either disappears, a ticked box on a non-Inside run would apply
--- sharp (or an Inside run would silently not), and nothing offline but this
--- would notice.
+-- The outward mirror (2026-08-03). Sharp corners now run on Outside as well as
+-- Inside, and the two sides write OPPOSITE Machine Vectors codes -- so a
+-- patcher that got the outward one wrong would machine the wrong side of every
+-- vector in the job, silently. Both codes are therefore fixture-pinned against
+-- Aspire's own bytes rather than one pinned and the other inferred:
+-- mv-outside.ToolpathTemplate is an Aspire save with Machine Vectors = Outside.
+-- Same SKIP-if-missing shape as the Inside block above, and defensive for the
+-- same reason.
+do
+   local outFxFile = io.open("tests/fixtures/mv-outside.ToolpathTemplate", "rb")
+   if outFxFile == nil then
+      print("SKIP: mv-outside fixture missing (test_release.lua outward sharp pin)")
+   else
+      outFxFile:close()
+      local outFx = slurp("tests/fixtures/mv-outside.ToolpathTemplate")
+      CHECK(CO.read_machine_vectors(outFx) == "outside",
+            "fixture pins the Outside code")
+      local patchedOut = CO.patch_template_sharp(shippedT, "outside")
+      CHECK(patchedOut ~= nil and CO.read_machine_vectors(patchedOut)
+            == CO.read_machine_vectors(outFx),
+            "the patcher writes the code Aspire itself stores for Outside")
+      -- The outward branch must still turn sharpening ON. Aiming the cut at the
+      -- other side of the line while forgetting the flag would cut a correct
+      -- outside chamfer with rounded corners -- the exact defect this feature
+      -- exists to remove, and it would look like nothing happened.
+      CHECK(patchedOut ~= nil
+            and patchedOut:byte(CO.find_sharpen_offset(patchedOut)) == 1,
+            "and still sets the sharpen flag on the outward side")
+      -- An unrecognised side REFUSES rather than defaulting (spec 4a.3): a
+      -- silent fallback here picks a side of the line for the operator.
+      local bad, badwhy = CO.patch_template_sharp(shippedT, "auto")
+      CHECK(bad == nil and type(badwhy) == "string",
+            "and a side it does not recognise refuses instead of guessing one")
+   end
+end
+
+-- v1.11.0: the dialog's greying is UX -- these calls are what actually decide.
+-- If any disappears, a ticked box either sharpens a selection Aspire will cut
+-- the wrong way round, or silently does not sharpen one it would have cut right,
+-- and nothing offline but this would notice.
+--
+-- Retargeted 2026-08-03 (Auto sharp corners, spec section 5a). The side left
+-- sharp_applies, so the gate is now TWO calls and both have to be here.
 do
    local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
    local src = f:read("*a"); f:close()
-   CHECK(src:find("CO%.sharp_applies%(side, sharp%)") ~= nil,
-         "main() gates sharp through CO.sharp_applies(side, sharp)")
+   -- Scoped to main()'s BODY, not the whole file: CO.sharp_nesting_ok and
+   -- CO.sharp_nesting_note are DEFINED earlier in the same file, so a whole-file
+   -- search for either name matches the definition and passes whether or not
+   -- main() ever calls it. That is a pin that cannot fail, which is worse than
+   -- no pin. main() runs from its definition to end of file (same extraction the
+   -- absence pins below use).
+   local mstart = src:find("function main(script_path)", 1, true)
+   CHECK(mstart ~= nil, "found main() for the sharp gate pins")
+   local mbody = mstart ~= nil and src:sub(mstart) or ""
+   CHECK(mbody:find("local sharp_ok = CO%.sharp_applies%(sharp, s%.d, r%.d_max%)") ~= nil,
+         "main() asks the box-and-depth gate first")
+   CHECK(mbody:find("CO%.sharp_nesting_ok%(dirs, depths%)") ~= nil,
+         "and then asks whether our directions match what Aspire's nesting will do")
+   CHECK(mbody:find("local depths = CO%.nesting_depths%(loops%)") ~= nil,
+         "main() measures nesting depth from the same loops it classified")
+   -- Asking for sharp corners and not getting them must never be silent. TWO
+   -- pins, because they can fail apart: main() can still COMPUTE the sentence
+   -- while nothing carries it into the report, and a mutation check proved
+   -- exactly that -- deleting the append below left the call above untouched and
+   -- the suite green.
+   CHECK(mbody:find("CO%.sharp_nesting_note%(sharp_why%)") ~= nil,
+         "main() builds the refusal sentence from the gate's reason")
+   CHECK(mbody:find('sel_notes = sel_notes %.%. "\\n\\n" %.% sharp_refused') ~= nil
+         or mbody:find("sharp_refused then sel_notes = sel_notes", 1, true) ~= nil,
+         "and appends it to sel_notes, which is what raises the report")
    CHECK(src:find('AddTextField%("Sharp"') ~= nil,
          "main() seeds the dialog's Sharp field")
 end
@@ -752,22 +826,492 @@ end
 do
    local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
    local src = f:read("*a"); f:close()
-   CHECK(src:find("local sharp_run = CO%.sharp_applies%(side, sharp%)") ~= nil,
-         "main() computes sharp_run once")
-   CHECK(src:find("sharp_run and %(dist %+ CO%.sharp_offset_shift%(s%.d, angle%)%) or nil") ~= nil,
-         "a sharp run shifts the offset distance by CO.sharp_offset_shift(s.d, angle)")
-   CHECK(src:find("CO%.sdk_offset_loop%(job, loop%.obj, dist, sharp_dist%)") ~= nil,
+   CHECK(src:find("local sharp_run = sharp_ok and sharp_dir ~= nil") ~= nil,
+         "main() computes sharp_run once, from both gates")
+   -- Multi-pass: the shift is per BAND, not per chamfer. Aspire computes its own
+   -- displacement from THAT pass's cut depth, so the compensation has to
+   -- come from the same number -- pg.depth, not the whole chamfer's s.d. At
+   -- n == 1 pass_geometry returns (W + G) / tan a, which IS s.d, so a one-pass
+   -- sharp run still shifts by exactly what v1.12.0 shifted by.
+   --
+   -- Retargeted 2026-08-03 (outward sharp corners, spec section 8). This used to
+   -- pin the literal `dist_n + CO.sharp_offset_shift(...)`, and that bare `+`
+   -- WAS the inside-only rule -- applied outward it draws the loop at 2G + W on
+   -- the finishing band and at zero on a relief band, i.e. straight back onto
+   -- the original vector. The sign now lives in one place,
+   -- CO.sharp_offset_distance, which signs BOTH terms through
+   -- band_offset_distance; these pins say both call sites go through it. The
+   -- number it returns is pinned in tests/test_geometry.lua; what is pinned
+   -- here is that main() asks it rather than doing the arithmetic itself.
+   CHECK(src:find("CO%.sharp_offset_distance%(dirs%[i%], pg_n%.offset, pg_n%.depth, angle%)") ~= nil,
+         "the finishing band's sharp loop comes from CO.sharp_offset_distance, per band")
+   -- The second site, inside the `if sharp_run` carve-out: every relief band of
+   -- a sharp run is drawn the same way, from its OWN band's offset and depth.
+   -- Two sites doing the sign by hand is two chances to disagree, which is the
+   -- whole reason the function exists.
+   CHECK(src:find("CO%.sharp_offset_distance%(dirs%[i%], pg%.offset, pg%.depth, angle%)") ~= nil,
+         "and so does every relief band's, inside the sharp carve-out")
+   -- The negative half, and the one that actually guards the bug: the sign rule
+   -- must NOT be re-inlined. main() has no business naming sharp_offset_shift at
+   -- all any more -- a bare `dist + shift` anywhere in it is the inside-only
+   -- formula coming back, and it would pass both pins above if it were added
+   -- alongside them. main() runs from its definition to end of file (same
+   -- extraction as the ask-Windows deletion pins earlier in this file).
+   do
+      local mstart = src:find("function main(script_path)", 1, true)
+      CHECK(mstart ~= nil, "found main() for the sharp-shift absence pin")
+      local mbody = mstart ~= nil and src:sub(mstart) or ""
+      CHECK(mbody:find("sharp_offset_shift", 1, true) == nil,
+            "and main() never names sharp_offset_shift itself -- the sign rule lives in one function")
+   end
+   CHECK(src:find("CO%.sdk_offset_loop%(job, loop%.obj, dist_n, sharp_dist%)") ~= nil,
          "main() passes both the normal dist and sharp_dist into sdk_offset_loop")
-   CHECK(src:find("tool, sharp_run%)") ~= nil,
-         "main() reuses sharp_run at the template-patch call")
+   -- Retargeted twice. 2026-08-03 (outward): the template-patch call needs WHICH
+   -- side, not merely whether. 2026-08-03 (Auto): that side comes from the
+   -- NESTING GATE's answer, mapped into Aspire's words -- never from the dialog's
+   -- `side` field. Deriving it from `side` is the defect this whole change
+   -- closes, and it is the derivation that reads most naturally: on a nested
+   -- selection the forced side is precisely the direction Aspire will not use.
+   CHECK(src:find('local sharp_side = sharp_run and %(%(sharp_dir == "outward"%) and "outside" or "inside"%) or nil') ~= nil,
+         "main() maps the gate's direction to the patch side")
+   CHECK(src:find("tool, sharp_side%)") ~= nil,
+         "and reuses that one answer at the template-patch call")
+   -- The negative half. `sharp_run and side` is the old line, and it would pass
+   -- every positive pin above if somebody put it back alongside them.
+   do
+      local mstart = src:find("function main(script_path)", 1, true)
+      CHECK(mstart ~= nil, "found main() for the sharp_side derivation pin")
+      local mbody = mstart ~= nil and src:sub(mstart) or ""
+      CHECK(mbody:find("sharp_run and side", 1, true) == nil,
+            "and main() never derives the patch side from the dialog's side field")
+   end
    CHECK(src:find("function CO%.sdk_offset_loop%(job, obj, dist, sharp_dist%)") ~= nil,
          "sdk_offset_loop takes the normal dist and the sharp_dist flag/shift separately")
-   CHECK(src:find("sg:MakeOffsetsSquare%(math%.abs%(sharp_dist%), true, math%.abs%(sharp_dist%) %* 2%)") ~= nil,
+   CHECK(src:find("sg:MakeOffsetsSquare%(math%.abs%(sharp_dist%), sharp_dist > 0,") ~= nil,
          -- No longer inferred: OffsetSquareProbe (2026-07-31) read the real
          -- signature off luabind's overload error --
          --    bool MakeOffsetsSquare(ContourGroup*, double, bool, double)
-         -- -- and measured both flag values on the same rectangle. The middle
-         -- argument MUST be true; false squares nothing and still returns true,
-         -- which is exactly how it reached a live sitting.
-         "sdk_offset_loop applies MakeOffsetsSquare with the squaring flag TRUE")
+         -- -- and measured both flag values on the same rectangle.
+         --
+         -- The middle argument is the OFFSET'S DIRECTION, not a squaring
+         -- switch: true = offset outward, false = offset inward, and a wrong
+         -- answer squares nothing while still returning true. It must therefore
+         -- be DERIVED from sharp_dist, never a literal -- a hardcoded `true`
+         -- was right only for as long as every run was an inside one, and it
+         -- shipped rounded corners on every outside run of v1.13.0.
+         -- Measured by SquareProbe 2026-08-03.
+         --
+         -- The first argument stays the MAGNITUDE; signing it was tried live
+         -- the same night and changed nothing.
+         "sdk_offset_loop squares with the magnitude and the offset's own direction")
+end
+
+-- Multi-pass: main()'s run block is the largest edit in the feature and NOTHING
+-- offline can execute it, so its three load-bearing decisions are pinned by
+-- source the same way the sharp shift above is. Each one is a silent, dangerous
+-- regression if it is ever undone by a later edit:
+--   * collapse the two phases back into one and a shape that dies on an upper
+--     band gets a chamfer on part of its face and nothing on the rest;
+--   * drop the teardown and a part-built chamfer sits in the Toolpaths panel
+--     looking finished while it cuts a partial face;
+--   * revert to one name for every band and each pass overwrites the last one's
+--     marker, so a rebuild can no longer find the whole set.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   CHECK(src:find("local viable = {}") ~= nil,
+         "main() computes every band before drawing any of them (two phases)")
+   CHECK(src:find("CO%.sdk_delete_marked_toolpaths,%s*slot,%s*false") ~= nil,
+         "main() tears the whole set down when a pass fails part way")
+   CHECK(src:find("CO%.toolpath_name%(size, unit%.suffix, slot, k, n_passes%)") ~= nil,
+         "main() names each band's toolpath with its own pass number")
+   -- The per-pass warnings are kept in TWO accumulators because they have
+   -- opposite lifetimes, and merging them back into one is a silent, reachable
+   -- self-contradiction: a pass that was renamed but not retooled carries the
+   -- marker, so the teardown sweep deletes it -- and a single accumulator would
+   -- then print "The passes that had already been built were removed" directly
+   -- above "change the tool on it in the Toolpaths panel before cutting".
+   -- Only the TAG warnings describe something the sweep cannot see.
+   CHECK(src:find('local retool_warnings, tag_warnings = "", ""') ~= nil,
+         "main() keeps the retool and tag warnings apart, by lifetime")
+   CHECK(src:find("%.%. retool_warnings %.%. tag_warnings") ~= nil,
+         "a run that built every pass reports both kinds of warning")
+   CHECK(src:find('The offset vectors were still drawn%."%s*%.%. tag_warnings') ~= nil,
+         "a torn-down run reports ONLY the passes the sweep could not see")
+end
+
+-- Multi-pass: the DIALOG carries a second copy of this arithmetic, written in
+-- JavaScript, and the two copies cannot see each other. Everything below is
+-- about that gap -- the page telling the operator one thing while the run does
+-- another -- and nothing else offline compares them.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreakerDialog.htm", "rb"))
+   local page = f:read("*a"); f:close()
+
+   -- Captured and compared as a NUMBER, never as spelling. string.format("%g",
+   -- 1e-9) gives "1e-09" in this Lua while the page says "1e-9" -- one value,
+   -- two spellings -- and a literal match would also fail the day somebody
+   -- writes 1.0e-9 or 0.000000001. The value is what has to agree.
+   local function page_var(name)
+      local v = page:match("var " .. name .. " = ([^;]+);")
+      return v and tonumber(v) or nil
+   end
+
+   -- A page ceiling BELOW the Lua's refuses a cut the gadget would happily
+   -- make, and names a bigger bit for it. Above, the dialog draws a pass count
+   -- and lets OK through on a chamfer the run then refuses.
+   CHECK(page_var("MAX_PASSES") == CO.MAX_PASSES,
+         "the page's MAX_PASSES matches CO.MAX_PASSES")
+   -- This tolerance decides whether a band that EXACTLY fills the flute fits.
+   -- Disagree and the page says n+1 passes where the run cuts n: the note, the
+   -- seam count and the ghosted passes then all describe a different cut from
+   -- the one OK is about to make.
+   CHECK(page_var("FIT_EPS") == CO.FIT_EPS,
+         "the page's fit tolerance matches CO.FIT_EPS")
+   -- Both have to stay derivations. Arithmetic inlined at the call sites is how
+   -- the two copies drift apart without either one looking wrong on its own.
+   CHECK(page:find("function passCount", 1, true) ~= nil,
+         "the page derives its own pass count")
+   CHECK(page:find("function solveBand", 1, true) ~= nil, "and its own band solver")
+   -- ONE-SIDED, and the label says so rather than claiming more than it tests.
+   -- 0.75 appears in the page's own comments, so "the page never writes 0.75"
+   -- is not a check that can be made here at all. What is checked: the fraction
+   -- is still computed from the two margins, so a change to TIP_MARGIN or
+   -- SHOULDER_MARGIN cannot leave the too-big message quoting a maximum the
+   -- gadget will not actually cut.
+   CHECK(page:find("SHOULDER_MARGIN - TIP_MARGIN", 1, true) ~= nil,
+         "the page derives the capacity fraction from the two margins")
+end
+
+-- The invariant the in-place template patch rests on: a banded layer name is
+-- exactly as long as the restriction the shipped template was authored with,
+-- so the patch rewrites bytes without moving a record. Aspire accepts no other
+-- kind of edit -- if this ever fails, the feature needs an Aspire-authored
+-- template per pass (the plan's contingency), not a cleverer patcher.
+CHECK(#CO.offset_layer_name(99, CO.MAX_PASSES) == #CO.TEMPLATE_LAYER,
+      "the banded layer name is exactly as long as the template's restriction")
+CHECK(#CO.TEMPLATE_LAYER == 23, "and that length is 23 characters")
+
+-- Corner nesting (v1.13.1). main() is SDK-touching and cannot run offline, so
+-- that the relief bands are cut from the FINISHING group -- and not from the
+-- original vector, which is the v1.13.0 defect -- is pinned by source. This is
+-- the ONLY offline evidence that the product nests; the corner gate proves the
+-- arithmetic is nestable and only the sitting proves Aspire nests.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   CHECK(src:find("CO%.sdk_offset_group%(groups%[n_passes%], delta%)") ~= nil,
+         "phase 1 offsets each relief band from the FINISHING band's group")
+   CHECK(src:find("local delta = CO%.relief_offset_distance%(k, n_passes, r%.W, s%.g, r%.a, dirs%[i%]%)") ~= nil,
+         "and by the difference between the two band distances")
+   -- ANCHORED, not merely present. Every other pin in this block is an
+   -- independent substring search, so swapping the two arms of `if sharp_run`
+   -- -- normal runs on the old path, sharp runs nesting -- leaves every string
+   -- textually intact and the whole suite green (proved 2026-08-03). These two
+   -- say WHICH ARM each path is on. %s+ so reformatting the file cannot break
+   -- them.
+   CHECK(src:find("else%s+local delta = CO%.relief_offset_distance") ~= nil,
+         "and the nesting is on the ELSE arm -- the path a NON-sharp run takes")
+   CHECK(src:find("if sharp_run then%s+local pg = CO%.pass_geometry") ~= nil,
+         "while the sharp arm is the one that re-derives the band itself")
+   CHECK(src:find("function CO%.sdk_offset_group%(g, dist%)") ~= nil,
+         "the group-offset helper exists")
+   -- The negative pin: the old spelling, which offset every band from the
+   -- original vector on EVERY run, must be gone. Without this the two pins
+   -- above could pass alongside leftover as-built code on another path. This
+   -- does not rule out the sharp carve-out's own use of the original vector
+   -- (spelled dk/pg.depth, not dist/pg.depth) -- that path is covered by the
+   -- "if sharp_run then" and "section 7e" pins below, not by this one.
+   CHECK(src:find("CO%.sdk_offset_loop%(job, loop%.obj, dist, sharp_dist%)") == nil,
+         "the nesting path no longer offsets a band from the original vector by its own full distance")
+   -- ... except on a sharp run, where every band is drawn at exactly W from the
+   -- wall on the material side (pinned numerically in tests/test_geometry.lua),
+   -- so the nested relief offset is identically zero and nesting would produce
+   -- the same loop. The carve-out re-derives that loop from the source object
+   -- instead of offsetting by zero and squaring the result again. Pinned so it
+   -- cannot be deleted by accident, and so the file keeps saying why.
+   --
+   -- Side-INDEPENDENT, and this is the bit that had to be reread when sharp
+   -- corners went outward (2026-08-03 spec section 3d). The old wording here
+   -- said "+W", which is the inward half only; CO.sharp_offset_distance signs
+   -- both terms, so an inward run lands at +W and an outward one at -W and
+   -- every band of EITHER coincides. The relief offset is zero on both sides,
+   -- so the carve-out below is still correct and section 7e is not reopened --
+   -- which is why these pins are retargeted wording and not deleted checks.
+   CHECK(src:find("if sharp_run then") ~= nil,
+         "the sharp carve-out is still there")
+   CHECK(src:find("identically ZERO") ~= nil,
+         "and the file says why -- the nested offset on a sharp run is zero")
+   CHECK(src:find("section 7e") ~= nil,
+         "and still names where Aspire's half of it gets settled")
+   -- The relief loop stops ONE SHORT of the finishing band, which is what makes
+   -- the one-pass path untouched: at n_passes == 1 the body never runs at all.
+   -- Running it to n_passes would offset the finishing band by zero and hand
+   -- phase 2 a duplicate on EVERY run, one pass included -- and that mutation
+   -- passes the whole suite without this line (proved 2026-08-03).
+   CHECK(src:find("for k = 1, n_passes %- 1 do") ~= nil,
+         "the relief loop stops one short of the finishing band, so n=1 never enters it")
+   -- The finishing band is still the one cut from the document object, and it
+   -- is still the one that carries the sharp path.
+   CHECK(src:find("CO%.sdk_offset_loop%(job, loop%.obj, dist_n, sharp_dist%)") ~= nil,
+         "the finishing band is still offset from the original vector")
+end
+
+-- The page's greying rule is a SECOND copy of CO.sharp_applies and always was.
+-- That was tolerable while greying was a convenience; it is not now that it
+-- also moves the cut position and decides whether Aspire will accept the run.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreakerDialog.htm", "rb"))
+   local page = f:read("*a"); f:close()
+   CHECK(page:find("sharpMaxPercent", 1, true) ~= nil,
+         "the page works out the highest cut position that still sharpens")
+   -- Both remedies, because both are real: a smaller chamfer or a bigger bit.
+   -- The README says both too, and a caption naming only one of them reads as a
+   -- different rule from the one the README states.
+   CHECK(page:find("needs a smaller chamfer, or a bigger bit", 1, true) ~= nil,
+         "and says so when no position will do, naming both ways out")
+   -- 2026-08-03 (Auto): the SIDE caption is GONE, both spellings of it. The side
+   -- no longer gates the box at all -- Auto is the only side that can sharpen a
+   -- letter set -- so a caption saying otherwise would tell the operator the
+   -- thing in front of them does not work, on the very run it works best for.
+   -- The depth caption is now the only one, which is why the markup default is
+   -- pinned to it: SharpCap is written by applySharpState on every redraw, but
+   -- the markup is what the first paint shows.
+   CHECK(page:find("needs Side: Inside or Outside", 1, true) == nil,
+         "the side caption is gone from the page, in the markup and at run time")
+   CHECK(page:find('id="SharpCap">needs a smaller chamfer, or a bigger bit</span>', 1, true) ~= nil,
+         "and the markup default is the depth caption, the only one left")
+   -- The checkbox's own label followed the caption. "Sharp inside corners" over
+   -- a working Outside run is worse than no label at all. Pinned with its input
+   -- and its closing tag, because the same two words also appear in the "How it
+   -- decides" panel and in the drop note, and a bare search would find those and
+   -- never look at the control itself.
+   CHECK(page:find('<input type="checkbox" id="SharpBox"> Sharp corners</label>', 1, true) ~= nil,
+         "and the checkbox is labelled for both sides, not just Inside")
+   -- 2026-08-03 (Auto): sharpSideOk is DELETED, along with all three of its call
+   -- sites. It existed to hold ONE copy of the side test for the greying, the
+   -- cut-position drop and the note that explains the drop. There is no side
+   -- test left to hold: a surviving copy would grey a box that now works, and it
+   -- would grey it on Auto, which is the side this release exists for.
+   -- Matched with the open paren, so it catches the definition AND every call
+   -- while still letting a comment name the thing it is explaining the absence
+   -- of. A bare name search cannot tell those apart.
+   CHECK(page:find("sharpSideOk(", 1, true) == nil,
+         "the page has no sharpSideOk left - the side no longer gates the box")
+   -- The absence half, unchanged in purpose: if an inline side test comes back,
+   -- one of those three sites has been re-narrowed behind the deletion's back.
+   CHECK(page:find('el("Side").value === "inside"', 1, true) == nil,
+         "and no site re-tests the side inline")
+   CHECK(page:find('el("Side").value === "outside"', 1, true) == nil,
+         "not for Outside either")
+end
+
+-- CO.sharp_max_percent and the page's sharpMaxPercent are two copies of the
+-- SAME rule, and the checks above only pin the identifier and one caption --
+-- neither notices a page copy that flips <= to <, reorders PRESETS, or drops
+-- the g_lo clamp. The formula is pure arithmetic (no DOM), so unlike the rest
+-- of this file it can be run for REAL rather than merely read: pull the page's
+-- own safeBand/sharpMaxPercent/PRESETS source verbatim (%b{} takes the whole
+-- balanced function body, nested object literal and all) and hand it to a bare
+-- `node` process, then compare its answers to CO.sharp_max_percent's for the
+-- exact same inputs. Same reasoning as the PRESETS-array pin above: compare
+-- what the two sides COMPUTE, never what they are spelled.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreakerDialog.htm", "rb"))
+   local page = f:read("*a"); f:close()
+   local margins  = page:match("var SHOULDER_MARGIN[^\n]*\n")
+   local safeband = page:match("function safeBand%(dia, W, a%)%s*%b{}")
+   local sharpmax = page:match("function sharpMaxPercent%(dia, W, b, a%)%s*%b{}")
+   CHECK(margins ~= nil, "the page still declares TIP_MARGIN/SHOULDER_MARGIN/PRESETS together")
+   CHECK(safeband ~= nil, "the page still defines safeBand the expected way")
+   CHECK(sharpmax ~= nil, "the page still defines sharpMaxPercent the expected way")
+
+   if margins and safeband and sharpmax then
+      -- One full-range fit, one past-the-ceiling refusal, one narrow
+      -- multi-pass window (only 0% fits), one non-90 bit -- chosen to match
+      -- the CO.sharp_max_percent block earlier in tests/test_settings.lua, so
+      -- a mismatch here points straight at those known-good numbers.
+      local a90 = CO.half_angle(90)
+      local a60 = CO.half_angle(60)
+      -- Case 5 is a BOUNDARY vector, not just another interior point: dia and
+      -- W are chosen so g_lo lands on `room` bit-for-bit exactly (verified by
+      -- Lua equality before this file was written, not asserted on faith),
+      -- and b is small enough that g_hi > g_lo -- a real, non-inverted band --
+      -- so preset 0 is the ONLY one that satisfies the rule. Every interior
+      -- vector above is silent to a `<=`-to-`<` flip on the loop guard or a
+      -- `>`-to-`>=` flip on the g_lo clamp, because both sides of an interior
+      -- inequality already agree on which way it goes; only a vector sitting
+      -- ON the line forces the operator itself to be the thing that decides
+      -- the answer. (Mutation-tested 2026-08-03: flipping either operator in
+      -- the page's copy turns this case's 0 into nil, and nothing else here
+      -- would have caught it.)
+      local dia5, r5 = 0.017, 0.0085
+      local W5 = r5 - CO.TIP_MARGIN * r5   -- rounds so that (r5 - W5) == TIP_MARGIN*r5 exactly
+      local cases = {
+         { 0.25, 0.05,  0.05,                   a90 },
+         { 0.25, 0.115, 0.0575,                 a90 },
+         { 0.25, 0.10,  CO.band_width(0.10, 2), a90 },
+         { 0.50, 0.03,  0.03,                   a60 },
+         { dia5, W5,    0.001,                  a90 },
+      }
+      local js = margins .. "\n" .. safeband .. "\n" .. sharpmax .. "\n" .. "var cases = [\n"
+      for _, c in ipairs(cases) do
+         js = js .. string.format("[%.17g,%.17g,%.17g,%.17g],\n", c[1], c[2], c[3], c[4])
+      end
+      js = js .. "];\nconsole.log(cases.map(function(c){" ..
+                 "var v=sharpMaxPercent(c[0],c[1],c[2],c[3]);return v===null?'nil':v;" ..
+                 "}).join(' '));\n"
+
+      local tmp = os.getenv("TEMP") or os.getenv("TMP") or "."
+      local jspath = tmp .. "\\edgebreaker_sharp_check.js"
+      local jf = io.open(jspath, "w")
+      local out = nil
+      if jf then
+         jf:write(js); jf:close()
+         local p = io.popen('node "' .. jspath .. '" 2>&1')
+         out = p and p:read("*a") or nil
+         if p then p:close() end
+         os.remove(jspath)
+      end
+
+      -- node missing/broken is reported, not silently skipped: a drift-detector
+      -- that goes quiet when its own tool is absent is worse than no detector.
+      CHECK(out ~= nil, "node could run the page's own sharpMaxPercent for real")
+      if out then
+         local tokens = {}
+         for tok in out:gmatch("%S+") do tokens[#tokens + 1] = tok end
+         for i, c in ipairs(cases) do
+            local expected = CO.sharp_max_percent(c[1], c[2], c[3], c[4])
+            local got = tokens[i]
+            local matches = (expected == nil) and (got == "nil") or (tonumber(got) == expected)
+            CHECK(matches, "the page's sharpMaxPercent agrees with CO.sharp_max_percent, case " .. i ..
+                  " (want " .. tostring(expected) .. ", page said " .. tostring(got) .. ")")
+         end
+      end
+   end
+end
+
+-- sharpMaxPercent is one function out of a whole MIRROR. The block the page
+-- labels "Mirror of CO geometry" also carries pass_geometry, pass_count,
+-- band_width, solve_band, w_from_size/size_from_w, floor4/ceil4 and the two
+-- display_* capacity figures -- and NOTHING pinned any of them. Proved
+-- 2026-08-03: a 3x error injected into where the page puts the seams on the
+-- chamfer face left this suite and the layout gate both green, because the gate
+-- measures overflow and every source check here reads spellings.
+--
+-- The block is pure arithmetic -- no DOM, no globals -- so it can be run for
+-- REAL rather than read: lift it verbatim from the page, drive a table of cases
+-- through it in ONE node process, and compare every answer to the Lua's. Same
+-- rule as the check above: compare what the two sides COMPUTE, never what they
+-- are spelled.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreakerDialog.htm", "rb"))
+   local page = f:read("*a"); f:close()
+
+   -- From the margins declaration to the first line after the mirror that is
+   -- not part of it. If the page is reorganised this stops matching and says
+   -- so, which is the right failure: an unfound mirror must never read as an
+   -- agreeing mirror.
+   local block = page:match("(var SHOULDER_MARGIN = .-\n)var UNIT = ")
+   CHECK(block ~= nil, "the page's mirror block is still delimited the expected way")
+
+   -- Modes, angles and diameters chosen to exercise both rounding directions
+   -- and both sides of the pass ceiling: an acute bit, an obtuse one, a
+   -- one-pass chamfer, a multi-pass one, and one past what 8 passes can take.
+   local cases = {
+      { mode = "setback", size = 0.020, incl = 90,   dia = 0.25 },
+      { mode = "setback", size = 0.120, incl = 90,   dia = 0.25 },
+      { mode = "setback", size = 0.25,  incl = 90,   dia = 0.25 },
+      { mode = "setback", size = 0.70,  incl = 90,   dia = 0.25 },
+      { mode = "setback", size = 0.80,  incl = 90,   dia = 0.25 },   -- past the ceiling
+      { mode = "face",    size = 0.030, incl = 60,   dia = 0.5  },
+      { mode = "leg",     size = 0.030, incl = 12.4, dia = 0.25 },
+      { mode = "face",    size = 0.031, incl = 120,  dia = 0.5  },
+   }
+
+   if block then
+      local js = block .. "\nvar C = [\n"
+      for _, c in ipairs(cases) do
+         js = js .. string.format('["%s",%.17g,%.17g,%.17g],\n', c.mode, c.size, c.incl, c.dia)
+      end
+      js = js .. [[
+];
+function n(x){ return (x===null||x===undefined) ? "nil" : String(x); }
+var out = [];
+for (var i = 0; i < C.length; i++) {
+  var mode = C[i][0], size = C[i][1], incl = C[i][2], dia = C[i][3];
+  var a = halfAngle(incl), W = wFromSize(mode, size, a);
+  var p = passCount(dia, W, a);
+  var b = (p !== null) ? bandWidth(W, p) : W;
+  var row = [n(W), n(p), n(b), n(displayMaxSize(mode, incl, dia)), n(displayMinDia(mode, size, incl))];
+  if (p !== null) {
+    var s = solveBand(80, dia, W, b, a);
+    row.push(n(s.g), n(s.d));
+    for (var k = 1; k <= p; k++) {
+      var pg = passGeometry(k, p, W, s.g, a);
+      row.push(n(pg.offset), n(pg.depth));
+    }
+  }
+  out.push(row.join(","));
+}
+console.log(out.join("\n"));
+]]
+
+      local tmp = os.getenv("TEMP") or os.getenv("TMP") or "."
+      local jspath = tmp .. "\\edgebreaker_mirror_check.js"
+      local jf = io.open(jspath, "w")
+      local out = nil
+      if jf then
+         jf:write(js); jf:close()
+         local p = io.popen('node "' .. jspath .. '" 2>&1')
+         out = p and p:read("*a") or nil
+         if p then p:close() end
+         os.remove(jspath)
+      end
+
+      -- Reported, never silently skipped -- same reasoning as the check above.
+      CHECK(out ~= nil, "node could run the page's own geometry mirror for real")
+      local lines = {}
+      for l in (out or ""):gmatch("[^\r\n]+") do lines[#lines + 1] = l end
+      CHECK(#lines == #cases,
+            "node produced one row per case (got " .. #lines .. "): " ..
+            tostring(out and out:sub(1, 200)))
+
+      local function near(x, want)
+         return x ~= nil and math.abs(x - want) <= 1e-12 * math.max(1, math.abs(want))
+      end
+      local function cmp(tok, want, label)
+         if want == nil then
+            CHECK(tok == "nil", label .. " (want nil, page said " .. tostring(tok) .. ")")
+         else
+            CHECK(near(tonumber(tok or ""), want),
+                  label .. " (want " .. tostring(want) .. ", page said " .. tostring(tok) .. ")")
+         end
+      end
+
+      for i, c in ipairs(cases) do
+         local toks = {}
+         for t in (lines[i] or ""):gmatch("[^,]+") do toks[#toks + 1] = t end
+         local ang = CO.half_angle(c.incl)
+         local W = CO.w_from_size(c.mode, c.size, ang)
+         local p = CO.pass_count(c.dia, W, ang)
+         local b = (p ~= nil) and CO.band_width(W, p) or W
+         local tag = c.mode .. " " .. c.size .. " " .. c.incl .. "deg " .. c.dia .. ": "
+         cmp(toks[1], W, tag .. "W")
+         cmp(toks[2], p, tag .. "pass count")
+         cmp(toks[3], b, tag .. "band width")
+         cmp(toks[4], CO.display_max_size(c.mode, c.incl, c.dia), tag .. "display max size")
+         cmp(toks[5], CO.display_min_dia(c.mode, c.size, c.incl), tag .. "display min dia")
+         if p ~= nil then
+            local s = CO.solve_band(80, c.dia, W, b, ang)
+            cmp(toks[6], s.g, tag .. "solve_band G")
+            cmp(toks[7], s.d, tag .. "solve_band D")
+            for k = 1, p do
+               local pg = CO.pass_geometry(k, p, W, s.g, ang)
+               cmp(toks[6 + 2 * k], pg.offset, tag .. "pass " .. k .. " offset")
+               cmp(toks[7 + 2 * k], pg.depth, tag .. "pass " .. k .. " depth")
+            end
+         end
+      end
+   end
 end

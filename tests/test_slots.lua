@@ -4,11 +4,11 @@
 -- job is tested in test_sdk_offset.lua against a fake job.
 local CO = EdgeBreaker
 
-CHECK(CO.OFFSET_LAYER_PREFIX == "EdgeBreaker - Offset ",
+CHECK(CO.OFFSET_LAYER_PREFIX == "EdgeBreaker Offset ",
       "layer prefix keeps its trailing space")
-CHECK(CO.offset_layer_name(1) == "EdgeBreaker - Offset 01",
-      "layer name pads to two digits")
-CHECK(CO.offset_layer_name(12) == "EdgeBreaker - Offset 12",
+CHECK(CO.offset_layer_name(1) == "EdgeBreaker Offset 01-1",
+      "layer name pads to two digits, band defaults to 1")
+CHECK(CO.offset_layer_name(12) == "EdgeBreaker Offset 12-1",
       "layer name of a two-digit slot")
 CHECK(CO.toolpath_marker(3) == "[EdgeBreaker 03]", "marker carries the padded slot")
 CHECK(CO.toolpath_name(0.06, "in", 1) == "Chamfer 0.06 in [EdgeBreaker 01]",
@@ -67,6 +67,68 @@ CHECK(CO.next_free_slot({ 1, 3 }) == 2, "a hole is filled")
 local all = {}
 for n = 1, 99 do all[n] = n end
 CHECK(CO.next_free_slot(all) == nil, "no free slot when all 99 are used")
+
+-- Layer names, v1.13.0. The band suffix costs nothing in length: dropping the
+-- " - " separator pays for "-k" exactly, and that is what keeps the template's
+-- layer restriction patchable IN PLACE.
+CHECK(#CO.offset_layer_name(1, 1) == #CO.TEMPLATE_LAYER,
+      "the banded name is exactly as long as what the template stores")
+CHECK(CO.offset_layer_name(1, 1) == "EdgeBreaker Offset 01-1", "band 1 of chamfer 1")
+CHECK(CO.offset_layer_name(7, 3) == "EdgeBreaker Offset 07-3", "band 3 of chamfer 7")
+CHECK(CO.offset_layer_name(12) == "EdgeBreaker Offset 12-1", "band defaults to 1")
+-- The boundaries, not the whole 99 x 8 grid: the name is one string.format, so
+-- its length is constant by construction and a sweep cannot fail for one pair
+-- and pass for another. These are the pairs where a format bug could show --
+-- single vs double digit slot, first vs last band.
+for _, s in ipairs({ 1, 9, 10, 99 }) do
+   for _, k in ipairs({ 1, CO.MAX_PASSES }) do
+      CHECK(#CO.offset_layer_name(s, k) == #CO.TEMPLATE_LAYER,
+            "name length holds at " .. s .. "-" .. k)
+   end
+end
+
+local s1, k1 = CO.slot_from_layer_name("EdgeBreaker Offset 04-2")
+CHECK(s1 == 4 and k1 == 2, "a banded layer parses to slot and band")
+local s2, k2 = CO.slot_from_layer_name("EdgeBreaker - Offset 04")
+CHECK(s2 == 4 and k2 == nil, "a v1.12.0 layer still parses, with no band")
+CHECK(CO.v112_slot_from_layer_name("EdgeBreaker - Offset 04") == 4, "v1.12.0 accessor")
+CHECK(CO.v112_slot_from_layer_name("EdgeBreaker Offset 04-1") == nil,
+      "the v1.12.0 accessor does not claim banded layers")
+CHECK(CO.old_slot_from_layer_name("ChamferOffset - Offset 04") == 4, "v1.4.x still parses")
+CHECK(CO.slot_from_layer_name("EdgeBreaker Offset 4-1") == nil, "slot must be two digits")
+CHECK(CO.slot_from_layer_name("EdgeBreaker Offset 04-") == nil, "a bare dash is not a band")
+CHECK(CO.slot_from_layer_name("EdgeBreaker Offset 04-12") == nil, "band is one digit")
+CHECK(CO.slot_from_layer_name("EdgeBreaker Offset 00-1") == nil, "slot 0 is not ours")
+CHECK(CO.slot_from_layer_name("My layer") == nil, "someone else's layer is not ours")
+
+-- The template patch now rewrites the WHOLE restriction, not just two digits.
+-- Same class of edit -- same length, no record resized -- and it reads back.
+local f = io.open("gadget/EdgeBreaker/EdgeBreaker.ToolpathTemplate", "rb")
+local TPL = f:read("*a"); f:close()
+local patched = CO.patch_template_layer(TPL, 7, 3)
+CHECK(patched ~= nil, "the template patches")
+CHECK(#patched == #TPL, "the patched template is the same length")
+local back = CO.read_template_layers(patched)
+CHECK(back ~= nil and #back == 1 and back[1] == "EdgeBreaker Offset 07-3",
+      "the patched restriction reads back")
+-- Nothing else moved: every other needle is still where it was.
+CHECK(CO.find_depth_offset(patched) == CO.find_depth_offset(TPL), "depth needle unmoved")
+CHECK(CO.find_start_depth_offset(patched) == CO.find_start_depth_offset(TPL),
+      "start-depth needle unmoved")
+CHECK(CO.read_machine_vectors(patched) == "on", "Machine Vectors survives the patch")
+-- Patching twice from the same source is what a multi-band run does.
+local p2 = CO.patch_template_layer(TPL, 7, 1)
+CHECK(CO.read_template_layers(p2)[1] == "EdgeBreaker Offset 07-1", "band 1 patches too")
+CHECK(CO.patch_template_layer(TPL, 0, 1) == nil, "slot 0 is refused")
+CHECK(CO.patch_template_layer(TPL, 1, 0) == nil, "band 0 is refused")
+CHECK(CO.patch_template_layer(TPL, 1, 10) == nil, "a two-digit band is refused")
+CHECK(CO.patch_template_layer(TPL, 1) == nil, "band is required, not optional")
+-- The length guard: if the prefix is ever edited to a different length the patch
+-- must REFUSE, not corrupt the file.
+local saved = CO.OFFSET_LAYER_PREFIX
+CO.OFFSET_LAYER_PREFIX = "EdgeBreaker Offsets "
+CHECK(CO.patch_template_layer(TPL, 1, 1) == nil, "a length change is refused, not written")
+CO.OFFSET_LAYER_PREFIX = saved
 
 -- Which bit a chamfer was built with lives in Aspire's tool-defaults store
 -- under a per-slot key, because a ToolDBId cannot be written to text at all.
@@ -160,3 +222,27 @@ do
    CHECK(rec2:find("|0;2|New chamfer", 1, true) ~= nil,
          "a chamfer without the tick carries sharp=0")
 end
+
+-- Toolpath names. A one-pass chamfer's name must be EXACTLY v1.12.0's -- the
+-- marker parser, the size parser and the delete pass all key on it.
+CHECK(CO.toolpath_name(0.06, "in", 1, 1, 1) == "Chamfer 0.06 in [EdgeBreaker 01]",
+      "a single-pass name carries no pass suffix")
+CHECK(CO.toolpath_name(0.06, "in", 1) == "Chamfer 0.06 in [EdgeBreaker 01]",
+      "and neither does one with no pass count at all")
+CHECK(CO.toolpath_name(0.25, "in", 1, 2, 3) == "Chamfer 0.25 in [EdgeBreaker 01] pass 2 of 3",
+      "a multi-pass name reads in cut order")
+-- The marker still parses with text after it -- this is what makes one rebuild
+-- take the whole set.
+CHECK(CO.slot_from_toolpath_name("Chamfer 0.25 in [EdgeBreaker 07] pass 2 of 3") == 7,
+      "the slot parses out of a multi-pass name")
+CHECK(CO.size_text_from_toolpath_name("Chamfer 0.25 in [EdgeBreaker 07] pass 2 of 3")
+      == "0.25 in", "and so does the size, for the dropdown label")
+
+-- The sign rule. An outward loop (a part's outline) takes the offset as given;
+-- an inward loop (a pocket) takes it mirrored, because its waste is on the other
+-- side. Upper bands therefore push INTO the material on an outer boundary and
+-- OUT into the material on a pocket -- both are "toward the part".
+NEAR(CO.band_offset_distance("outward", 0.02), 0.02, 1e-12, "outward final pass")
+NEAR(CO.band_offset_distance("inward", 0.02), -0.02, 1e-12, "inward final pass")
+NEAR(CO.band_offset_distance("outward", -0.08), -0.08, 1e-12, "outward upper pass")
+NEAR(CO.band_offset_distance("inward", -0.08), 0.08, 1e-12, "inward upper pass")

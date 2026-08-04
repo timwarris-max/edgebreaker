@@ -192,6 +192,8 @@ input[type=radio] { zoom: 2.5; }
    to cut safely. Before a bit or a size is entered nothing is wrong yet. */
 #BlockMsg.wait { color: #5a6672; }
 #DepthWarn { color: #b00000; font-size: 24px; margin: 10px 0 4px 0; }
+/* Amber, not red: this is a fact about the cut, not a warning about it. */
+#PassNote { color: #7a5200; font-size: 24px; margin: 8px 0 4px 0; }
 #HiddenNoteRow { font-size: 22px; color: #b00000; margin-bottom: 12px; }
 #HelpLink { color: #0066cc; cursor: pointer; text-decoration: underline; font-size: 25px; }
 #HelpBody { display: none; border: 1px solid #e0d6a8; background: #fffbe6;
@@ -201,7 +203,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.12.0</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.13.0</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -239,8 +241,8 @@ input[type=radio] { zoom: 2.5; }
           <label><input type="radio" name="SideRadio" value="outside"> Outside</label>
           <label><input type="radio" name="SideRadio" value="inside"> Inside</label>
         </span>
-        <label id="SharpWrap"><input type="checkbox" id="SharpBox"> Sharp inside corners</label>
-        <span class="modecap" id="SharpCap">needs Side: Inside</span>
+        <label id="SharpWrap"><input type="checkbox" id="SharpBox"> Sharp corners</label>
+        <span class="modecap" id="SharpCap">needs a smaller chamfer, or a bigger bit</span>
       </div>
       <!-- Named for what it holds, not "Help": the button in the bar is now the
            Help, and two controls called Help on one dialog would mean two
@@ -289,9 +291,14 @@ input[type=radio] { zoom: 2.5; }
           &mdash; right when you select an outline together with its holes. It cannot
           recognize a pocket edge or a hole selected on its own: pick <b>Inside</b> for those.
           <b>Outside</b> forces every selected vector to chamfer on its outer side.<br><br>
-          <b>Sharp inside corners:</b> only with Side set to <b>Inside</b>. The bit rises
+          <b>Sharp corners:</b> works on any side, as long as the cut stays inside the
+          bit's cutting edge. The bit rises
           into each corner so the two edges meet in a point instead of a round. The corner
-          moves cut nearer the tip than your chosen position &mdash; that's the only way in.<br><br>
+          moves cut nearer the tip than your chosen position &mdash; that's the only way in.
+          On an outside chamfer the guide line is drawn inside the shape, so anything
+          narrower than two chamfers gets skipped. If you've selected shapes that sit inside
+          other shapes &mdash; letters with counters &mdash; leave Side on <b>Auto</b>:
+          forcing a side can't sharpen those.<br><br>
           <b>Start depth:</b> how far <b>below the top of the stock</b> the edge sits &mdash;
           a pocket floor, a second level, a skimmed top. Leave it at <b>0</b> for an edge at
           the top, which is the usual case. It does not change the chamfer itself, only how
@@ -316,8 +323,9 @@ input[type=radio] { zoom: 2.5; }
           &mdash; that vector is <i>skipped</i> rather than approximated, and the summary at
           the end says how many. The skipped ones are the vectors with no orange offset beside
           them.<br><br>
-          Each chamfer owns a layer <b>EdgeBreaker - Offset 01</b>, <b>02</b>, &hellip; and a
-          toolpath tagged <b>[EdgeBreaker 01]</b>, <b>02</b>, &hellip;. A run clears and
+          Each chamfer owns a layer per pass, <b>EdgeBreaker Offset 01-1</b>,
+          <b>01-2</b>, &hellip; and a toolpath tagged <b>[EdgeBreaker 01]</b>,
+          <b>02</b>, &hellip;. A run clears and
           rebuilds only its own number. Gadget deletions cannot be undone &mdash; never keep
           your own work on one of those layers. To keep a chamfer toolpath for good, rename it
           so the tag is gone and the gadget will leave it alone forever.
@@ -336,6 +344,7 @@ input[type=radio] { zoom: 2.5; }
              class="seg" data-pct="100"><span class="p">100%</span><span class="d">&nbsp;</span></div>
       </div>
       <div id="DepthWarn" style="display:none"></div>
+      <div id="PassNote" style="display:none"></div>
       <div id="ChartWrap">
         <div id="BlockMsg"></div>
         <!-- overflow="hidden" is LOAD-BEARING, not tidiness. Trident paints SVG
@@ -568,11 +577,118 @@ function safeBand(dia, W, a){
   var r=dia/2;
   return { g_lo: TIP_MARGIN*r, g_hi: SHOULDER_MARGIN*r - W, d_max: r/Math.tan(a) };
 }
+
+// The highest preset cut position that still sharpens, or null if none does.
+// Same rule as CO.sharp_max_percent: sharpening needs W + g <= r, the bit angle
+// cancels. Kept a derivation, not a table -- an inlined answer is how the two
+// copies drift apart without either looking wrong on its own.
+function sharpMaxPercent(dia, W, b, a){
+  var sb = safeBand(dia, b, a);
+  var room = dia / 2 - W;
+  if (sb.g_lo > room) return null;
+  var best = null;
+  for (var i = 0; i < PRESETS.length; i++) {
+    var g = sb.g_lo + (PRESETS[i] / 100) * (sb.g_hi - sb.g_lo);
+    if (g <= room && (best === null || PRESETS[i] > best)) best = PRESETS[i];
+  }
+  return best;
+}
 function solve(percent, dia, W, a){
   var band=safeBand(dia,W,a);
   var g=band.g_lo + (percent/100)*(band.g_hi-band.g_lo);
   var d=(W+g)/Math.tan(a);
   return { g: g, d: d, band_lo: g/Math.tan(a), band_hi: d, standoff: g };
+}
+
+// Multi-pass. A faithful copy of CO.pass_count / CO.band_width /
+// CO.pass_geometry / CO.solve_band in EdgeBreaker.lua -- there is no way for
+// this page to call Lua, so the two implementations are pinned equal by the
+// source check in tests/test_release.lua and by the layout gate's numbers.
+// MAX_PASSES and FIT_EPS must stay in step with CO.MAX_PASSES / CO.FIT_EPS.
+var MAX_PASSES = 8;
+// A band that exactly fills the usable flute counts as fitting. Without the
+// tolerance the answer is decided by ~1e-18 of double rounding, whose sign
+// changes from bit to bit -- see CO.FIT_EPS in EdgeBreaker.lua.
+var FIT_EPS = 1e-9;
+function bandWidth(W, n){ return W / n; }
+function passCount(dia, W, a){
+  for (var n = 1; n <= MAX_PASSES; n++){
+    var b = safeBand(dia, bandWidth(W, n), a);
+    if (b.g_hi > b.g_lo - FIT_EPS) return n;
+  }
+  return null;
+}
+// The apex of every pass lies ON the chamfer face; k is the only free
+// parameter. Upper passes have a NEGATIVE offset -- the tool axis is over the
+// part with its tip buried at the band boundary.
+function passGeometry(k, n, W, G, a){
+  if (k === n) return { offset: G, depth: (W + G) / Math.tan(a) };
+  var q = k * bandWidth(W, n) - W;
+  return { offset: q, depth: (q + W) / Math.tan(a) };
+}
+// G comes from the BAND (flute contact spans G..G+b); the depth comes from the
+// WHOLE chamfer, because the final apex sits on the face at x = G. Identical at
+// b === W, which is why v1.12.0 could use solve's own d.
+function solveBand(percent, dia, W, b, a){
+  var s = solve(percent, dia, b, a);
+  s.d = (W + s.g) / Math.tan(a);
+  s.band_hi = s.d;
+  return s;
+}
+
+// The capacity figures the too-big message quotes. Copies of CO.floor4 /
+// CO.ceil4 / CO.capacity_fraction / CO.size_from_w / CO.display_max_size /
+// CO.display_min_dia -- same faithful-mirror rule as the block above.
+//
+// These round in a FIXED direction, never to nearest: the stated maximum must
+// be a size that is actually accepted if the user types it back in, and the
+// suggested diameter must be a bit that actually works. The 1e-9 absorbs binary
+// representation error without reaching any difference a person could measure.
+function floor4(x){ return Math.floor(x * 10000 + 1e-9) / 10000; }
+function ceil4(x){ return Math.ceil(x * 10000 - 1e-9) / 10000; }
+// Derived from the two margins on purpose: hardcoding the 0.75 would let a
+// margin change leave the message lying.
+function capacityFraction(){ return SHOULDER_MARGIN - TIP_MARGIN; }
+// The inverse of wFromSize. "No answer" is null, never 0 and never NaN, and
+// every caller tests !== null rather than falsiness -- 0 is falsy in JS and is
+// a value these functions legitimately reject, so a truthiness test would
+// conflate "no answer" with "zero".
+function sizeFromW(mode, W, a){
+  if (mode === "setback") return W;
+  var k;
+  if (mode === "face")     k = Math.sin(a);
+  else if (mode === "leg") k = Math.tan(a);
+  else return null;
+  if (k !== k || k <= 1e-9) return null;
+  return W / k;
+}
+// The biggest chamfer this bit can cut within the pass ceiling, in the mode the
+// user is typing in, as a number they can actually type back in. The check
+// before returning is not a formality -- it is the promise this function makes,
+// and it returns null rather than print a maximum the gadget would refuse.
+function displayMaxSize(mode, inclDeg, dia){
+  if (typeof dia !== "number" || dia !== dia || dia <= 0) return null;
+  var a = halfAngle(inclDeg);
+  var raw = sizeFromW(mode, MAX_PASSES * capacityFraction() * (dia / 2), a);
+  if (raw === null || raw === undefined || raw !== raw || raw <= 0) return null;
+  var s = floor4(raw);
+  if (s <= 0) return null;
+  if (passCount(dia, wFromSize(mode, s, a), a) === null) return null;
+  return s;
+}
+// The smallest bit that could cut the size they asked for within the ceiling.
+// Ceiled, for the mirror-image reason the maximum is floored: a bit rounded
+// DOWN is a bit that does not work. Same promise, same check before returning.
+function displayMinDia(mode, size, inclDeg){
+  if (typeof size !== "number" || size !== size || size <= 0) return null;
+  var a = halfAngle(inclDeg);
+  var W = wFromSize(mode, size, a);
+  if (W === null || W === undefined || W !== W || W <= 0) return null;
+  if (sizeFromW(mode, W, a) === null) return null;
+  var raw = W / (MAX_PASSES * capacityFraction()) * 2;
+  var d = ceil4(raw);
+  if (passCount(d, W, a) === null) return null;
+  return d;
 }
 
 var UNIT = "in";   // replaced by the Units field when Lua drives the dialog
@@ -583,6 +699,25 @@ var UNIT = "in";   // replaced by the Units field when Lua drives the dialog
 var currentAngle = 0, currentDia = 0, haveBit = false;
 var currentMode = "setback";
 var currentPercent = 80;
+// Three states, and the difference between two of them is load-bearing:
+//   "unknown" -- no bit, no size, or a chamfer the product refuses outright
+//   null      -- known, and NO cut position can sharpen this chamfer
+//   a number  -- the highest preset cut position that still sharpens
+// An unknown must never grey the box; only a known impossible may.
+var currentSharpMax = "unknown";
+// The percent a sharpen-forced drop moved AWAY from, so unticking can put it
+// back. null means either nothing has been dropped, or a drop's restore was
+// already used -- both read the same way: there is nothing to give back.
+var sharpRestorePercent = null;
+// True while a redraw is running because the operator CLICKED a cut position,
+// as opposed to a redraw the page ran for itself. Which one it is decides
+// whose value a drop remembers -- see the ceiling-drop check in redraw().
+var percentFromClick = false;
+// True when the PAGE unticked the box (no cut position could sharpen the
+// chamfer any more), so it knows to tick it back on when sharpening becomes
+// possible again. A tick the OPERATOR removed clears this and is never given
+// back: the gadget only ever undoes its own doing.
+var sharpAutoUnticked = false;
 var stockThickness = NaN;   // from Lua; NaN means the job did not say
 var startDepth = 0;   // how far below the stock top the edge sits; 0 = at the top
 
@@ -763,6 +898,15 @@ function initChamfers() {
 // way opening on that chamfer would have. Empty seeds mean "no memory": the
 // form is left exactly as it is rather than reset to arbitrary defaults.
 function seedFrom(rec) {
+  // A drop's restore point belongs to the chamfer it was dropped FROM. Without
+  // this, switching chamfers while one is mid-drop leaks its remembered
+  // percent into the next one, and unticking there would hand back a position
+  // that chamfer never had -- the one case where "the operator's own choice
+  // comes back" would be false again. The auto-untick goes with it, for the
+  // same reason: a tick the page removed on one chamfer must not reappear on
+  // another the operator never ticked.
+  sharpRestorePercent = null;
+  sharpAutoUnticked = false;
   if (!rec) return;
   if (rec.size !== "") {
     el("Size").value = rec.size;
@@ -881,10 +1025,14 @@ function initModeRadios() {
   }
 }
 
+// redraw(), not applySharpState() alone: flipping to Inside with Sharp already
+// ticked (remembered from another chamfer) can be the very moment a position
+// stops fitting, and only redraw() runs the ceiling-drop check that catches
+// that -- applySharpState() only greys/ungreys, it never moves anything.
 function initSideRadios() {
   var radios = document.getElementsByName("SideRadio");
   for (var i = 0; i < radios.length; i++) {
-    radios[i].onclick = function () { el("Side").value = this.value; applySharpState(); };
+    radios[i].onclick = function () { el("Side").value = this.value; redraw(); };
   }
 }
 function applySideDefault() {
@@ -894,33 +1042,90 @@ function applySideDefault() {
   applySharpState();
 }
 
-// The checkbox is live exactly when Side = Inside -- the dropdown is the
-// detector (spec 5). Greying is UX; Lua applies sharp only when side ==
-// "inside" whatever the Sharp field says, so a tick set while greyed is
-// harmless and survives flipping Side away and back.
+// The checkbox is live exactly when this chamfer can be sharpened at some cut
+// position. Greying is UX -- CO.sharp_applies and CO.sharp_nesting_ok are the
+// real gates and refuse whatever this field says -- but it is also the only
+// warning the operator gets before Aspire fails the run half way through, so
+// when sharpening is impossible the box unticks as well as greys: a ticked box
+// the run will ignore states something untrue about the cut.
+//
+// The SIDE is deliberately not tested here any more (2026-08-03). Auto
+// sharpens -- it is the only side that CAN sharpen a letter set, because a
+// letter set contains both directions at once. What a forced side cannot do is
+// sharpen a NESTED selection, and this page cannot know whether the selection
+// nests: the dialog is shown before the loops are ever read. That refusal is
+// reported after the run, the same way shapes too narrow to chamfer are.
+//
+// The old sharpSideOk helper is deleted with it. It held one copy of the side
+// test for three readers; there is no side test left to hold.
 function applySharpState() {
   var box = el("SharpBox");
   if (!box) return;
-  var live = el("Side").value === "inside";
+  // Only a KNOWN impossible greys the box. "unknown" leaves it alone.
+  var live = currentSharpMax !== null;
+  // Remembered, so redraw() can tick it back on if sharpening becomes possible
+  // again -- and hand back the cut position the tick had moved.
+  if (!live && el("Sharp").value === "1") {
+    el("Sharp").value = "0";
+    sharpAutoUnticked = true;
+  }
   box.disabled = !live;
   el("SharpWrap").className = live ? "" : "off";
+  // The depth ceiling is the only reason left to grey. Both remedies for it are
+  // real and the README names both, so this does too -- one place saying
+  // "smaller chamfer" and another "bigger bit" reads as two different rules.
+  // This string is pinned by a source check in tests/test_release.lua; reword it
+  // there too.
+  el("SharpCap").innerHTML = "needs a smaller chamfer, or a bigger bit";
   el("SharpCap").style.display = live ? "none" : "";
   box.checked = el("Sharp").value === "1";
 }
+// The click itself must run redraw(), not just set the field: redraw() is
+// where the ceiling-drop check lives, and without it a tick is a silent no-op
+// on the very run that motivated this whole feature -- the box lights up, the
+// position stays wherever it was, and CO.sharp_applies then refuses the
+// too-deep pass with nobody told. Unticking restores whatever position a drop
+// most recently moved AWAY from, so the operator's own choice really does
+// come back rather than just being asserted in a comment.
 function initSharp() {
   el("SharpBox").onclick = function () {
     el("Sharp").value = this.checked ? "1" : "0";
+    // The operator has spoken, so the page's own record of having unticked the
+    // box is void either way: it must never tick back on something they turned
+    // off, and there is nothing to give back on a tick they made themselves.
+    sharpAutoUnticked = false;
+    if (!this.checked && sharpRestorePercent !== null) {
+      var restore = sharpRestorePercent;
+      sharpRestorePercent = null;
+      selectPreset(restore);        // selectPreset redraws
+    } else {
+      redraw();
+    }
   };
+}
+
+// Move the cut position exactly as a button click would: same field, same
+// highlight, same redraw. Extracted so the sharpen-ceiling in redraw() can
+// move the position itself, visibly, rather than a click being the only way
+// in.
+function selectPreset(percent, fromClick) {
+  currentPercent = percent;
+  el("Percent").value = currentPercent;
+  applyPresetSelection();
+  // Tell redraw() whose move this was. A drop caused by the operator's own
+  // click has to remember THAT value as the one to hand back; a drop the page
+  // caused for itself must not touch what is already remembered. Cleared as
+  // soon as the redraw it belongs to is over, so no later redraw inherits it.
+  percentFromClick = !!fromClick;
+  redraw();
+  percentFromClick = false;
 }
 
 function initPresets() {
   var segs = document.getElementsByClassName("seg");
   for (var i = 0; i < segs.length; i++) {
     segs[i].onclick = function() {
-      currentPercent = parseFloat(this.getAttribute("data-pct"));
-      el("Percent").value = currentPercent;
-      applyPresetSelection();
-      redraw();
+      selectPreset(parseFloat(this.getAttribute("data-pct")), true);
     };
   }
 }
@@ -946,7 +1151,7 @@ function svgText(x, y, size, fill, str, anchor) {
 // the picture and says nothing, and that is the common case. The hatched block
 // means "the material"; the depth-vs-stock question belongs to #DepthWarn above.
 var XE = 380, YT = 44, YB = 132, XL = 20;   // stock corner / block
-function drawSection(W, D, G, ang, S, refD, refG, dia, minD) {
+function drawSection(W, D, G, ang, S, refD, refG, dia, minD, passes) {
   var svg = el("SecG");
   while (svg.firstChild) svg.removeChild(svg.firstChild);
 
@@ -1118,6 +1323,49 @@ function drawSection(W, D, G, ang, S, refD, refG, dia, minD) {
   svg.appendChild(svgEl("line", { x1: XE, y1: YS + v, x2: tipX, y2: tipY,
                                   stroke: "#2f9e4f", "stroke-width": 3, "stroke-dasharray": "3,3" }));
   svg.appendChild(svgText(tipX + 10, tipY + 26, 22, "#2f9e4f", "G " + fnum(G) + " " + UNIT));
+  // The earlier passes, ghosted. The pass count is the one genuinely new fact
+  // this feature creates: a drawing showing a single pass would be quietly
+  // misleading, and N equal-weight outlines would make the picture about the
+  // tool rather than about the chamfer.
+  //
+  // Only the WASTE-side flank of each upper pass is drawn. Its part-side flank
+  // lies exactly along the chamfer face -- every pass's does, that is the whole
+  // geometry -- so drawing it would just re-ink the orange line.
+  //
+  // Bounded by construction, which is why this cannot overflow: the flank
+  // reaches the surface at XE + k*(2q + W), and q <= -bandW for every upper
+  // pass, so the endpoint stays inside XE +/- w, and w <= 110 already.
+  // DASHED, and that is not decoration. Drawn solid at 0.35 the flanks are thin
+  // diagonals of about the weight and angle of the stock hatching, sitting in
+  // the air the chamfer has just REMOVED -- so at six and eight passes the waste
+  // triangle fills with parallel lines and reads as solid material, the exact
+  // opposite of the truth. Found by rendering it and looking, not by the gate,
+  // which cannot fail on ink that fits. Dashed and a shade stronger, they read
+  // as tool positions against the solid hatch.
+  if (passes > 1) {
+    // The seams are evenly spaced along the face, one band apart, so the whole
+    // face length divided by the pass count IS the gap between rings. At eight
+    // passes that gap closes to about the ring's own width and the chain of
+    // rings reads as a dashed orange line rather than as marks on a face, so
+    // the ring shrinks to keep them apart. Capped at 3.5, so the counts an
+    // operator actually cuts are drawn exactly as before.
+    var seamGap = Math.sqrt(w * w + v * v) / passes;
+    var sr = Math.min(3.5, seamGap / 4);
+    for (var pk = 1; pk < passes; pk++) {
+      var pg = passGeometry(pk, passes, W, G, a);
+      var px = XE + pg.offset * k, py = YS + pg.depth * k;
+      svg.appendChild(svgEl("line", {
+        x1: px, y1: py, x2: px + (py - YS) * Math.tan(a), y2: YS,
+        stroke: "#4c6ef5", "stroke-width": 2, opacity: 0.5,
+        "stroke-dasharray": "6,5" }));
+      // The seam: where this pass's tip sits ON the finished face. There are
+      // passes-1 of them, never passes -- the final pass's tip is out in the
+      // waste, clear of the face, and leaves no mark.
+      svg.appendChild(svgEl("circle", {
+        cx: px, cy: py, r: sr, fill: "#fff", stroke: "#f76707",
+        "stroke-width": sr >= 3 ? 2 : 1.5 }));
+    }
+  }
   return true;
 }
 
@@ -1358,32 +1606,119 @@ function redraw() {
                                  : "Choose a bit to see the cut.";
     chart.style.display = "none";
     depthWarn.innerHTML = ""; depthWarn.style.display = "none";
+    // Clear the note the same way the depth warning is cleared: a 3-pass note
+    // left standing after the size is deleted describes a cut nobody asked for.
+    el("PassNote").innerHTML = ""; el("PassNote").style.display = "none";
     for (var q = 0; q < segs.length; q++) segs[q].children[1].innerHTML = "&nbsp;";
     setSummary("—");
     el("SecWrap").style.display = "none";
+    currentSharpMax = "unknown"; applySharpState();
     return;
   }
 
   var a = halfAngle(currentAngle);
   var W = wFromSize(currentMode, size, a);
-  var band = safeBand(currentDia, W, a);
-  var ok = band.g_hi > band.g_lo;
+  var passes = passCount(currentDia, W, a);
+  var bw = (passes !== null) ? bandWidth(W, passes) : W;
+  var ok = passes !== null;
+  currentSharpMax = sharpMaxPercent(currentDia, W, bw, a);
 
   if (!ok) {
     blockMsg.style.display = "block";
     blockMsg.className = "";
-    blockMsg.innerHTML = "Chamfer too big for a safe cut with this bit: it would force the " +
-      "cut onto the tip or the shoulder. Use a larger bit or a smaller chamfer.";
+    // Same sentence the Lua writes (CO.too_big_message). Only reachable past
+    // MAX_PASSES now -- multi-pass absorbs everything below it.
+    var maxSize = displayMaxSize(currentMode, currentAngle, currentDia);
+    var minDia = displayMinDia(currentMode, size, currentAngle);
+    blockMsg.innerHTML = (maxSize !== null && minDia !== null)
+      ? ("Too big for this bit, even in " + MAX_PASSES + " passes. The most it'll take " +
+         "off is " + fnum(maxSize) + ". A " + fnum(minDia) + " bit would do the " +
+         fnum(size) + " you asked for.")
+      : ("Chamfer too big for a safe cut with this bit, even in " + MAX_PASSES +
+         " passes. Use a larger bit or a smaller chamfer.");
     chart.style.display = "none";
     depthWarn.innerHTML = ""; depthWarn.style.display = "none";
+    el("PassNote").innerHTML = ""; el("PassNote").style.display = "none";
     for (var q2 = 0; q2 < segs.length; q2++) segs[q2].children[1].innerHTML = "&nbsp;";
     setSummary(el("Size").value);
     el("SecWrap").style.display = "none";
+    currentSharpMax = "unknown"; applySharpState();
     return;
   }
+
+  // Sharpening on the operator's behalf, both ways round. applySharpState()
+  // unticks the box when no cut position can sharpen this chamfer any more --
+  // and when it does, the position that tick had dropped comes back with it,
+  // or they are left cutting somewhere they never chose for a reason that no
+  // longer exists. When sharpening becomes possible again the tick comes back
+  // too, and the drop below re-applies. Whatever the gadget takes on your
+  // behalf, it gives back on your behalf; a tick the OPERATOR removed clears
+  // the flag in initSharp and is never given back.
+  applySharpState();
+  if (sharpAutoUnticked && typeof currentSharpMax === "number") {
+    sharpAutoUnticked = false;
+    el("Sharp").value = "1";
+  } else if (sharpAutoUnticked && sharpRestorePercent !== null) {
+    var giveBack = sharpRestorePercent;
+    sharpRestorePercent = null;
+    selectPreset(giveBack);
+    return;                     // selectPreset redraws; do not draw twice
+  }
+
+  // The cut position gives way to the corner: sharpening dies as the position
+  // rises, and the window where a multi-pass chamfer can still be sharpened
+  // only exists near the bottom of the range. Moving the position is visible
+  // (the note below says so) and reversible -- untick (initSharp), and the
+  // operator's own choice comes back -- which is the bar for doing something
+  // on their behalf. What gets remembered is their LAST REAL CHOICE: a click
+  // that gets dropped remembers the button they just pressed, and any other
+  // drop -- a size change while still ticked -- leaves whatever is already
+  // remembered alone rather than overwriting it with an already-dropped value.
+  if (el("Sharp").value === "1" &&
+      typeof currentSharpMax === "number" &&
+      Number(el("Percent").value) > currentSharpMax) {
+    if (percentFromClick || sharpRestorePercent === null)
+      sharpRestorePercent = currentPercent;
+    selectPreset(currentSharpMax);
+    return;                     // selectPreset redraws; do not draw twice
+  }
+  // A click that is NOT dropped is the operator choosing freely, so there is
+  // nothing left to hand back. Clearing it also keeps the note below honest:
+  // a stale restore point would have it claim a drop that is not in force.
+  if (percentFromClick) sharpRestorePercent = null;
+
   blockMsg.style.display = "none";
   chart.style.display = "block";
   el("SecWrap").style.display = "";
+  // What multi-pass means, in the two facts the operator can act on: how many
+  // passes, and that the band boundaries may show. Silent at one pass -- that
+  // is today's dialog, unchanged.
+  var pn = el("PassNote"), notes = [];
+  // The drop moved a control the operator can see, and nothing else on the
+  // page would say why. It goes here, beside the cut position it moved --
+  // not beside the checkbox that caused it, which is a column away.
+  if (el("Sharp").value === "1" &&
+      sharpRestorePercent !== null) {
+    notes.push("Dropped to " + currentPercent + "% so the corners can be sharp. " +
+               "Untick <b>Sharp corners</b> to go back to " +
+               sharpRestorePercent + "%.");
+  }
+  if (passes > 1) {
+    // The pronoun has to follow the count the same way the noun does: two
+    // passes leaves exactly one seam, and "1 faint line ... they sand out"
+    // does not agree in number.
+    var seams = passes - 1;
+    notes.push(passes + " passes, " + fnum(bw) + " " + UNIT + " of flute each. " +
+      "You may see " + seams + (seams > 1 ? " faint lines on the face &mdash; they sand out. "
+                                          : " faint line on the face &mdash; it sands out. ") +
+      "A bigger bit would do it in one.");
+  }
+  if (notes.length) {
+    pn.innerHTML = notes.join("<br>");
+    pn.style.display = "block";
+  } else {
+    pn.innerHTML = ""; pn.style.display = "none";
+  }
 
   // Flute schematic (tip apex bottom -> shoulder top), same layout as the
   // agreed brainstorm mockup (flute-percentage-5.html), scaled 0-100% across
@@ -1422,7 +1757,7 @@ function redraw() {
   var ROW0 = 44, ROWH = 39, LEADX = 440;
   for (var i = 0; i < PRESETS.length; i++) {
     var p = PRESETS[i];
-    var s = solve(p, currentDia, W, a);
+    var s = solveBand(p, currentDia, W, bw, a);
     rows.push({ p: p, d: s.d });
     // Each cut-position button carries its own depth: the choice is made on
     // the number that ends up on the toolpath, not on a percentage.
@@ -1464,7 +1799,7 @@ function redraw() {
   // The same numbers the caption above just quoted, drawn. `selected` is
   // resolved in the preset loop and is what the toolpath will actually cut.
   var drew = drawSection(W, selected.d, selected.g, currentAngle, startDepth,
-                         deepest.d, deepest.g, currentDia, shallowest.d);
+                         deepest.d, deepest.g, currentDia, shallowest.d, passes);
   // Only when there is a choice to explain. At 90 deg setback and leg are the
   // same quantity, updateModeVisibility() hides the row and forces setback, and
   // an inset would be answering a question nobody asked.
@@ -1476,6 +1811,7 @@ function redraw() {
   depthWarn.innerHTML = msg;
   depthWarn.style.display = msg ? "block" : "none";
   setSummary(el("Size").value);
+  applySharpState();
 }
 
 var attempts = 0;
