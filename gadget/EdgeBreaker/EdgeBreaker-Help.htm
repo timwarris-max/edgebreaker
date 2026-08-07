@@ -71,7 +71,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </head>
 <body>
 <header>
-  <div class="name">EdgeBreaker<span class="ver">v1.14.0</span></div>
+  <div class="name">EdgeBreaker<span class="ver">v1.14.1</span></div>
   <div class="sub">Help &mdash; works offline</div>
 </header>
 <main>
@@ -160,11 +160,12 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <p>A chamfer's corners normally come out rounded — at one depth, the bit can only get so far into a corner. Tick <strong>Sharp corners</strong> and the bit rises as it drives into each corner, so the two edges meet in a crisp point.</p>
 <p>There's a depth limit on it: the machine won't sharpen deeper than the bit's cutting edge. If your chamfer is close to that, EdgeBreaker drops the cut position lower to make it fit — and says so under the cut position buttons. Too big for even that and the box greys out: use a smaller chamfer, or a bigger bit.</p>
 <ul>
-<li>It works on any Chamfer side up to the point where the bit runs out — past that, big chamfers always cut on the material side and the Side buttons grey out. And if you've selected shapes that sit inside other shapes — letters with counters, a part with holes — leave Side on <strong>Auto</strong> anyway. Forcing a side can't sharpen those, and it'll tell you so.</li>
+<li>It works on any Chamfer side. Past the point where the bit runs out, Aspire's own chamfer engine takes over, and if you've picked shapes that sit inside other shapes — letters with counters, a part with holes — it works out each side for itself and the Side buttons grey out. Pick shapes with nothing inside each other and Side is yours as usual.</li>
+<li><strong>Chamfering a pocket? Set Side to Inside.</strong> A pocket and a raised shape look the same to EdgeBreaker — one closed line either way — so Auto assumes the material is <em>inside</em> your line. Right for letters and islands, wrong for a hole. If a chamfer comes out with a step in it, that's the first thing to check.</li>
 <li>Raised letters are one chamfer now: select the lot, leave Side on <strong>Auto</strong>, tick the box. It works out which way each shape goes — outward round the outlines, inward into the counters — and the corners come out sharp on both.</li>
 <li>Two chamfers is still how you do it when you want the outlines and the counters cut <em>differently</em>. It's a choice now, not a workaround.</li>
 <li>On an <strong>Outside</strong> chamfer the guide line is drawn inside the shape, so anything narrower than two chamfers gets skipped and counted with the other too-narrow ones. Go smaller and it fits.</li>
-<li>Each chamfer remembers its own setting, so a rebuild keeps what you chose.</li>
+<li>Each chamfer remembers its own setting, so a rebuild keeps what you chose — whether you select its shapes or rebuild with nothing selected. The one time it can't is when the shapes sit inside each other, like an outline and its hole: Aspire picks the side there, and the run tells you when that happens.</li>
 <li>The corner moves cut closer to the bit's tip than the position you picked — that's the only way into a corner, and it's a tiny share of the cut.</li>
 <li>The orange line sits a touch over on the material side of your edge on purpose: that's the line the machine steers by, not the cut. The cut still lands exactly where it always does.</li>
 </ul>

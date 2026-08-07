@@ -47,7 +47,7 @@ CO.FIT_EPS = 1e-9
 
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.14.0"
+CO.VERSION         = "1.14.1"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -972,6 +972,90 @@ function CO.resolve_directions(loops, side)
    return CO.classify_directions(loops)
 end
 
+-- Is this selection FLAT -- nothing inside anything else? (2026-08-07,
+-- side-on-flat-selections spec section 3b.)
+--
+-- This is what decides whether a forced Side survives onto the aspire path.
+-- Aspire's chamfer engine reads each loop's side off the NESTING, so an
+-- override contradicts it wherever there IS nesting -- that is the step S5
+-- measured. Where there is none, nothing is contradicted: a lone closed loop
+-- is a pocket or an island and the geometry does not say which, so the
+-- operator is the only source of the answer.
+--
+-- BOUNDING BOXES, not contours, and the reason is not speed. Box containment
+-- is NECESSARY for real nesting (loop_inside tests the box first and only then
+-- the point), so "no box contains another" PROVES nothing is nested -- the one
+-- direction this answer is relied on for. The converse is false: two
+-- interlocking L-shapes have overlapping boxes and no nesting, and get called
+-- not-flat. That greys a control that could have been live, which is the
+-- harmless way to be wrong. Boxes also mean this can be answered BEFORE the
+-- dialog without reading any geometry, which is what lets one value serve both
+-- the greying and the cut (spec section 3).
+--
+-- An empty list is FALSE, not vacuously true: with nothing to measure there is
+-- no evidence of flatness, and the harmless direction is to grey. Telling that
+-- apart from a measured nesting is CO.flat_field's job, not this one's -- the
+-- Side row greys for both, but the caption has to say which (spec section 10f).
+function CO.selection_is_flat(bboxes)
+   if type(bboxes) ~= "table" or #bboxes == 0 then return false end
+   for i, a in ipairs(bboxes) do
+      for k, b in ipairs(bboxes) do
+         if k ~= i
+            and a.cx - a.xlen / 2 >= b.cx - b.xlen / 2
+            and a.cy - a.ylen / 2 >= b.cy - b.ylen / 2
+            and a.cx + a.xlen / 2 <= b.cx + b.xlen / 2
+            and a.cy + a.ylen / 2 <= b.cy + b.ylen / 2 then
+            return false
+         end
+      end
+   end
+   return true
+end
+
+-- WHICH boxes this run's flatness is measured on (2026-08-07,
+-- side-on-flat-selections spec section 10c): the shapes the run will actually
+-- cut. That is the selection when there is one, and otherwise the shapes the
+-- target chamfer remembers.
+--
+-- Spec section 3c used to accept that a recall run could not be answered, on the
+-- grounds that resolving its geometry before the dialog would mean rewriting the
+-- live Selection and a Cancel would then destroy the operator's own. That cost
+-- is real and this does not pay it: a chamfer's memory already stores its shapes
+-- as BOUNDING BOXES (see mem.fps), which is exactly what selection_is_flat
+-- consumes. Nothing is read, resolved or selected.
+--
+-- The consequence is not cosmetic. A recall run whose side was dropped had
+-- already been answered -- the operator picked Inside and the gadget wrote it
+-- into memory -- and then cut the other side of every wall.
+function CO.flatness_fps(sel_fps, mem_fps)
+   if type(sel_fps) == "table" and #sel_fps > 0 then return sel_fps end
+   if type(mem_fps) == "table" and #mem_fps > 0 then return mem_fps end
+   return {}
+end
+
+-- The run's flatness as the single value both the greying and the cut read
+-- (spec section 10f). Three-valued on purpose:
+--
+--   "1"   measured flat    -- Side row live, a forced side is honoured
+--   "0"   measured nested  -- greyed, and the caption says nesting
+--   ""    nothing to measure -- greyed, and the caption says so instead
+--
+-- Two states would be enough to decide the GREYING and are not enough to
+-- explain it. The page used to infer the reason from the selection count, which
+-- was a true equivalence until this spec's amendment measured flatness over
+-- something other than the selection; a recall run whose remembered shapes nest
+-- would then have been told "nothing selected", which is the same class of
+-- untruth session 094 removed, arriving from the other end.
+--
+-- The fail-safe is unchanged and load-bearing: the page treats anything that is
+-- not exactly "1" as not-flat, so a field that fails to land at all -- a
+-- measured Aspire failure mode -- greys, rather than offering a control the run
+-- would then ignore.
+function CO.flat_field(fps)
+   if type(fps) ~= "table" or #fps == 0 then return "" end
+   return CO.selection_is_flat(fps) and "1" or "0"
+end
+
 -- Which way "into the material" points, for the WHOLE selection at once
 -- (narrow-break guard spec 4b). The guard shrinks everything with one signed
 -- distance, so there has to be one answer or none:
@@ -1122,14 +1206,52 @@ function CO.chamfer_strategy(sharp, d0, d_max)
 end
 
 -- Above the ceiling Aspire's own engine picks each loop's side from the
--- geometry (direction-split spec section 9j), so a forced Side has no correct
--- behaviour there - writing it produces the step S5 measured. Dropped to
--- "auto" for that path and for no other. Anything unrecognised falls through
--- unchanged: resolve_directions already treats a value it does not know as
--- auto, so the worst failure mode stays the old automatic behaviour.
-function CO.effective_side(side, strategy)
-   if strategy == "aspire" then return "auto" end
+-- NESTING (direction-split spec section 9j), so a forced Side contradicts it
+-- and writing one produces the step S5 measured. Dropped to "auto" for that
+-- path and for no other. Anything unrecognised falls through unchanged:
+-- resolve_directions already treats a value it does not know as auto, so the
+-- worst failure mode stays the old automatic behaviour.
+--
+-- NARROWED 2026-08-07 (side-on-flat-selections spec section 4a). v1.14.0
+-- dropped the side for the whole aspire path, and that was wider than the
+-- problem. S5's ring is NESTED, and a forced side there flattens every loop to
+-- one direction when one of them needs the other -- still true, still dropped.
+-- A FLAT selection has no nesting for Aspire to read, so there is nothing to
+-- contradict, and the operator's choice is the only thing that can tell a
+-- pocket from an island (measured 2026-08-06: a lone pocket loop cut a step
+-- under Auto and came out clean the moment its toolpath was switched to
+-- Outside by hand).
+--
+-- `flat` has NO DEFAULT on purpose. A caller that forgets it passes nil, which
+-- is falsy, which drops the side -- v1.14.0's released behaviour. Permissive is
+-- the wrong way for this particular argument to fail.
+function CO.effective_side(side, strategy, flat)
+   if strategy == "aspire" and not flat then return "auto" end
    return side
+end
+
+-- The sentence a run owes when the operator's Side was dropped (2026-08-07,
+-- side-on-flat-selections spec section 4c).
+--
+-- The greyed row explains itself while the dialog is open, which covers the
+-- NESTED case: they watched the control switch off and read the caption. A
+-- RECALL run never shows them that -- nothing was selected, so there is nothing
+-- to measure for flatness, so a side stored in the chamfer's own memory is
+-- dropped for a reason that happened before the dialog opened. Without this the
+-- run cuts the opposite side of every wall and says nothing, and a silent
+-- change to a setting the operator saved is precisely what the v1.7.0 silence
+-- contract exists to break.
+--
+-- Keyed on what effective_side ACTUALLY returned rather than on the run's kind:
+-- the two can then never disagree about whether something was taken away.
+-- "auto" is not a forced side and neither is anything unrecognised, since
+-- resolve_directions already reads an unknown value as auto -- in both cases
+-- nothing was dropped and a sentence would be describing a run that behaved
+-- normally.
+function CO.dropped_side_note(side, eff_side)
+   if side ~= "inside" and side ~= "outside" then return nil end
+   if eff_side == side then return nil end
+   return "Aspire picked the side itself - select the shapes to choose it yourself."
 end
 
 -- The cut depth Aspire's chamfer engine needs for a setback of W: the flank
@@ -4149,6 +4271,33 @@ function main(script_path)
    -- Which remembered bit this run opens on: the bit THIS chamfer was built
    -- with when we know it (spec 4 seeding), otherwise the global last-used.
    local target = by_slot[cls.slot]
+
+   -- Whether a forced Side survives onto the aspire path, settled ONCE and here
+   -- (2026-08-07, side-on-flat-selections spec sections 3 and 10d). The dialog
+   -- needs it to decide whether to grey the Side row, and CO.effective_side
+   -- needs it to decide whether to honour the answer; working it out twice would
+   -- let the row say one thing while the cut does another, and the harmful
+   -- direction is real -- #Side keeps the operator's choice while greyed, so a
+   -- Lua-side "honour it" against a greyed row would apply a pick they watched
+   -- being switched off. Same reason main() computes `dirs` once.
+   --
+   -- It sits HERE, after `target`, because a recall run is judged on the shapes
+   -- that chamfer remembers rather than on an empty selection. Still before the
+   -- dialog and before both readers, so it is one value, computed once.
+   --
+   -- Memory is used only when this run would actually rebuild from it: a chamfer
+   -- whose shapes have gone (`missing_all`) is offered as the amber "teach me"
+   -- state, so its stored boxes describe nothing that is about to be cut.
+   --
+   -- The run's input is not always all of `kept` (the add case takes only
+   -- cls.free_idx), and that is safe: a subset of a flat set is still flat, so a
+   -- true answer stays true for whatever subset the run ends up cutting. The
+   -- same holds for a partial resolve of a remembered set.
+   local mem_fps = nil
+   if target and target.memory and not target.missing_all then mem_fps = target.memory.fps end
+   local flat_field = CO.flat_field(CO.flatness_fps(sel_fps, mem_fps))
+   local run_flat = (flat_field == "1")
+
    local tool_key = ""
    if target and target.memory and target.memory.tool and target.memory.tool ~= "" then
       tool_key = CO.tool_defaults_key(cls.slot)
@@ -4304,6 +4453,12 @@ function main(script_path)
    dlg:AddTextField("HiddenNote", template_ok and "" or template_err)
    dlg:AddTextField("Mode", seed.mode)
    dlg:AddTextField("Side", seed.side)
+   -- Whether the Side row stays live on the aspire path (side-on-flat-selections
+   -- spec section 5a). "1" or "0", and the page reads ANYTHING but "1" as false --
+   -- so a field that fails to land at all (a measured Aspire failure mode:
+   -- ScreenProbe round 2, Acer) greys the row, which is v1.14.0's released
+   -- behaviour rather than a control that should not be live.
+   dlg:AddTextField("Flat", flat_field)
    dlg:AddTextField("Sharp", tostring(seed.sharp or 0))
    dlg:AddDoubleField("Percent", seed.percent)
    dlg:AddDoubleField("Size", seed.size)
@@ -4549,7 +4704,14 @@ function main(script_path)
    -- ONE dirs, from the effective side: the narrow-break guard, the band
    -- grouping, the layer count and the side byte all read this, and computing it
    -- twice would let the guard measure one run while the cut does another.
-   local eff_side = CO.effective_side(side, strategy)
+   -- run_flat, not a fresh measurement of `loops`: the dialog greyed (or did
+   -- not grey) the Side row on that exact value, and a second opinion here is
+   -- how a control comes to say one thing while the cut does another. Spec
+   -- section 3.
+   local eff_side = CO.effective_side(side, strategy, run_flat)
+   -- Settled here, beside the drop itself, so the sentence can never describe a
+   -- different decision from the one that was made (spec section 4c).
+   local side_note = CO.dropped_side_note(side, eff_side)
    local dirs = CO.resolve_directions(loops, eff_side)
    -- Measured on the INPUT loops, before anything is offset, because the sharp
    -- distance is what gets drawn and so sharp_run has to be settled first.
@@ -5409,6 +5571,11 @@ function main(script_path)
    -- something and did not get it, so this alone has to break the silence, and
    -- should_report lifts the box on any sel_notes content.
    if sharp_refused then sel_notes = sel_notes .. "\n\n" .. sharp_refused end
+   -- The side the operator saved was not the side that got cut. Rides sel_notes
+   -- so should_report lifts the box: on a recall run this is the ONLY place the
+   -- change is ever mentioned, because the dialog they saw had no live Side row
+   -- to grey in front of them (spec section 4c).
+   if side_note then sel_notes = sel_notes .. "\n\n" .. side_note end
    -- Spec 8: a rebuild from memory says what it could not find, rather than
    -- quietly cutting a smaller chamfer than the one that was there before.
    if recalled_missing > 0 then

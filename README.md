@@ -159,11 +159,16 @@ cutting edge. If your chamfer is close to that, EdgeBreaker drops the cut
 position lower to make it fit — and says so under the cut position buttons. Too
 big for even that and the box greys out: use a smaller chamfer, or a bigger bit.
 
-- It works on any Chamfer side up to the point where the bit runs out — past
-  that, big chamfers always cut on the material side and the Side buttons grey
-  out. And if you've selected shapes that sit inside other shapes — letters with
-  counters, a part with holes — leave Side on **Auto** anyway. Forcing a side
-  can't sharpen those, and it'll tell you so.
+- It works on any Chamfer side. Past the point where the bit runs out, Aspire's
+  own chamfer engine takes over, and if you've picked shapes that sit inside
+  other shapes — letters with counters, a part with holes — it works out each
+  side for itself and the Side buttons grey out. Pick shapes with nothing inside
+  each other and Side is yours as usual.
+- **Chamfering a pocket? Set Side to Inside.** A pocket and a raised shape look
+  the same to EdgeBreaker — one closed line either way — so Auto assumes the
+  material is *inside* your line. Right for letters and islands, wrong for a
+  hole. If a chamfer comes out with a step in it, that's the first thing to
+  check.
 - Raised letters are one chamfer now: select the lot, leave Side on **Auto**, tick
   the box. It works out which way each shape goes — outward round the outlines,
   inward into the counters — and the corners come out sharp on both.
@@ -172,7 +177,10 @@ big for even that and the box greys out: use a smaller chamfer, or a bigger bit.
 - On an **Outside** chamfer the guide line is drawn inside the shape, so anything
   narrower than two chamfers gets skipped and counted with the other too-narrow
   ones. Go smaller and it fits.
-- Each chamfer remembers its own setting, so a rebuild keeps what you chose.
+- Each chamfer remembers its own setting, so a rebuild keeps what you chose —
+  whether you select its shapes or rebuild with nothing selected. The one time
+  it can't is when the shapes sit inside each other, like an outline and its
+  hole: Aspire picks the side there, and the run tells you when that happens.
 - The corner moves cut closer to the bit's tip than the position you picked —
   that's the only way into a corner, and it's a tiny share of the cut.
 - The orange line sits a touch over on the material side of your edge on

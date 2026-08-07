@@ -1436,21 +1436,162 @@ do
    CHECK(CO.chamfer_strategy(nil, 0.3, 0.106) == "bands", "no sharp field means off")
 end
 
--- The side override, dropped on the aspire path (2026-08-06, side-greyed spec
--- section 3a). Aspire's engine picks each loop's side from the geometry, so a
--- forced Inside/Outside up there is the step S5 measured. Below the ceiling the
--- function is IDENTITY, which is what makes the bands path byte-identical.
+-- Is this selection FLAT -- nothing inside anything else? (2026-08-07,
+-- side-on-flat-selections spec section 3b.) Bounding boxes, not contours,
+-- because bbox containment is NECESSARY for real nesting: if no box contains
+-- another then nothing is truly nested, which is the only direction this
+-- function is allowed to be believed in. The converse does not hold, so it can
+-- say "not flat" about shapes that merely overlap -- that greys a control that
+-- could have been live, which is the harmless way to be wrong.
 do
-   CHECK(CO.effective_side("inside",  "aspire") == "auto", "a forced Inside drops to auto on the aspire path")
-   CHECK(CO.effective_side("outside", "aspire") == "auto", "and so does a forced Outside")
-   CHECK(CO.effective_side("auto",    "aspire") == "auto", "auto is already what that path does")
-   CHECK(CO.effective_side("inside",  "bands") == "inside", "the bands path is untouched: Inside stays Inside")
-   CHECK(CO.effective_side("outside", "bands") == "outside", "and Outside stays Outside")
-   CHECK(CO.effective_side("auto",    "bands") == "auto", "and auto stays auto")
-   CHECK(CO.effective_side("inside",  nil) == "inside", "no strategy is not the aspire path - the side stands")
-   CHECK(CO.effective_side(nil, "aspire") == "auto", "a missing side reads as auto there")
-   CHECK(CO.effective_side(nil, "bands") == nil,
+   local function bb(cx, cy, xlen, ylen) return { cx = cx, cy = cy, xlen = xlen, ylen = ylen } end
+
+   CHECK(CO.selection_is_flat({}) == false,
+         "an EMPTY list is not flat - there is nothing to measure, and CO.flat_field is what tells that apart from a measured nesting")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 2, 2) }) == true,
+         "one shape is flat: a lone pocket or a lone island, which is the case this whole spec exists for")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 2, 2), bb(10, 0, 2, 2) }) == true,
+         "two shapes side by side are flat")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 2, 2), bb(2, 0, 2, 2) }) == true,
+         "two shapes TOUCHING at an edge are still flat - containment is the test, not overlap")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 10, 10), bb(0, 0, 2, 2) }) == false,
+         "an outline with something inside it is NOT flat - this is S5's ring, which keeps greying")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 2, 2), bb(0, 0, 10, 10) }) == false,
+         "and the order it is listed in makes no difference")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 2, 2), bb(0, 0, 2, 2) }) == false,
+         "IDENTICAL boxes are not flat - the twins case, where each contains the other")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 10, 10), bb(0, 0, 10, 2) }) == false,
+         "a box sharing an outer edge is still CONTAINED, so still not flat")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 4, 4), bb(3, 3, 4, 4) }) == true,
+         "two boxes that merely OVERLAP are flat - neither contains the other")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 10, 10), bb(20, 0, 2, 2), bb(0, 0, 1, 1) }) == false,
+         "one nested pair anywhere in the selection is enough to fail it")
+   -- Containment is FOUR inequalities and every one of them has to be here.
+   -- Added 2026-08-07 after a mutation survived: deleting the y-min test left
+   -- all eleven checks above green, because not one of them had a box that was
+   -- inside another's span on ONE axis and outside it on the other. Each case
+   -- below is a shape poking out of another's box in exactly one direction, so
+   -- each pins exactly one inequality -- drop any single test and one of these
+   -- four calls a flat selection nested.
+   CHECK(CO.selection_is_flat({ bb(0, 0, 10, 10), bb(0, -4, 2, 10) }) == true,
+         "a shape poking out of the BOTTOM of another's box is not inside it (pins y-min)")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 10, 10), bb(0, 4, 2, 10) }) == true,
+         "a shape poking out of the TOP of another's box is not inside it (pins y-max)")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 10, 10), bb(4, 0, 10, 2) }) == true,
+         "poking out of the RIGHT is not inside it either (pins x-max)")
+   CHECK(CO.selection_is_flat({ bb(0, 0, 10, 10), bb(-4, 0, 10, 2) }) == true,
+         "and poking out of the LEFT (pins x-min)")
+   CHECK(CO.selection_is_flat(nil) == false,
+         "and nothing at all is not flat either - the argument has no default, on purpose")
+end
+
+-- WHICH boxes a run's flatness is measured on (2026-08-07,
+-- side-on-flat-selections spec section 10c). The shapes the run will actually
+-- cut: the selection when there is one, otherwise the ones the target chamfer
+-- remembers. Spec section 3c used to accept that a recall run simply could not
+-- be answered -- it can, because memory stores bounding boxes and those are
+-- exactly what the flatness test consumes. No geometry is read and the live
+-- Selection is never written, which is the cost section 3c refused to pay.
+do
+   local function bb(cx, cy, xlen, ylen) return { cx = cx, cy = cy, xlen = xlen, ylen = ylen } end
+   local sel = { bb(0, 0, 2, 2) }
+   local mem = { bb(9, 9, 4, 4), bb(20, 20, 4, 4) }
+
+   CHECK(CO.flatness_fps(sel, mem) == sel,
+         "a run with a SELECTION is judged on the selection - memory is not consulted at all")
+   CHECK(CO.flatness_fps({}, mem) == mem,
+         "a recall run - nothing selected - is judged on what the chamfer REMEMBERS")
+   CHECK(#CO.flatness_fps({}, {}) == 0,
+         "nothing selected and nothing remembered leaves nothing to measure")
+   CHECK(#CO.flatness_fps(nil, nil) == 0,
+         "and neither argument has a default: nil on both sides is still nothing to measure")
+   CHECK(CO.flatness_fps(sel, nil) == sel,
+         "a selection stands on its own - a chamfer with no memory does not take it away")
+   CHECK(#CO.flatness_fps(nil, mem) == 2,
+         "and memory stands on its own when the selection is missing rather than merely empty")
+
+   -- The three-valued field the page reads (spec section 10f). Two states are
+   -- not enough: "nothing to measure" and "measured and it nests" both grey the
+   -- Side row, but they grey it for different reasons and the caption has to say
+   -- which. Before this, the page told a recall run its shapes sat inside each
+   -- other -- about a job it had never looked at.
+   CHECK(CO.flat_field({ bb(0, 0, 2, 2) }) == "1",
+         "a lone shape measures FLAT, so the field is 1 and the Side row stays live")
+   CHECK(CO.flat_field({ bb(0, 0, 10, 10), bb(0, 0, 2, 2) }) == "0",
+         "a ring measures NESTED, so the field is 0 - greyed, and the caption says why")
+   CHECK(CO.flat_field({}) == "",
+         "nothing to measure is the EMPTY string, which is neither of the other two answers")
+   CHECK(CO.flat_field(nil) == "",
+         "and nil measures the same as empty rather than throwing")
+   -- The fail-safe, restated as a property rather than as three separate cases:
+   -- the page greys on anything that is not exactly "1", so every answer other
+   -- than a measured flat one lands on v1.14.0's released behaviour.
+   CHECK(CO.flat_field({}) ~= "1" and CO.flat_field(nil) ~= "1"
+         and CO.flat_field({ bb(0, 0, 10, 10), bb(0, 0, 2, 2) }) ~= "1",
+         "every answer but a measured FLAT one is not-1, so a lost field greys rather than offering a control the run would ignore")
+end
+
+-- The side override on the aspire path (2026-08-06 side-greyed spec section 3a,
+-- NARROWED 2026-08-07 by side-on-flat-selections spec section 4a).
+--
+-- Aspire's engine picks each loop's side from the NESTING, so a forced side up
+-- there contradicts it -- that is the step S5 measured, and a nested selection
+-- still drops to auto for exactly that reason. A FLAT selection has no nesting
+-- to contradict: a lone closed loop is a pocket or an island and nothing in the
+-- geometry says which, so the operator is the only source of the answer and the
+-- override is honoured.
+--
+-- Below the ceiling the function is IDENTITY whatever the flatness, which is
+-- what keeps the bands path byte-identical.
+do
+   CHECK(CO.effective_side("inside",  "aspire", false) == "auto", "a forced Inside drops to auto on a NESTED aspire run")
+   CHECK(CO.effective_side("outside", "aspire", false) == "auto", "and so does a forced Outside")
+   CHECK(CO.effective_side("auto",    "aspire", false) == "auto", "auto is already what that path does")
+   CHECK(CO.effective_side("inside",  "aspire", true) == "inside",
+         "but a FLAT aspire run HONOURS Inside - this is the pocket fix")
+   CHECK(CO.effective_side("outside", "aspire", true) == "outside", "and Outside just the same")
+   CHECK(CO.effective_side("auto",    "aspire", true) == "auto", "and auto is still auto")
+   CHECK(CO.effective_side("inside",  "bands", false) == "inside", "the bands path is untouched: Inside stays Inside")
+   CHECK(CO.effective_side("outside", "bands", false) == "outside", "and Outside stays Outside")
+   CHECK(CO.effective_side("auto",    "bands", false) == "auto", "and auto stays auto")
+   CHECK(CO.effective_side("inside",  "bands", true) == "inside", "flatness changes NOTHING on the bands path")
+   CHECK(CO.effective_side("outside", "bands", true) == "outside", "for either forced side")
+   CHECK(CO.effective_side("inside",  nil, false) == "inside", "no strategy is not the aspire path - the side stands")
+   CHECK(CO.effective_side(nil, "aspire", false) == "auto", "a missing side reads as auto there")
+   CHECK(CO.effective_side(nil, "bands", false) == nil,
          "and is passed through untouched everywhere else - resolve_directions already reads it as auto")
+   -- The argument has NO DEFAULT and this is the reason: a caller that forgets
+   -- it passes nil, which is falsy, which greys -- v1.14.0's released behaviour.
+   -- Permissive is the wrong way for this one to fail.
+   CHECK(CO.effective_side("inside", "aspire") == "auto",
+         "a caller that FORGETS the flatness gets the safe answer, not the permissive one")
+end
+
+-- When a forced side IS dropped, the run says so (2026-08-07,
+-- side-on-flat-selections spec section 4c). Greying the row explains itself on
+-- the dialog, but a RECALL run never shows the operator that dialog state: they
+-- selected nothing, the stored Inside is dropped for want of a selection to
+-- measure, and without this line the run cuts the other side in silence. A run
+-- that quietly changed a setting is exactly what CO.should_report exists to
+-- break the silence for.
+--
+-- Pure, and keyed on the two values rather than on the run's kind, so it cannot
+-- disagree with what CO.effective_side actually did.
+do
+   local NOTE = "Aspire picked the side itself - select the shapes to choose it yourself."
+   CHECK(CO.dropped_side_note("inside", "auto") == NOTE,
+         "a dropped Inside is reported - this is the recall run's missing sentence")
+   CHECK(CO.dropped_side_note("outside", "auto") == NOTE, "and a dropped Outside just the same")
+   CHECK(CO.dropped_side_note("inside", "inside") == nil,
+         "a side that SURVIVED says nothing - the flat pocket run stays silent")
+   CHECK(CO.dropped_side_note("outside", "outside") == nil, "and so does a surviving Outside")
+   CHECK(CO.dropped_side_note("auto", "auto") == nil,
+         "auto was never the operator forcing anything, so nothing was taken away")
+   CHECK(CO.dropped_side_note(nil, "auto") == nil, "and a missing side is not a forced one either")
+   -- Anything unrecognised is not a forced side. resolve_directions reads a
+   -- value it does not know as auto, so nothing was dropped and claiming
+   -- otherwise would put a sentence on a run that behaved normally.
+   CHECK(CO.dropped_side_note("sideways", "auto") == nil, "an unrecognised side is not a forced one")
 end
 
 -- The depth Aspire's engine gets (spec section 8 C2). W is the setback; the cone's

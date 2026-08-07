@@ -233,7 +233,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.14.0</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.14.1</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -274,8 +274,14 @@ input[type=radio] { zoom: 2.5; }
         <label id="SharpWrap"><input type="checkbox" id="SharpBox"> Sharp corners</label>
         <!-- Only ever shown with the radios greyed beside it (applyAspireState),
              same pattern as #PresetCap. It wears .modecap, so it is display:block
-             and drops onto its own line rather than fighting the row for width. -->
-        <span class="modecap" id="SideCap" style="display:none">big chamfers always cut on the material side</span>
+             and drops onto its own line rather than fighting the row for width.
+
+             Its WORDS are written by applyAspireState, because the row greys for
+             two different reasons and this line is the only thing that says
+             which (2026-08-07, side-on-flat-selections spec 5c). The nested
+             sentence is the markup default so a page whose script never ran
+             still says something true of the commonest case. -->
+        <span class="modecap" id="SideCap" style="display:none">one shape inside another &#8212; Aspire picks the side itself</span>
       </div>
       <!-- Named for what it holds, not "Help": the button in the bar is now the
            Help, and two controls called Help on one dialog would mean two
@@ -327,8 +333,11 @@ input[type=radio] { zoom: 2.5; }
           <b>Sharp corners:</b> the bit rises
           into each corner so the two edges meet in a point instead of a round. Past what
           the bit can sharpen in one flat pass, EdgeBreaker hands the cut to Aspire's own
-          chamfer engine &mdash; you lose the cut-position buttons for that chamfer, and
-          it picks the side itself.<br><br>
+          chamfer engine &mdash; you lose the cut-position buttons for that chamfer, and if
+          your shapes sit inside each other it picks the side itself.<br><br>
+          <b>Chamfering a pocket?</b> Set Side to <b>Inside</b>. A pocket and a raised shape
+          look the same from here &mdash; one closed line either way &mdash; so Auto assumes
+          the material is inside your line.<br><br>
           The corner
           moves cut nearer the tip than your chosen position &mdash; that's the only way in.
           On an outside chamfer the guide line is drawn inside the shape, so anything
@@ -460,6 +469,11 @@ input[type=radio] { zoom: 2.5; }
   <input type="hidden" id="Chamfers" name="Chamfers" value="">
   <input type="hidden" id="Kind" name="Kind" value="add">
   <input type="hidden" id="BannerFacts" name="BannerFacts" value="">
+  <!-- Is the selection FLAT - nothing inside anything else? Decides whether the
+       Side row survives on the aspire path (side-on-flat-selections spec 5a).
+       Lua -> page only; it is never read back. Defaults to "0" so a field that
+       fails to land leaves the row greyed, which is v1.14.0's behaviour. -->
+  <input type="hidden" id="Flat" name="Flat" value="0">
   <!-- HTML -> Lua round trip: the user's choices, read back after OK -->
   <input type="hidden" id="Mode" name="Mode" value="setback">
   <input type="hidden" id="Side" name="Side" value="auto">
@@ -746,6 +760,20 @@ var currentPercent = 80;
 //   a number  -- the highest preset cut position that still sharpens
 // An unknown must never grey the box; only a known impossible may.
 var currentSharpMax = "unknown";
+// Are this run's shapes FLAT -- nothing inside anything else? Decides whether
+// the Side row survives on the aspire path (side-on-flat-selections spec 5b).
+// Read once from the Flat field, which Lua settles before this dialog opens.
+//
+// The run's shapes, not the SELECTION: a recall run has no selection and is
+// judged on what its chamfer remembers (spec 10c). The field carries three
+// answers -- "1" flat, "0" nested, "" nothing to measure -- and only the first
+// two are a measurement. Which of the other two it is decides the caption.
+//
+// Anything but the string "1" is false, deliberately: a field that fails to land
+// at all is a measured Aspire failure mode (ScreenProbe round 2, Acer), and the
+// safe landing is the greyed row v1.14.0 shipped -- never a live control the run
+// would then ignore.
+var currentFlat = false;
 // The percent a sharpen-forced drop moved AWAY from, so unticking can put it
 // back. null means either nothing has been dropped, or a drop's restore was
 // already used -- both read the same way: there is nothing to give back.
@@ -978,6 +1006,10 @@ function applyPresetSelection() {
 function initBit() {
   if (el("Units").value !== "") UNIT = el("Units").value;
 
+  // Read once, here, because it describes the shapes this run will cut -- which
+  // cannot change while this dialog is open. Nothing on the page writes it back.
+  currentFlat = (el("Flat").value === "1");
+
   var a = parseFloat(el("ToolAngle").value);
   var d = parseFloat(el("ToolDiameter").value);
   haveBit = (!isNaN(a) && a > 0 && !isNaN(d) && d > 0);
@@ -1106,9 +1138,16 @@ function aspireMode() {
 // The SIDE is deliberately not tested here (2026-08-03). Auto sharpens -- it is
 // the only side that CAN sharpen a letter set, because a letter set contains
 // both directions at once. What a forced side cannot do is sharpen a NESTED
-// selection, and this page cannot know whether the selection nests: the dialog
-// is shown before the loops are ever read. That refusal is reported after the
-// run, the same way shapes too narrow to chamfer are.
+// selection. That refusal is reported after the run, the same way shapes too
+// narrow to chamfer are.
+//
+// This comment used to add "and this page cannot know whether the selection
+// nests: the dialog is shown before the loops are ever read". That STOPPED
+// BEING TRUE in session 084, which moved the selection scan ahead of the dialog
+// for the layer-id guard -- and the stale sentence went on justifying a design
+// for two more releases. The page is now told, in the Flat field, and
+// applyAspireState below acts on it. Left here as a correction rather than
+// deleted, because it is the reasoning v1.14.0 was built on.
 //
 // The old sharpSideOk helper is deleted with it. It held one copy of the side
 // test for three readers; there is no side test left to hold.
@@ -1157,16 +1196,46 @@ function applyAspireState() {
   el("Presets").className = on ? "row off" : "row";
   el("PresetCap").style.display = on ? "" : "none";
   el("ChartWrap").className = on ? "off" : "";
-  el("SideGroup").className = on ? "off" : "";
-  el("SideLabel").className = on ? "off" : "";
-  el("SideCap").style.display = on ? "" : "none";
+  // The SIDE row greys on a NARROWER condition than the rest (2026-08-07,
+  // side-on-flat-selections spec 5b). The cut position really is gone at any
+  // size up here -- Aspire's engine runs its tip down the mitre and there is no
+  // flute choice to make -- but the SIDE is only out of the operator's hands
+  // when the shapes NEST, because that is the case where Aspire reads each
+  // loop's side off the nesting and an override contradicts it (S5's ring).
+  //
+  // A flat selection has no nesting to read, and then the operator is the ONLY
+  // thing that can tell a pocket from an island: the same lone loop either way.
+  // v1.14.0 greyed this row for the whole path, which took the control away
+  // exactly where it was the only source of the answer -- measured 2026-08-06
+  // as a step on a pocket wall that came out clean the moment the toolpath was
+  // switched to Outside by hand.
+  var sideOff = on && !currentFlat;
+  el("SideGroup").className = sideOff ? "off" : "";
+  el("SideLabel").className = sideOff ? "off" : "";
+  el("SideCap").style.display = sideOff ? "" : "none";
+  // WHY it greyed, in the operator's terms (2026-08-07, spec 5c and 10f). Two
+  // causes, and one sentence used to serve both: a recall run was told its
+  // shapes sat inside each other, which is not a vague answer but an untrue one
+  // about a job it never looked at.
+  //
+  // The reason comes from the FIELD, not from the selection count. It used to
+  // read FACTS.sel === 0, justified by an equivalence -- sel was the very list
+  // Lua measured flatness over -- and spec 10c broke that equivalence by
+  // measuring a recall run on the shapes its chamfer remembers. A remembered
+  // ring genuinely nests, and the old test would have called that "nothing
+  // selected": the same untruth, arriving from the other end. #Flat is empty
+  // only when there was nothing to measure at all.
+  if (sideOff)
+    el("SideCap").innerHTML = el("Flat").value === "0"
+      ? "one shape inside another &#8212; Aspire picks the side itself"
+      : "nothing to work from &#8212; Aspire picks the side itself";
   // Disabled as well as greyed: a click that still landed would write #Side and
   // silently change what an un-tick hands back.
-  var shown = on ? "auto" : (el("Side").value || "auto");
+  var shown = sideOff ? "auto" : (el("Side").value || "auto");
   var radios = document.getElementsByName("SideRadio");
   for (var i = 0; i < radios.length; i++) {
     radios[i].checked  = (radios[i].value === shown);
-    radios[i].disabled = on;
+    radios[i].disabled = sideOff;
   }
 }
 // The click itself must run redraw(), not just set the field: redraw() is

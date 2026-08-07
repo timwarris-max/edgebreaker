@@ -95,6 +95,13 @@ var html = fs.readFileSync(SRC, "utf8");
 // radios and their caption, which the 90 deg collapse hides. The SideRow
 // (chamfer side radios) is unconditionally visible, so every case below
 // measures it too.
+// The two sentences #SideCap can carry, as the probe reports them: entities
+// flattened to "-", spaces to "_". Written out here rather than built from the
+// page, so a reworded caption has to be reworded HERE too and cannot drift
+// silently past the gate (2026-08-07, side-on-flat-selections spec 5c).
+var SIDECAP_NESTED  = "one_shape_inside_another_-_Aspire_picks_the_side_itself";
+var SIDECAP_NOTHING = "nothing_to_work_from_-_Aspire_picks_the_side_itself";
+
 var CASES = [
   // The one-pass contract, and it is the assertion most likely to be dropped
   // for looking like it tests nothing: an ordinary chamfer must say NOTHING
@@ -384,6 +391,86 @@ var CASES = [
     expectSharp: { dis: 0, chk: 1, cap: 0 },
     expectPresetsOff: 1, expectPresetCap: "big sharp chamfers cut from the tip",
     expectSideShown: "auto" },
+  // THE POCKET (2026-08-07, side-on-flat-selections spec 5b). Identical to the
+  // two cases above in every respect but one: the selection is FLAT, so there is
+  // no nesting for Aspire to read each loop's side from, and Inside is the
+  // operator's to give. The row stays live and keeps showing their choice while
+  // the PRESETS beside it still grey -- which is the whole point of the change,
+  // and the reason the two expectations had to come apart.
+  //
+  // Without this pair, a page that reverted to greying the side row for the
+  // whole aspire path would pass every other case in this file.
+  { name: "aspire + FLAT: the side row survives, presets still grey", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "1", small: true,
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectPresetCap: "big sharp chamfers cut from the tip",
+    expectSideOff: 0, expectSideShown: "inside" },
+  { name: "aspire + FLAT: outside is honoured just the same", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "outside", sharp: "1", flat: "1", small: true,
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectSideOff: 0, expectSideShown: "outside" },
+  // And the field is read STRICTLY: only "1" is flat. Anything else -- including
+  // a field Aspire failed to inject, which is a measured failure mode on the
+  // Acer -- has to land on the greyed row v1.14.0 shipped, never on a live
+  // control the run would then ignore.
+  // THE CAPTION'S TWO SENTENCES (2026-08-07, spec 5c). The row greys for two
+  // reasons and only the caption distinguishes them, so both are pinned by a
+  // case that names the wording outright rather than leaning on the default.
+  //
+  // Nested: shapes were selected, and they sit inside one another. This is
+  // S5's ring, and the sentence that has always been there.
+  { name: "aspire + nested: the caption says shapes nest", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", small: true,
+    slot: "1", kind: "rebuild", facts: "sel=2;excluded=;mem=2",
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto",
+    expectSideCap: SIDECAP_NESTED },
+  // Nothing to measure at all: no selection AND no usable memory, so flatness
+  // has no shapes to look at. The row greys for a reason that has nothing to do
+  // with nesting, and told the nested sentence the operator reads something
+  // untrue about a job the gadget never looked at.
+  //
+  // The FIELD is what says so, not the selection count -- seeded "" here. That
+  // distinction is the whole of spec 10f: since 10c a recall run IS measured,
+  // over the shapes its chamfer remembers, so `sel=0` no longer implies there
+  // was nothing to measure. The two cases below are the same recall run with
+  // different memory, and they must come out differently.
+  { name: "aspire + nothing to measure: the caption says so", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "", small: true,
+    slot: "1", kind: "recall", facts: "sel=0;excluded=;mem=4",
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto",
+    expectSideCap: SIDECAP_NOTHING },
+  // A recall run whose remembered shapes NEST: still greyed, and now for the
+  // real reason. Nothing is selected, so the pre-10c gate would have called this
+  // "nothing selected" -- true of the selection, untrue of the decision.
+  { name: "aspire + recall of nested memory: nesting is the reason", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "0", small: true,
+    slot: "1", kind: "recall", facts: "sel=0;excluded=;mem=2",
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto",
+    expectSideCap: SIDECAP_NESTED },
+  // THE ONE THIS AMENDMENT EXISTS FOR (spec 10i, check F6). A recall run whose
+  // remembered shapes are flat: the Side row is LIVE with nothing selected, and
+  // it shows the side the chamfer stored rather than dropping it to Auto. The
+  // cut-position row stays greyed -- that never depended on nesting.
+  { name: "aspire + recall of flat memory: side LIVE with nothing selected", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "1", small: true,
+    slot: "1", kind: "recall", facts: "sel=0;excluded=;mem=1",
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectSideOff: 0, expectSideShown: "inside" },
+  { name: "aspire + junk Flat field: greys, the safe way", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "yes", small: true,
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto" },
+  // Flat changes NOTHING below the ceiling: an ordinary bands run honours the
+  // side whatever the selection looks like, which is what keeps that path
+  // byte-identical. Without this, a page that keyed the side row off `flat`
+  // ALONE -- forgetting the aspire half -- would still pass the three above.
+  { name: "bands + flat: side live as it always was", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "0", flat: "1", small: true,
+    expectSharp: { dis: 0, chk: 0, cap: 0 }, expectPresetsOff: 0,
+    expectSideOff: 0, expectSideShown: "inside" },
   // The drop, said out loud. Ticking the box on a chamfer whose cut position is
   // too deep to sharpen moves that position on the operator's behalf, and this
   // note beside the buttons is the only thing that says so. Sharpening and
@@ -533,6 +620,16 @@ function seed(c, viewW, viewH) {
   if (c.sharp)
     s = s.replace('id="Sharp" name="Sharp" value="0"',
                   'id="Sharp" name="Sharp" value="' + c.sharp + '"');
+  // 2026-08-07: whether the selection is flat, which is what decides if the Side
+  // row survives on the aspire path. Left unseeded it is "0" -- nested/unknown --
+  // so every case written before this date keeps the greyed row it was written
+  // for, and only the cases that ask for flat get the live one.
+  // `!== undefined`, not a truthiness test: "" is a real and distinct answer --
+  // nothing to measure -- and a truthy check would silently seed it as "0",
+  // measured-nested, which is the case it has to be told apart from (spec 10f).
+  if (c.flat !== undefined)
+    s = s.replace('id="Flat" name="Flat" value="0"',
+                  'id="Flat" name="Flat" value="' + c.flat + '"');
   if (c.note)
     s = s.replace('id="HiddenNote" name="HiddenNote" value=""', 'id="HiddenNote" name="HiddenNote" value="' + c.note + '"');
   if (c.units)
@@ -723,6 +820,15 @@ function seed(c, viewW, viewH) {
     "var sideOff=(sg&&sg.className.indexOf('off')>=0)?1:0;" +
     "var sdcap=document.getElementById('SideCap');" +
     "var sideCapOn=(sdcap&&sdcap.offsetWidth>0)?1:0;" +
+    // The caption's WORDS, not just whether it is on (2026-08-07,
+    // side-on-flat-selections spec 5c). It explains two different greyings and
+    // used to say the nested thing for both -- telling an operator who selected
+    // nothing that their shapes sit inside each other. Spaces to underscores
+    // because the title line is parsed on whitespace.
+    // innerHTML hands back the RENDERED character, so &mdash; arrives as U+2014
+    // and not as the entity -- flatten anything non-ASCII to "-" so the
+    // expectation can be written in plain ASCII and read at a glance.
+    "var sideCapTxt=sdcap?(sdcap.innerHTML.replace(/[^\\x20-\\x7E]+/g,'-').replace(/\\s+/g,'_')):'-';" +
     "var srad=document.getElementsByName('SideRadio'), sideShown='-', sideDis=-1;" +
     "for(var q=0;q<srad.length;q++){if(srad[q].checked)sideShown=srad[q].value;" +
     "if(q===0)sideDis=srad[q].disabled?1:0;}" +
@@ -740,7 +846,7 @@ function seed(c, viewW, viewH) {
     "' sharpDis='+sharpDis+' sharpChk='+sharpChk+' capOn='+capOn+" +
     "' presetsOff='+presetsOff+' pcapOn='+pcapOn+' chartOff='+chartOff+" +
     "' sideOff='+sideOff+' sideCapOn='+sideCapOn+' sideDis='+sideDis+" +
-    "' sideShown='+sideShown+" +
+    "' sideShown='+sideShown+' sideCapTxt='+sideCapTxt+" +
     "' winsize='+ws;" +
     "},1500);</script></body>");
   return s;
@@ -875,7 +981,7 @@ function runCase(c, viewW, viewH, label) {
     "--dump-dom", "file:///" + f.replace(/\\/g, "/")
   ], { encoding: "utf8", maxBuffer: 40 * 1024 * 1024 });
 
-  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d) sharpDis=(-?\d) sharpChk=(-?\d) capOn=(\d) presetsOff=(\d) pcapOn=(\d) chartOff=(\d) sideOff=(\d) sideCapOn=(\d) sideDis=(-?\d) sideShown=(\S+) winsize=([^\s<]+)/.exec(out);
+  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d) sharpDis=(-?\d) sharpChk=(-?\d) capOn=(\d) presetsOff=(\d) pcapOn=(\d) chartOff=(\d) sideOff=(\d) sideCapOn=(\d) sideDis=(-?\d) sideShown=(\S+) sideCapTxt=(\S+) winsize=([^\s<]+)/.exec(out);
   if (!m) { console.log("FAIL  " + name + "  (no measurement - page error?)"); failed++; return; }
 
   var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH2 = +m[5], ink = +m[6];
@@ -885,9 +991,10 @@ function runCase(c, viewW, viewH, label) {
   var sharpDis = +m[17], sharpChk = +m[18], capOn = +m[19];
   var presetsOff = +m[20], pcapOn = +m[21], chartOff = +m[22];
   var sideOff = +m[23], sideCapOn = +m[24], sideDis = +m[25], sideShown = m[26];
+  var sideCapTxt = m[27];
   // [^\s<]+ rather than \S+: winsize is the last field on the title line, and
   // --dump-dom serialises "</title>" straight after it with no space between.
-  var winsize = m[27];
+  var winsize = m[28];
   var bad = [];
 
   // v1.12.0 defect fix. The page reports its own client box twice -- as it is
@@ -1152,18 +1259,44 @@ function runCase(c, viewW, viewH, label) {
     // operator could misread; asserting 0 there would pass on the absence.
     if (!c.noChart && chartOff !== c.expectPresetsOff)
       bad.push("#Chart ink greyed=" + chartOff + " want " + c.expectPresetsOff);
-    // The side row is the fourth half of the same state (2026-08-06). Asserted
-    // from the SAME field as the presets, because applyAspireState sets all of
-    // them together and a side row that stayed live above the ceiling is the
-    // defect S5 measured, still offered as a control. The radios must also be
+    // The side row was the fourth half of the same state (2026-08-06) and is
+    // NOT any more (2026-08-07). It greys on a narrower condition than the
+    // presets: the cut position really is gone at any size on the aspire path,
+    // but the SIDE is only out of the operator's hands when the shapes nest.
+    //
+    // So it gets its own expectation, DEFAULTING to the presets' -- every case
+    // written before this date is a nested-or-unknown one (the Flat field is
+    // seeded "0" unless a case asks otherwise), so they all keep asserting
+    // exactly what they asserted before, and only a case that says `flat` has
+    // to spell out the difference.
+    var wantSideOff = (c.expectSideOff === undefined) ? c.expectPresetsOff : c.expectSideOff;
+    if (sideOff !== wantSideOff)
+      bad.push("#SideGroup greyed=" + sideOff + " want " + wantSideOff);
+    if (sideCapOn !== wantSideOff)
+      bad.push("#SideCap visible=" + sideCapOn + " want " + wantSideOff);
+    // And it has to say the RIGHT one of its two sentences (2026-08-07, spec 5c
+    // and 10f). The row greys for two different reasons and the caption is the
+    // only thing that tells them apart: shapes measured as nesting, or no shapes
+    // to measure. One sentence served both until session 094.
+    //
+    // Derived from the case's seeded FLAT FIELD, not from its selection count.
+    // It used to come from `sel`, justified by an equivalence -- sel was the
+    // list Lua measured flatness over -- and spec 10c broke that by measuring a
+    // recall run on the shapes its chamfer remembers. A remembered ring nests
+    // with sel=0, so the old derivation would have demanded "nothing selected"
+    // for a run whose reason was nesting. The field is the only thing that still
+    // knows. Unseeded cases default to "0", so every case written before this
+    // date keeps asserting exactly what it asserted before.
+    if (wantSideOff) {
+      var capFlat = (c.flat === undefined) ? "0" : c.flat;
+      var wantCap = c.expectSideCap || (capFlat === "0" ? SIDECAP_NESTED : SIDECAP_NOTHING);
+      if (sideCapTxt !== wantCap)
+        bad.push("#SideCap reads '" + sideCapTxt + "' want '" + wantCap + "'");
+    }
     // DISABLED, not merely grey -- a click that landed would rewrite the hidden
     // field the operator's real choice is kept in.
-    if (sideOff !== c.expectPresetsOff)
-      bad.push("#SideGroup greyed=" + sideOff + " want " + c.expectPresetsOff);
-    if (sideCapOn !== c.expectPresetsOff)
-      bad.push("#SideCap visible=" + sideCapOn + " want " + c.expectPresetsOff);
-    if (sideDis !== c.expectPresetsOff)
-      bad.push("side radios disabled=" + sideDis + " want " + c.expectPresetsOff);
+    if (sideDis !== wantSideOff)
+      bad.push("side radios disabled=" + sideDis + " want " + wantSideOff);
   }
   // What the radios SHOW. In aspire mode that is always "auto" whatever the
   // operator picked, because auto is what the run will do and a greyed "Inside"

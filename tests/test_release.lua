@@ -413,7 +413,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.14.0", "version gate: 1.14.0")
+CHECK(CO.VERSION == "1.14.1", "version gate: 1.14.1")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -1449,14 +1449,73 @@ do
    -- on the CALL SITES, never on bare function names - the file being searched
    -- also defines them, and a pin that greps a bare name cannot fail.
    local i_strat = mbody:find("local strategy = CO.chamfer_strategy(", 1, true)
-   local i_eff   = mbody:find("local eff_side = CO.effective_side(side, strategy)", 1, true)
+   local i_eff   = mbody:find("local eff_side = CO.effective_side(side, strategy, run_flat)", 1, true)
    local i_dirs  = mbody:find("local dirs = CO.resolve_directions(loops, eff_side)", 1, true)
    CHECK(i_strat ~= nil, "main() computes the strategy itself")
-   CHECK(i_eff ~= nil, "main() drops the side override through CO.effective_side")
+   CHECK(i_eff ~= nil, "main() drops the side override through CO.effective_side, flatness and all")
    CHECK(i_dirs ~= nil, "resolve_directions is handed the EFFECTIVE side, not the dialog's")
    CHECK(i_strat ~= nil and i_eff ~= nil and i_dirs ~= nil
          and i_strat < i_eff and i_eff < i_dirs,
          "strategy is settled before the side is dropped, and both before dirs")
+   -- Flatness is settled ONCE (2026-08-07, side-on-flat-selections spec sections
+   -- 3 and 10d), and the count is the pin. The dialog greys the Side row on this
+   -- exact value and CO.effective_side honours the answer on it; a SECOND
+   -- measurement anywhere in main() -- over `loops` rather than the run's boxes,
+   -- say -- is how the row comes to say one thing while the cut does another. No
+   -- behavioural test offline would see that, because both calls return a
+   -- defensible answer.
+   local i_flat = mbody:find("local flat_field = CO.flat_field(CO.flatness_fps(sel_fps, mem_fps))", 1, true)
+   CHECK(i_flat ~= nil, "main() settles flatness over the boxes CO.flatness_fps picks - the run's own shapes")
+   local _, nflat = mbody:gsub("CO%.flatness_fps%(", "")
+   CHECK(nflat == 1, "flatness_fps is called exactly ONCE in main(), found " .. nflat)
+   local _, nfield = mbody:gsub("CO%.flat_field%(", "")
+   CHECK(nfield == 1, "and flat_field exactly ONCE, so the page and the cut cannot read different answers, found " .. nfield)
+   CHECK(mbody:find("CO%.selection_is_flat%(") == nil,
+         "main() never calls selection_is_flat directly - it goes through flat_field, which is the single source")
+   -- The boolean is DERIVED from the field, not measured a second time, so there
+   -- is one value and not two that happen to agree (spec section 10g).
+   CHECK(mbody:find('local run_flat = (flat_field == "1")', 1, true) ~= nil,
+         "run_flat is derived from the injected field itself")
+   -- A recall run is judged on what the chamfer REMEMBERS (spec section 10c),
+   -- and only when this run would actually rebuild from that memory (10e).
+   local i_mem = mbody:find("if target and target.memory and not target.missing_all then mem_fps = target.memory.fps end", 1, true)
+   CHECK(i_mem ~= nil,
+         "a recall run's boxes come from the target chamfer's memory, guarded on it still being there")
+   local i_target = mbody:find("local target = by_slot[cls.slot]", 1, true)
+   CHECK(i_target ~= nil and i_mem ~= nil and i_target < i_mem,
+         "and that reads `target` after it is settled, which is why flatness moved down (spec 10d)")
+   -- Before the dialog, because the page is handed the answer.
+   local i_dlg = mbody:find("local dlg = HTML_Dialog(", 1, true)
+   CHECK(i_flat ~= nil and i_dlg ~= nil and i_flat < i_dlg,
+         "flatness is known before the dialog opens - the page greys the Side row on it")
+   CHECK(mbody:find('dlg:AddTextField("Flat", flat_field)', 1, true) ~= nil,
+         "and it is injected as the Flat field, from that same value")
+   -- The page's caption reads the FIELD's three states, not the selection count
+   -- (spec section 10f). The equivalence that justified `FACTS.sel === 0` died
+   -- the moment a recall run started being measured on its memory: a remembered
+   -- ring nests, and the old test would have called that "nothing selected".
+   local dlg_src
+   do
+      local f = assert(io.open("gadget/EdgeBreaker/EdgeBreakerDialog.htm", "rb"))
+      dlg_src = f:read("*a"); f:close()
+   end
+   CHECK(dlg_src:find('el("Flat").value === "0"', 1, true) ~= nil,
+         "the greyed caption asks the Flat field whether the shapes were MEASURED as nested")
+   CHECK(dlg_src:find('? "nothing selected', 1, true) == nil,
+         "and no longer infers the reason from the selection count")
+   -- A dropped side REACHES THE REPORT (2026-08-07, spec section 4c). Two pins,
+   -- because there are two ways to lose it and only one of them is visible in
+   -- the function's own body: computing the sentence and never appending it
+   -- would leave every gate green while a recall run cut the wrong side in
+   -- silence -- the exact defect this closes. Pinned on the call sites, and the
+   -- append pinned on `sel_notes ..`, which is what makes should_report lift
+   -- the box; a note built into any other string is a note nobody reads.
+   local i_note = mbody:find("local side_note = CO.dropped_side_note(side, eff_side)", 1, true)
+   CHECK(i_note ~= nil, "main() asks whether the operator's side was dropped")
+   CHECK(i_note ~= nil and i_eff ~= nil and i_eff < i_note,
+         "and it asks AFTER the drop, from the value that was actually used")
+   CHECK(mbody:find('if side_note then sel_notes = sel_notes .. "\\n\\n" .. side_note end', 1, true) ~= nil,
+         "and the sentence is appended to sel_notes, which is what breaks the silence")
    -- Negative: the old call must not come back, and the strategy must be
    -- assigned in exactly ONE place - two of them could disagree about which
    -- engine is cutting, which is the whole failure this ordering fixes.
