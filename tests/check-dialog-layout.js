@@ -280,8 +280,18 @@ var CASES = [
   // could not exist -- the dialog could not open without a bit -- so the page's
   // currentAngle = 90 / currentDia = 0.25 defaults were harmless. They are a
   // hazard now: they draw a confident chart for a bit nobody chose.
+  // 2026-08-04: nothing greys the Sharp box any more, and this case is here to
+  // hold the line on the state most likely to be greyed by accident. Before a
+  // bit is chosen currentSharpMax is the STRING "unknown", and v1.13.0 left the
+  // box alone in that state -- enabled, no .off, no caption. Aspire mode changed
+  // the meaning of `null` (a chamfer past the sharpening ceiling is now a run,
+  // not a refusal) and must not touch "unknown" on the way past: greying the box
+  // before a bit is picked would tell the operator sharpening is unavailable on
+  // this job, when all that has happened is that they have not chosen a bit yet.
+  // dis: 0 is therefore v1.13.0's answer, restored and pinned.
   { name: "no bit yet (first run ever)", bit: "", angle: "", dia: "", size: "0.020",
-    noSection: true, expectCaption: "", expectInset: "",
+    noSection: true, noChart: true, expectCaption: "", expectInset: "",
+    expectSharp: { dis: 0, chk: 0, cap: 0 }, expectPresetsOff: 0,
     expectBlock: "Choose a bit to see the cut." },
   // Opens on a 90 deg bit -- no mode row, no caption, no inset -- then the
   // operator picks a 30 deg 1/2in bit without the dialog closing. Everything
@@ -317,32 +327,63 @@ var CASES = [
   // directions at once. The run's real gate is the nesting, and the page cannot
   // see it (this dialog is shown before the loops are ever read), so the box is
   // LIVE on Auto and there is no caption.
+  // expectPresetsOff 0 with the box TICKED is the other guard on aspire mode:
+  // a chamfer under the ceiling is still ours to cut, so ticking Sharp must not
+  // take the cut position away. Without it, greying on the tick alone -- rather
+  // than on the tick AND the ceiling -- would pass every aspire case below.
   { name: "sharp: auto + ticked (live, no caption)", bit: "60deg V-bit", angle: "60",
     dia: "0.5", size: "0.030", side: "auto", sharp: "1", small: true,
-    expectSharp: { dis: 0, chk: 1, cap: 0 } },
-  // And the depth ceiling still greys on Auto exactly as it does on a forced
-  // side -- the ceiling is side-blind arithmetic, and since the side left
-  // CO.sharp_applies that is structural rather than merely true.
-  { name: "sharp: auto, impossible at any position", bit: "1/4in 90deg V-bit",
+    expectSharp: { dis: 0, chk: 1, cap: 0 }, expectPresetsOff: 0 },
+  // 2026-08-04, aspire mode. Past the sharpening ceiling the box used to grey
+  // AND untick itself with the caption "needs a smaller chamfer, or a bigger
+  // bit" -- i.e. the gadget refused the run. It does not refuse it any more:
+  // Aspire's own chamfer engine cuts a sharp chamfer at any size, and the price
+  // is the cut position, not the corner (Tim's ruling -- large chamfers beat
+  // flute position). So the box stays LIVE and the CUT POSITION row greys
+  // instead, with the caption moved there because that is the control that
+  // stopped working.
+  //
+  // 0.13 on a 1/4in 90deg bit is the same chamfer the three refusal cases used
+  // to measure, deliberately: nothing about the arithmetic moved, only what the
+  // dialog does with the answer.
+  { name: "aspire: big sharp chamfer - box live, presets greyed", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.13", side: "auto", sharp: "1", small: true,
-    expectSharp: { dis: 1, chk: 0, cap: 1 },
-    expectCap: "needs a smaller chamfer, or a bigger bit" },
-  // 2026-08-03: the side is not the only way to grey the box -- past the
-  // bit's depth ceiling (W > 0.85r) no cut position sharpens either, and that
-  // caption ("needs a smaller chamfer, or a bigger bit", 39 chars) is far
-  // longer than the side one above ("needs Side: Inside or Outside", 29) but
-  // nothing had ever rendered it until now, so its real width in this row was
-  // unmeasured. The ceiling is side-blind arithmetic (sharpMaxPercent takes no
-  // side), and the pair below is what says so out loud rather than by
-  // argument: same bit, same size, both sides, same greyed state.
-  { name: "sharp: impossible at any position (long caption)", bit: "1/4in 90deg V-bit",
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectPresetCap: "cut from the tip",
+    // 0.13 setback on a 90 deg bit: W = 0.13 and tan(45) = 1, so the tip depth
+    // IS the chamfer size. The bar and the chart must both say so, and neither
+    // may still be quoting the 80% band depth (0.1718) beside it.
+    expectSummary: ["from the tip", "0.13 in"],
+    expectSelTxt: ["from the tip", "D 0.1300"] },
+  // The other half, and the one that says the greying is not simply always on:
+  // the same bit and the same chamfer with the box UNTICKED is an ordinary
+  // multi-pass run, so the buttons must still work. Without this a page that
+  // greyed the row unconditionally would pass every other case here.
+  { name: "aspire: same size, sharp off - presets live, multi-pass as today", bit: "1/4in 90deg V-bit",
+    angle: "90", dia: "0.25", size: "0.13", side: "auto", sharp: "0", small: true,
+    expectSharp: { dis: 0, chk: 0, cap: 0 }, expectPresetsOff: 0,
+    // The control for the pair above: same bit, same size, box unticked, and
+    // both sentences still name the cut position. Without this a page that said
+    // "from the tip" unconditionally would pass every aspire case here.
+    expectSummary: ["@ 80%"], expectSelTxt: ["selected 80%", "G "] },
+  // The ceiling is side-blind arithmetic (sharpMaxPercent takes no side), and
+  // this pair is what says so out loud rather than by argument: same bit, same
+  // size, all three sides, same aspire state. They replace the two refusal
+  // cases that used to make the same point about greying the box.
+  //
+  // 2026-08-06: these two are now also what says the SIDE row greys and reads
+  // Auto up here. The side they were given is the one Lua drops (CO.effective_side),
+  // so a page still showing it would be promising a cut the run will not make.
+  { name: "aspire: inside is the same aspire run", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", small: true,
-    expectSharp: { dis: 1, chk: 0, cap: 1 },
-    expectCap: "needs a smaller chamfer, or a bigger bit" },
-  { name: "sharp: outside, impossible at any position", bit: "1/4in 90deg V-bit",
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectPresetCap: "big sharp chamfers cut from the tip",
+    expectSideShown: "auto" },
+  { name: "aspire: outside is the same aspire run", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.13", side: "outside", sharp: "1", small: true,
-    expectSharp: { dis: 1, chk: 0, cap: 1 },
-    expectCap: "needs a smaller chamfer, or a bigger bit" },
+    expectSharp: { dis: 0, chk: 1, cap: 0 },
+    expectPresetsOff: 1, expectPresetCap: "big sharp chamfers cut from the tip",
+    expectSideShown: "auto" },
   // The drop, said out loud. Ticking the box on a chamfer whose cut position is
   // too deep to sharpen moves that position on the operator's behalf, and this
   // note beside the buttons is the only thing that says so. Sharpening and
@@ -351,8 +392,13 @@ var CASES = [
   // both notes are on screen at once, i.e. the tallest #PassNote the page can
   // produce. Numbers: a 1/4in 90deg bit on a 0.095 chamfer takes 2 passes and
   // sharpens no higher than 20%, so the seeded 80% opens dropped to 20%.
+  // Also the control for the side greying: a ticked box BELOW the ceiling is an
+  // ordinary bands run, so Inside is honoured and the radios must still show it.
+  // Without this a page that read "auto" unconditionally would pass every aspire
+  // case above.
   { name: "sharp: the drop says so (two notes at once)", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.095", side: "inside", sharp: "1", small: true,
+    expectSideShown: "inside",
     expectSharp: { dis: 0, chk: 1, cap: 0 }, expectSelected: "20%", expectSeams: 1,
     expectNote: "Dropped to 20% so the corners can be sharp. " +
                 "Untick Sharp corners to go back to 80%." },
@@ -645,6 +691,41 @@ function seed(c, viewW, viewH) {
     "var sb=document.getElementById('SharpBox'), scap=document.getElementById('SharpCap');" +
     "var sharpDis=sb?(sb.disabled?1:0):-1, sharpChk=sb?(sb.checked?1:0):-1;" +
     "var capOn=(scap&&scap.offsetWidth>0)?1:0;" +
+    // 2026-08-04 aspire mode: past the sharpening ceiling the box stays live and
+    // the CUT POSITION row greys instead, because Aspire's chamfer engine has no
+    // cut position to choose. Two numbers because they are two separate ways for
+    // the state to be half-applied: a row that greys with nothing saying why, or
+    // a caption sitting under a row that still looks clickable. Same offsetWidth
+    // rule as capOn above -- a display:none caption that still occupied layout
+    // space would otherwise read as shown.
+    "var pres=document.getElementById('Presets');" +
+    "var presetsOff=(pres&&pres.className.indexOf('off')>=0)?1:0;" +
+    "var pcap=document.getElementById('PresetCap');" +
+    "var pcapOn=(pcap&&pcap.offsetWidth>0)?1:0;" +
+    // The flute chart greys with the row. Measured as COMPUTED INK on a real
+    // chart label rather than as a class name on the wrapper, because the two
+    // halves can fail independently: redraw() sets the class, a CSS rule
+    // #ChartWrap.off carries it onto the SVG, and either one alone leaves the
+    // chart looking exactly as it did. The value is the same grey #Presets.off
+    // uses on its dead text (#9aa0a6 = rgb(154,160,166)); the chart's live ink
+    // is #666/#333/#777, none of which can read as this by accident.
+    "var ctx=document.querySelector('#ChartWrap #Chart text');" +
+    "var chartOff=(ctx&&window.getComputedStyle(ctx).fill==='rgb(154, 160, 166)')?1:0;" +
+    // 2026-08-06: the SIDE row greys in the same state and for the same kind of
+    // reason -- Aspire's engine picks each loop's side from the geometry, so a
+    // forced Inside/Outside is a control that cannot be honoured. Three numbers,
+    // because there are three ways to half-apply it: greyed radios that still
+    // take a click, a greyed row with nothing saying why, and radios still
+    // showing a side the run will not use. sideShown is what the operator SEES,
+    // read off the radios rather than the hidden field, which deliberately keeps
+    // their real choice.
+    "var sg=document.getElementById('SideGroup');" +
+    "var sideOff=(sg&&sg.className.indexOf('off')>=0)?1:0;" +
+    "var sdcap=document.getElementById('SideCap');" +
+    "var sideCapOn=(sdcap&&sdcap.offsetWidth>0)?1:0;" +
+    "var srad=document.getElementsByName('SideRadio'), sideShown='-', sideDis=-1;" +
+    "for(var q=0;q<srad.length;q++){if(srad[q].checked)sideShown=srad[q].value;" +
+    "if(q===0)sideDis=srad[q].disabled?1:0;}" +
     // v1.12.0 defect fix: what the page actually put in the WinSize field. The
     // source pins in tests/test_release.lua say the reporter is written right;
     // this says it RAN and produced something Lua can read. '-' rather than an
@@ -656,7 +737,11 @@ function seed(c, viewW, viewH) {
     "' hdrInk='+hdrInk+' hdrPair='+hdrPair+' hdrGap='+hdrGap+" +
     "' helpW='+helpW+' helpX='+helpX+' helpGap='+helpGap+' barGap='+barGap+" +
     "' barOver='+barOver+' noteOn='+noteOn+' sumOn='+sumOn+" +
-    "' sharpDis='+sharpDis+' sharpChk='+sharpChk+' capOn='+capOn+' winsize='+ws;" +
+    "' sharpDis='+sharpDis+' sharpChk='+sharpChk+' capOn='+capOn+" +
+    "' presetsOff='+presetsOff+' pcapOn='+pcapOn+' chartOff='+chartOff+" +
+    "' sideOff='+sideOff+' sideCapOn='+sideCapOn+' sideDis='+sideDis+" +
+    "' sideShown='+sideShown+" +
+    "' winsize='+ws;" +
     "},1500);</script></body>");
   return s;
 }
@@ -790,7 +875,7 @@ function runCase(c, viewW, viewH, label) {
     "--dump-dom", "file:///" + f.replace(/\\/g, "/")
   ], { encoding: "utf8", maxBuffer: 40 * 1024 * 1024 });
 
-  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d) sharpDis=(-?\d) sharpChk=(-?\d) capOn=(\d) winsize=([^\s<]+)/.exec(out);
+  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d) sharpDis=(-?\d) sharpChk=(-?\d) capOn=(\d) presetsOff=(\d) pcapOn=(\d) chartOff=(\d) sideOff=(\d) sideCapOn=(\d) sideDis=(-?\d) sideShown=(\S+) winsize=([^\s<]+)/.exec(out);
   if (!m) { console.log("FAIL  " + name + "  (no measurement - page error?)"); failed++; return; }
 
   var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH2 = +m[5], ink = +m[6];
@@ -798,9 +883,11 @@ function runCase(c, viewW, viewH, label) {
   var helpW = +m[10], helpX = +m[11], helpGap = +m[12], barGap = +m[13], barOver = +m[14];
   var noteOn = +m[15], sumOn = +m[16];
   var sharpDis = +m[17], sharpChk = +m[18], capOn = +m[19];
+  var presetsOff = +m[20], pcapOn = +m[21], chartOff = +m[22];
+  var sideOff = +m[23], sideCapOn = +m[24], sideDis = +m[25], sideShown = m[26];
   // [^\s<]+ rather than \S+: winsize is the last field on the title line, and
   // --dump-dom serialises "</title>" straight after it with no space between.
-  var winsize = m[20];
+  var winsize = m[27];
   var bad = [];
 
   // v1.12.0 defect fix. The page reports its own client box twice -- as it is
@@ -1045,17 +1132,82 @@ function runCase(c, viewW, viewH, label) {
       bad.push("SharpCap visible=" + capOn + " want " + c.expectSharp.cap);
   }
 
-  // Which caption, not just whether one showed. There are two of them in the
-  // same slot -- the side one and the depth-ceiling one -- and each names a
-  // different remedy, so showing the wrong one sends the operator to change
-  // the wrong control while capOn above stays perfectly happy. Read from the
-  // DOM the way every other text assertion here is, rather than through the
-  // title line, which carries visibility only.
-  if (c.expectCap !== undefined) {
-    var scm = /id="SharpCap"[^>]*>([\s\S]*?)<\/span>/.exec(out);
-    var scText = scm ? scm[1].replace(/<[^>]*>/g, "") : "(no #SharpCap element)";
-    if (scText.indexOf(c.expectCap) === -1)
-      bad.push("SharpCap reads '" + scText + "', want '" + c.expectCap + "'");
+  // 2026-08-04 aspire mode. Past the sharpening ceiling the cut position stops
+  // being ours to choose -- Aspire's chamfer engine rides the tip down the
+  // mitre -- so the six buttons grey and a caption beside them says why. The
+  // two halves are asserted TOGETHER, from one field, because they are one
+  // state: applyAspireState sets both, and a greyed row with no caption (or a
+  // caption under a live row) is the way a half-applied state would look.
+  // The flute chart is the third half: it is a chart OF cut positions, so a
+  // greyed row above a chart still printing six of them in full colour is the
+  // same contradiction the greying exists to remove. Asserted from the same
+  // field for the same reason -- one state, one function (applyAspireState).
+  if (c.expectPresetsOff !== undefined) {
+    if (presetsOff !== c.expectPresetsOff)
+      bad.push("#Presets greyed=" + presetsOff + " want " + c.expectPresetsOff);
+    if (pcapOn !== c.expectPresetsOff)
+      bad.push("#PresetCap visible=" + pcapOn + " want " + c.expectPresetsOff);
+    // Only where a chart exists to grey. The blocked states (no bit, oversize)
+    // hide the chart entirely, so there is no ink to measure and nothing the
+    // operator could misread; asserting 0 there would pass on the absence.
+    if (!c.noChart && chartOff !== c.expectPresetsOff)
+      bad.push("#Chart ink greyed=" + chartOff + " want " + c.expectPresetsOff);
+    // The side row is the fourth half of the same state (2026-08-06). Asserted
+    // from the SAME field as the presets, because applyAspireState sets all of
+    // them together and a side row that stayed live above the ceiling is the
+    // defect S5 measured, still offered as a control. The radios must also be
+    // DISABLED, not merely grey -- a click that landed would rewrite the hidden
+    // field the operator's real choice is kept in.
+    if (sideOff !== c.expectPresetsOff)
+      bad.push("#SideGroup greyed=" + sideOff + " want " + c.expectPresetsOff);
+    if (sideCapOn !== c.expectPresetsOff)
+      bad.push("#SideCap visible=" + sideCapOn + " want " + c.expectPresetsOff);
+    if (sideDis !== c.expectPresetsOff)
+      bad.push("side radios disabled=" + sideDis + " want " + c.expectPresetsOff);
+  }
+  // What the radios SHOW. In aspire mode that is always "auto" whatever the
+  // operator picked, because auto is what the run will do and a greyed "Inside"
+  // beside a caption saying otherwise contradicts itself on the face of the
+  // dialog. Off that path they show the real choice, which is what proves the
+  // greying hands it back rather than losing it.
+  if (c.expectSideShown !== undefined && sideShown !== c.expectSideShown)
+    bad.push("side radios show '" + sideShown + "', want '" + c.expectSideShown + "'");
+
+  // The button bar's one-liner and the chart's bold line are the two places
+  // that still SPEAK a cut position, and both had to stop in aspire mode -- a
+  // bar reading "@ 80%" over a greyed row is the dialog contradicting itself in
+  // the last place the operator looks before pressing OK. Substrings, plural,
+  // so the wording and the NUMBER are both pinned: a line that says "from the
+  // tip" while quoting a band depth would be half fixed.
+  // Middots and em-dashes are deliberately not matched on -- character
+  // round-trips through --dump-dom are not what this gate is for.
+  function textOf(re, what) {
+    var mm = re.exec(out);
+    return mm ? mm[1].replace(/<[^>]*>/g, "") : "(no " + what + " element)";
+  }
+  if (c.expectSummary !== undefined) {
+    var sumText = textOf(/id="Summary"[^>]*>([\s\S]*?)<\/span>/, "#Summary");
+    for (var si = 0; si < c.expectSummary.length; si++)
+      if (sumText.indexOf(c.expectSummary[si]) === -1)
+        bad.push("summary missing '" + c.expectSummary[si] + "', got: " + sumText);
+  }
+  if (c.expectSelTxt !== undefined) {
+    var selText = textOf(/id="SelTxt"[^>]*>([\s\S]*?)<\/text>/, "#SelTxt");
+    for (var ti = 0; ti < c.expectSelTxt.length; ti++)
+      if (selText.indexOf(c.expectSelTxt[ti]) === -1)
+        bad.push("chart's selected line missing '" + c.expectSelTxt[ti] +
+                 "', got: " + selText);
+  }
+
+  // The words, not just the visibility -- this caption is the only thing that
+  // explains why six buttons the operator was using a keystroke ago no longer
+  // respond. Read from the DOM the way every other text assertion here is,
+  // rather than through the title line, which carries visibility only.
+  if (c.expectPresetCap !== undefined) {
+    var pcm = /id="PresetCap"[^>]*>([\s\S]*?)<\/span>/.exec(out);
+    var pcText = pcm ? pcm[1].replace(/<[^>]*>/g, "") : "(no #PresetCap element)";
+    if (pcText.indexOf(c.expectPresetCap) === -1)
+      bad.push("PresetCap reads '" + pcText + "', want '" + c.expectPresetCap + "'");
   }
 
   console.log((bad.length ? "FAIL  " : "ok    ") + name +
@@ -1198,9 +1350,34 @@ var MSG_CASES = [
     head: "Chamfer 2 rebuilt",
     rows: "Offset=3 vectors (3 outward, 0 inward);G=0.0403 in;Plunge D=0.0803 in;" +
           "Standoff=0.0403 in;Layer=EdgeBreaker - Offset 02",
-    note: "Note: ignored 1 selected vector(s) that are EdgeBreaker's own offsets.\n\n" +
+    note: "Note: ignored 1 selected vector that EdgeBreaker drew itself.\n\n" +
           "Toolpath 'Chamfer 2 - 0.06 in [EdgeBreaker 02]' created and calculated " +
-          "(Profile On, depth 0.0803 in)\nusing V-Bit 60.0&deg; - 1/2&quot;." }
+          "(Profile On, depth 0.0803 in)\nusing V-Bit 60.0&deg; - 1/2&quot;." },
+
+  // 2026-08-04: the ASPIRE-strategy report, which is a different set of rows.
+  // Nothing is offset on that path -- the copies sit exactly on their originals
+  // and Aspire's chamfer toolpath cuts them from the tip down -- so G, Plunge D
+  // and Standoff are replaced by "Copied" and "Chamfer depth". That second label
+  // is the longest this table has ever had to carry (13 characters against
+  // "Standoff"'s 8), and the label column is what decides where the value column
+  // starts, so its width was unmeasured until this case existed.
+  //
+  // Seeded with the start depth row as well, i.e. the tallest the aspire report
+  // gets: it opens in the TALL window like every other report with rows.
+  //
+  // What is deliberately NOT here: "Aspire's chamfer toolpath cuts them from the
+  // tip down, so there's no offset and no standoff." That sentence lives only in
+  // the PLAIN fallback string (EdgeBreaker.lua ~4588), which is the grey box a
+  // scripting-disabled machine gets -- MessageDialog.htm has no field for it, so
+  // seeding it here would measure a layout this page never renders.
+  { name: "msg: aspire report (Copied + Chamfer depth rows)", kind: "m-warn", tall: true,
+    head: "Chamfer 2 rebuilt",
+    rows: "Copied=12 vectors (8 outward, 4 inward);Chamfer depth=0.1300 in;" +
+          "Start depth=0.0500 in (total reach 0.1800 in);" +
+          "Layers=EdgeBreaker - Offset 02-1 to 02-3",
+    note: "Note: ignored 1 selected vector that EdgeBreaker drew itself.\n\n" +
+          "Toolpath 'Chamfer 2 - 0.13 in [EdgeBreaker 02]' created and calculated " +
+          "(Chamfer, depth 0.1300 in)\nusing V-Bit 90.0&deg; - 1/4&quot;." }
 ];
 
 function msgSeed(c, viewH) {

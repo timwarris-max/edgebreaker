@@ -44,9 +44,10 @@ CO.MAX_PASSES = 8
 -- are the safety. This is far below anything measurable and far above double
 -- rounding error at any size either unit system produces.
 CO.FIT_EPS = 1e-9
+
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.13.0"
+CO.VERSION         = "1.14.0"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -56,6 +57,14 @@ CO.VERSION         = "1.13.0"
 -- template loads, Toolpath:ReplaceTool swaps its tool for the one the user
 -- picked. Its old name encoded the bit; a fixed name says it no longer does.
 CO.TEMPLATE_NAME = "EdgeBreaker.ToolpathTemplate"
+
+-- The second shipped template: Aspire's own Chamfering toolpath, saved at the
+-- machine 2026-08-03 with the layer restriction already inside (spec section 2a-4).
+-- Used only above the sharpening ceiling, and only when Sharp corners is ticked.
+CO.CHAMFER_TEMPLATE_NAME = "EdgeBreakerChamfer.ToolpathTemplate"
+-- The type identifier baked into every chamfer template. validate_chamfer_template
+-- requires it, which is what stops a profile template being patched into nonsense.
+CO.CHAMFER_DIALOG_ID = "uiChamferDialog"
 
 -- Registry section for ToolDBId Save/LoadDefaults, which is how Aspire itself
 -- remembers a gadget's last-picked tool (Keyhole/Dragknife do the same).
@@ -69,6 +78,34 @@ function CO.length_in_job_units(len, src_in_mm, job_in_mm)
    if type(len) ~= "number" or len ~= len or len <= 0 then return nil end
    if src_in_mm == job_in_mm then return len end
    if src_in_mm then return len / 25.4 end
+   return len * 25.4
+end
+
+-- The other direction, and the one that lets a metric operator run this gadget
+-- at all (2026-08-04 metric-jobs spec). Aspire CONVERTS a template's stored
+-- lengths into the job's units when it loads one - measured at the machine: the
+-- shipped inch chamfer template's 0.3464 cut depth arrives in a mm job as 8.799,
+-- and its Safe Z as 5.08. So a number we write in job units would be converted a
+-- second time; it has to go in in the TEMPLATE's units.
+--
+-- Not length_in_job_units with its arguments swapped: that one treats <= 0 as
+-- unusable, and a start depth of zero is the ordinary case here.
+function CO.length_in_template_units(len, job_units, template_units)
+   if type(len) ~= "number" or len ~= len or len < 0 then return nil end
+   -- Spelled out rather than folded into `and`/`or`: the idiom cannot carry a
+   -- FALSE result (`x and false or nil` is always nil), and "in" maps to false
+   -- here, so the short form silently refused every inch job.
+   local function is_mm(u)
+      if u == "mm" then return true end
+      if u == "in" then return false end
+      return nil
+   end
+   local job_mm, tpl_mm = is_mm(job_units), is_mm(template_units)
+   -- No guessing. Writing an unconverted number into a template cuts 25.4x too
+   -- deep or too shallow, so units we cannot name refuse outright.
+   if job_mm == nil or tpl_mm == nil then return nil end
+   if job_mm == tpl_mm then return len end
+   if job_mm then return len / 25.4 end
    return len * 25.4
 end
 
@@ -589,6 +626,22 @@ function CO.band_offset_distance(dir, offset)
    return -offset
 end
 
+-- How far to offset a loop to ask "does a chamfer this big still leave a top
+-- edge here?" (2026-08-04 direction-split sitting, S3). Aspire's chamfer engine
+-- eats W off the MATERIAL side of every wall, so the chamfer's top edge lands W
+-- into the material - a negative offset in band_offset_distance's terms, which
+-- is the same loop CO.sharp_offset_distance lands on and is deliberately
+-- derived from it rather than re-signed here.
+--
+-- A shape survives only where it is wider than 2W, since both its walls are
+-- eaten. Offsetting by this empties the loop when that fails EVERYWHERE along
+-- it; where it fails only locally the offset still returns something and the
+-- caller's probe passes. See the aspire copy loop in main() for what that does
+-- and does not catch, and why the gap is left open.
+function CO.chamfer_probe_distance(dir, W)
+   return CO.band_offset_distance(dir, -W)
+end
+
 -- How far a relief band is offset FROM THE FINISHING BAND'S LOOP -- which is
 -- what it is actually cut from, so that its corners are the finishing pass's
 -- corners backed off rather than the original vector's corners.
@@ -827,23 +880,69 @@ end
 -- displacement direction, from the nesting, and we have only measured its answer
 -- as far as depth 1 (spec section 2). Depth is what lets CO.sharp_nesting_ok
 -- refuse the rest instead of guessing.
+local function loop_inside(inner, outer)
+   local ax0, ay0, ax1, ay1 = loop_bbox(inner.pts)
+   local bx0, by0, bx1, by1 = loop_bbox(outer.pts)
+   return ax0 >= bx0 and ay0 >= by0 and ax1 <= bx1 and ay1 <= by1
+      and CO.point_in_poly(inner.pts[1][1], inner.pts[1][2], outer.pts)
+end
+
 function CO.nesting_depths(loops)
    local out = {}
    for i, li in ipairs(loops) do
-      local ax0, ay0, ax1, ay1 = loop_bbox(li.pts)
       local depth = 0
       for k, lk in ipairs(loops) do
-         if k ~= i then
-            local bx0, by0, bx1, by1 = loop_bbox(lk.pts)
-            if ax0 >= bx0 and ay0 >= by0 and ax1 <= bx1 and ay1 <= by1
-               and CO.point_in_poly(li.pts[1][1], li.pts[1][2], lk.pts) then
-               depth = depth + 1
-            end
-         end
+         if k ~= i and loop_inside(li, lk) then depth = depth + 1 end
       end
       out[i] = depth
    end
    return out
+end
+
+-- Which loops belong to the same SHAPE: every depth-0 loop plus everything
+-- nested inside it, as a list of index lists (narrow-break guard spec 4a).
+--
+-- The guard needs this because one aggregate count over the whole selection can
+-- CANCEL. A thin bar eaten away is -1 and a welded dumbbell pinching in two is
+-- +1; put them in the same selection at the same size and the total does not
+-- move, the guard says nothing, and both shapes are destroyed. Worse, the size
+-- search could land on a cancelling number and RECOMMEND it. Multi-letter
+-- artwork is exactly where several simultaneous events are normal, so the guard
+-- was weakest where it was aimed.
+--
+-- A letter still travels WITH its counters -- that is the point of grouping by
+-- top-level loop rather than one loop at a time -- so a waist between an outline
+-- and its counter is still caught.
+--
+-- A loop with no depth-0 container becomes its own group. That is the twins case
+-- (two identical loops each contain the other, so nothing is outermost) and
+-- anything else the containment test cannot place; checking it alone is always
+-- safe, because a group can only ever hide a change by cancelling against
+-- another loop in the same group.
+function CO.shape_groups(loops)
+   local depths = CO.nesting_depths(loops)
+   local groups, group_of = {}, {}
+   for i, d in ipairs(depths) do
+      if d == 0 then
+         groups[#groups + 1] = { i }
+         group_of[i] = #groups
+      end
+   end
+   for i, d in ipairs(depths) do
+      if d ~= 0 then
+         local home = nil
+         for k, dk in ipairs(depths) do
+            if dk == 0 and k ~= i and loop_inside(loops[i], loops[k]) then home = k; break end
+         end
+         if home ~= nil then
+            local g = groups[group_of[home]]
+            g[#g + 1] = i
+         else
+            groups[#groups + 1] = { i }
+         end
+      end
+   end
+   return groups
 end
 
 -- Two-level, deliberately and unchanged: outermost outward, everything nested
@@ -871,6 +970,112 @@ function CO.resolve_directions(loops, side)
       return out
    end
    return CO.classify_directions(loops)
+end
+
+-- Which way "into the material" points, for the WHOLE selection at once
+-- (narrow-break guard spec 4b). The guard shrinks everything with one signed
+-- distance, so there has to be one answer or none:
+--
+--   -1   material is inside the loops (letters, islands) -- shrink them
+--    1   material is outside the loops (pocket walls)    -- grow them, which is
+--        erosion of the material on the other side, and two pockets whose
+--        separating wall is thinner than 2W come back merged
+--  nil   no single answer -- the guard stands down and the run proceeds
+--
+-- nil is a forced Side over a NESTED selection: Inside on an outline and its
+-- counter describes no region one distance can erode. Standing down is the
+-- right failure -- a false refusal blocks work that would have cut correctly,
+-- which is worse than the silence this guard exists to remove.
+function CO.erosion_sign(dirs, depths)
+   if type(dirs) ~= "table" or type(depths) ~= "table" then return nil end
+   if #dirs == 0 or #dirs ~= #depths then return nil end
+   local base = nil
+   for i = 1, #dirs do
+      if depths[i] == 0 then base = dirs[i]; break end
+   end
+   if base ~= "outward" and base ~= "inward" then return nil end
+   -- Nested pockets are a shape nobody has measured and the guard will not
+   -- guess at: material outside a hole that is itself inside a hole is not
+   -- something one signed offset describes.
+   for i = 1, #dirs do
+      if base == "inward" and depths[i] ~= 0 then return nil end
+      local expect
+      if depths[i] % 2 == 0 then expect = base
+      elseif base == "outward" then expect = "inward"
+      else expect = "outward" end
+      if dirs[i] ~= expect then return nil end
+   end
+   return (base == "outward") and -1 or 1
+end
+
+-- Ten halvings lands the search within hi/1024 of the true boundary - a
+-- FRACTION of the requested setback, not a fixed distance: 0.0002 only on a
+-- 0.2 request. An mm job asking a `hi` of 5 lands within 0.0049, not 0.0002.
+-- Finer than the 0.001 the answer is rounded to only while hi stays under
+-- roughly 0.2; state it as hi/1024 if this is ever checked against a bigger
+-- request. Only ever paid on a refusal, when the operator is stopped anyway
+-- -- a clean run costs exactly one check.
+CO.BISECT_STEPS = 10
+CO.BISECT_ROUND = 0.001
+
+-- The guard answers yes/no; the message promises a size. Search for the biggest
+-- setback that still passes (narrow-break guard spec 4d).
+--
+-- Pure: `probe` is handed in, so the search is gated by the suite and the SDK
+-- appears nowhere in it.
+--
+-- Rounds DOWN, so the number printed is one that provably passed. That is
+-- safe under an ASSUMPTION, not a proof: that `probe` is monotonic in `w` --
+-- once a setback passes, every smaller setback also passes. True of material
+-- removed (a smaller chamfer always removes less), but the predicate actually
+-- being bisected is the CONTOUR COUNT, not material removed, and two shapes
+-- can change count in opposite directions at different setbacks. Nothing here
+-- proves the count behaves monotonically; it is assumed.
+function CO.bisect_w(hi, steps, probe)
+   if type(hi) ~= "number" or hi <= 0 then return nil end
+   if type(steps) ~= "number" or steps < 1 then return nil end
+   if type(probe) ~= "function" then return nil end
+   local lo, best = 0, nil
+   for _ = 1, steps do
+      local mid = (lo + hi) / 2
+      if probe(mid) then best = mid; lo = mid else hi = mid end
+   end
+   if best == nil then return nil end
+   local r = math.floor(best / CO.BISECT_ROUND) * CO.BISECT_ROUND
+   if r <= 0 then return nil end
+   return r
+end
+
+-- Which band each loop goes on when Aspire's chamfer engine cuts the run
+-- (direction-split spec section 3a). The engine does NOT nest: one _chpdInside
+-- byte serves every loop in a toolpath (measured 2026-08-04, session 075 - the
+-- OPPOSITE of the profile engine's B0 result, and a finding about one engine
+-- must never be carried to the other). So each direction present gets its own
+-- layer and its own template load, with the side byte patched per load.
+-- Outward is band 1 whenever present, which keeps a single-direction run on
+-- NN-1 exactly as before the split. An unrecognised direction refuses rather
+-- than guessing - same rule as patch_chamfer_side.
+function CO.chamfer_bands(dirs)
+   if type(dirs) ~= "table" then return nil, "no directions to band" end
+   local seen = {}
+   for i = 1, #dirs do
+      local d = dirs[i]
+      if d ~= "outward" and d ~= "inward" then
+         return nil, "direction must be outward or inward, not " .. tostring(d)
+      end
+      seen[d] = true
+   end
+   local dir_of_band, band_for, n = {}, {}, 0
+   for _, d in ipairs({ "outward", "inward" }) do
+      if seen[d] then
+         n = n + 1
+         band_for[d] = n
+         dir_of_band[n] = d
+      end
+   end
+   local band_of = {}
+   for i = 1, #dirs do band_of[i] = band_for[dirs[i]] end
+   return { n = n, dir_of_band = dir_of_band, band_of = band_of }
 end
 
 -- Sharp corners: is the box ticked, and is the cut shallow enough?
@@ -902,6 +1107,39 @@ end
 -- cut something other than the picture the operator pressed OK on.
 function CO.sharp_applies(sharp, d, d_max)
    return tonumber(sharp) == 1 and d <= d_max
+end
+
+-- Which engine cuts a sharp chamfer (2026-08-04, large-chamfer spec section 3a).
+-- Below the sharpening ceiling the gadget's own bands + _ppdCornerSharpen keep
+-- full flute control; above it, Tim's ruling (large-chamfers-beat-flute-position)
+-- trades that control for Aspire's chamfer engine, whose tip rides the mitre and
+-- sharpens at any size. d0 is the cut depth at the 0% preset - if even THAT
+-- cannot sharpen, no preset can, and the ceiling stops being a refusal.
+function CO.chamfer_strategy(sharp, d0, d_max)
+   if tonumber(sharp) ~= 1 then return "bands" end
+   if d0 <= d_max then return "bands" end
+   return "aspire"
+end
+
+-- Above the ceiling Aspire's own engine picks each loop's side from the
+-- geometry (direction-split spec section 9j), so a forced Side has no correct
+-- behaviour there - writing it produces the step S5 measured. Dropped to
+-- "auto" for that path and for no other. Anything unrecognised falls through
+-- unchanged: resolve_directions already treats a value it does not know as
+-- auto, so the worst failure mode stays the old automatic behaviour.
+function CO.effective_side(side, strategy)
+   if strategy == "aspire" then return "auto" end
+   return side
+end
+
+-- The cut depth Aspire's chamfer engine needs for a setback of W: the flank
+-- makes the half-angle with the axis, so depth = W / tan(half-angle). UNPROVEN
+-- WHICH WAY ROUND ASPIRE READS IT at any angle other than 90 (where tan 45 = 1
+-- hides the difference) - sitting check C2 measures it with a 60-degree bit, and
+-- if it comes back the other way this line changes - AND its preview mirror,
+-- dTip in EdgeBreakerDialog.htm, which must move with it.
+function CO.chamfer_cut_depth(W, included_deg)
+   return W / math.tan(CO.half_angle(included_deg))
 end
 
 -- Can this selection be sharpened, and if so which way does the template point?
@@ -1330,6 +1568,200 @@ function CO.find_square_offset(bytes)
    return find_value_once(bytes, SQUARE_NEEDLE, "_ppdSquareCorners", false)
 end
 
+-- The Aspire chamfer template's own records (2026-08-04, large-chamfer spec
+-- section 2). Same wire format as the profile ones: UTF-16LE name, 4-byte type
+-- tag, value. skip_formula is true throughout because the _chpd* family carries
+-- the same "...Formula" siblings the _ppd* family does - the "F\0" test is the
+-- one find_depth_offset has always used.
+local CH_DEPTH_NEEDLE = ("_chpdChamferDepth"):gsub(".", "%0\0")
+local CH_START_NEEDLE = ("_chpdStartDepth"):gsub(".", "%0\0")
+local CH_SIDE_NEEDLE  = ("_chpdInside"):gsub(".", "%0\0")
+local CH_ANGLE_NEEDLE = ("_chpdAngle"):gsub(".", "%0\0")
+local CH_SLOPE_NEEDLE = ("_chpdVectorsAtTop"):gsub(".", "%0\0")
+local CH_MM_NEEDLE    = ("_chpdInMM"):gsub(".", "%0\0")
+local ED_NEEDLE       = ("EditingDialog"):gsub(".", "%0\0")
+
+function CO.find_chamfer_depth_offset(bytes)
+   return find_value_once(bytes, CH_DEPTH_NEEDLE, "_chpdChamferDepth", true)
+end
+
+function CO.find_chamfer_start_offset(bytes)
+   return find_value_once(bytes, CH_START_NEEDLE, "_chpdStartDepth", true)
+end
+
+function CO.find_chamfer_side_offset(bytes)
+   return find_value_once(bytes, CH_SIDE_NEEDLE, "_chpdInside", true)
+end
+
+function CO.find_chamfer_angle_offset(bytes)
+   return find_value_once(bytes, CH_ANGLE_NEEDLE, "_chpdAngle", true)
+end
+
+function CO.find_chamfer_slope_offset(bytes)
+   return find_value_once(bytes, CH_SLOPE_NEEDLE, "_chpdVectorsAtTop", true)
+end
+
+-- What kind of toolpath a template describes. Every template carries an
+-- EditingDialog string; a chamfer one says "uiChamferDialog". This is the check
+-- that keeps the two shipped templates from ever being fed to each other's
+-- patchers (spec section 7).
+function CO.read_editing_dialog(bytes)
+   if type(bytes) ~= "string" then return nil, "no template bytes" end
+   local s, e = string.find(bytes, ED_NEEDLE, 1, true)
+   if s == nil then return nil, "template has no EditingDialog record" end
+   local at = e + 5                          -- skip the 4-byte type tag
+   if bytes:sub(at, at + 2) ~= "\255\254\255" then
+      return nil, "EditingDialog is not a string record"
+   end
+   local n = bytes:byte(at + 3)
+   if n == nil then return nil, "EditingDialog string truncated" end
+   local raw = bytes:sub(at + 4, at + 3 + n * 2)
+   if #raw ~= n * 2 then return nil, "EditingDialog string truncated" end
+   return (raw:gsub("(.)\0", "%1"))
+end
+
+function CO.read_chamfer_units(bytes)
+   local at, err = find_value_once(bytes, CH_MM_NEEDLE, "_chpdInMM", true)
+   if at == nil then return nil, err end
+   local b = bytes:byte(at)
+   if b == 0 then return "in" end
+   if b == 1 then return "mm" end
+   return nil, "unrecognised _chpdInMM value: " .. tostring(b)
+end
+
+-- Whether a copy must be reversed before it is drawn, from the loop's signed
+-- area: every aspire-path copy is laid down COUNTER-CLOCKWISE (positive area).
+-- The rule lives here, in one place, because the side table below is defined
+-- against that winding and nothing else - a copy drawn with whatever winding
+-- the original happened to have is exactly the defect the 2026-08-04 sitting
+-- found. A degenerate zero-area loop stays as it is; it has no winding to fix.
+function CO.chamfer_copy_reverse(area)
+   return type(area) == "number" and area < 0
+end
+
+-- Which _chpdInside code each EdgeBreaker direction gets, FOR A COPY DRAWN
+-- COUNTER-CLOCKWISE (see chamfer_copy_reverse above - the two are one rule).
+--
+-- Measured at the machine 2026-08-04, on the waste-removed ring, per edge in
+-- words: 0 is what Aspire's own form calls Inside, and Inside is what cuts a
+-- clean bevel on an outward loop (material inside the vector). 1 is Outside,
+-- for an inward loop (material outside it).
+--
+-- These are the values that ORIGINALLY shipped. Session 075 flipped them after
+-- a ring test found every bevel cutting into the waste - but the real cause of
+-- that was the template's Slope Downwards (see patch_chamfer_slope), which
+-- sinks a groove beside the vector whichever side is asked for. The side
+-- verdict was made on evidence the slope defect had already corrupted, and the
+-- flip compensated for a bug that lived somewhere else. With the slope fixed,
+-- the original mapping measures correct on both edges.
+--
+-- Two rules make this table meaningful and neither is optional:
+--   * the copies are normalized counter-clockwise (chamfer_copy_reverse) -
+--     without that, the inner loop's opposite winding flips what these bytes
+--     mean and masks an inversion, which is exactly how 075's ring read as
+--     half-right;
+--   * the slope is patched, or every side looks wrong.
+--
+-- Judge this table only on a piece whose waste is machined away, never on
+-- plain stock: a bevel cut into the waste beside the vector looks exactly
+-- like a chamfer on the vector (session 075's lesson, twice over).
+local CH_INSIDE_FOR_DIR = { outward = 0, inward = 1 }
+
+function CO.patch_chamfer_depth(bytes, depth)
+   local off, err = CO.find_chamfer_depth_offset(bytes)
+   if off == nil then return nil, err end
+   return bytes:sub(1, off - 1) .. CO.encode_double(depth) .. bytes:sub(off + 8)
+end
+
+function CO.patch_chamfer_start_depth(bytes, start)
+   local off, err = CO.find_chamfer_start_offset(bytes)
+   if off == nil then return nil, err end
+   return bytes:sub(1, off - 1) .. CO.encode_double(start) .. bytes:sub(off + 8)
+end
+
+function CO.patch_chamfer_side(bytes, dir)
+   local code = CH_INSIDE_FOR_DIR[dir]
+   if code == nil then
+      return nil, "chamfer side must be outward or inward, not " .. tostring(dir)
+   end
+   local off, err = CO.find_chamfer_side_offset(bytes)
+   if off == nil then return nil, err end
+   return bytes:sub(1, off - 1) .. string.char(code) .. bytes:sub(off + 1)
+end
+
+-- The slope, which the form calls Slope Downwards / Slope Upwards and the
+-- template stores as _chpdVectorsAtTop. Measured at the machine 2026-08-04
+-- (direction-split sitting, the S1 fail): the template was saved Slope
+-- Downwards (1), which anchors the bevel's SURFACE edge at the drawn vector
+-- and digs deeper moving away from it - so a coincident copy leaves the part's
+-- own edge sharp and sinks a groove into the face beside it, on both
+-- directions at once, with both side bytes correct. Every EdgeBreaker copy is
+-- the wall the chamfer breaks, so the vector must be the chamfer's BOTTOM
+-- edge: Slope Upwards, 0. Confirmed live both ways - flipping the form's slope
+-- alone fixed both toolpaths. No parameter: no run wants the other value, and
+-- leaving the baked byte alone is exactly the silence the angle patch (D8)
+-- exists to prevent.
+function CO.patch_chamfer_slope(bytes)
+   local off, err = CO.find_chamfer_slope_offset(bytes)
+   if off == nil then return nil, err end
+   return bytes:sub(1, off - 1) .. string.char(0) .. bytes:sub(off + 1)
+end
+
+-- The bit's angle, which Aspire will NOT work out for itself. Measured at the
+-- machine 2026-08-04 (sitting check D8): loading the template and then calling
+-- ReplaceTool leaves _chpdAngle at whatever the template was saved with - 45,
+-- because it was saved with a 90 degree bit. Aspire then derives the chamfer's
+-- WIDTH from that stale angle (W = C * tan A, check C2), so a 60 degree bit
+-- asked for a 0.15 chamfer was quietly planned as a 45 degree one 0.2598 wide.
+-- Selecting the bit through Aspire's own form DOES re-derive it, so the number
+-- is a plain stored value and writing it here is enough.
+--
+-- Takes the bit's INCLUDED angle and halves it, because every other call site in
+-- this file passes included angles; a function that wanted the half-angle would
+-- be one silent factor of two away from the defect it exists to fix.
+function CO.patch_chamfer_angle(bytes, included_deg)
+   if type(included_deg) ~= "number" or included_deg <= 0 then
+      return nil, "chamfer angle needs the bit's included angle, not "
+         .. tostring(included_deg)
+   end
+   local off, err = CO.find_chamfer_angle_offset(bytes)
+   if off == nil then return nil, err end
+   return bytes:sub(1, off - 1) .. CO.encode_double(included_deg / 2) .. bytes:sub(off + 8)
+end
+
+-- Everything a run patches into the chamfer template, in one order.
+-- Aspire steps down internally (_chpdStepdown), so depth needs no banding - but
+-- DIRECTION does: the engine does not nest, so a mixed run loads this once per
+-- direction, each aimed at its own band layer (direction-split spec).
+-- Same units contract as patch_template_run: job_units is required and a run
+-- without it refuses (2026-08-04 metric-jobs spec section 3).
+function CO.patch_chamfer_run(bytes, depth, start, slot, band, dir, included_deg, job_units)
+   local tunits = CO.read_chamfer_units(bytes)
+   local d = CO.length_in_template_units(depth, job_units, tunits)
+   local s = CO.length_in_template_units(start or 0, job_units, tunits)
+   if d == nil or s == nil then
+      return nil, "cannot tell what units to write the depth in (job "
+         .. tostring(job_units) .. ", template " .. tostring(tunits) .. ")"
+   end
+   local out, err = CO.patch_chamfer_depth(bytes, d)
+   if out == nil then return nil, err end
+   out, err = CO.patch_chamfer_start_depth(out, s)
+   if out == nil then return nil, err end
+   -- Before the layer and side patches, so a run with no angle refuses early.
+   -- A missing angle must never fall through to "leave the 45 alone": that
+   -- silence is exactly the defect check D8 found.
+   out, err = CO.patch_chamfer_angle(out, included_deg)
+   if out == nil then return nil, err end
+   -- Band is REQUIRED and a nil band refuses inside patch_template_layer - a
+   -- default of 1 would let a mixed run silently aim band 1's layer with band
+   -- 2's side (direction-split spec section 3b).
+   out, err = CO.patch_template_layer(out, slot, band)
+   if out == nil then return nil, err end
+   out, err = CO.patch_chamfer_slope(out)
+   if out == nil then return nil, err end
+   return CO.patch_chamfer_side(out, dir)
+end
+
 function CO.patch_template_sharp(bytes, side)
    -- No default. A side we do not recognise refuses rather than picking one:
    -- the two codes aim the cut at opposite sides of the line, so a silent
@@ -1382,7 +1814,7 @@ end
 -- Corners). Allowance is deliberately not one of them -- Aspire discards it
 -- under sharpening (see CO.patch_template_sharp), so nothing requires it.
 -- Returns true, or nil + a reason written for the summary box.
-function CO.validate_template(bytes, job_units)
+function CO.validate_template(bytes)
    if bytes == nil then
       return nil, "The template file '" .. CO.TEMPLATE_NAME .. "' could not be read."
    end
@@ -1432,16 +1864,60 @@ function CO.validate_template(bytes, job_units)
       return nil, "The template was saved with Machine Vectors = " .. tostring(mv)
                   .. " - re-save it with Machine Vectors 'On' (see Help)."
    end
-   -- The depth we patch is in job units, so a template saved from the other
-   -- unit system would be patched with a number it reads differently. Only a
-   -- successful, contradicting read blocks it: an absent tag is not evidence.
-   local template_units = CO.read_template_units(bytes)
-   if template_units ~= nil and job_units ~= nil and template_units ~= job_units then
-      local t_word = (template_units == "mm") and "mm" or "inch"
-      local j_word = (job_units == "mm") and "mm" or "inch"
-      return nil, "The template was saved from a " .. t_word .. " job but this job is in "
-                  .. j_word .. ". Re-save the template from a " .. j_word
-                  .. " job (see Help)."
+   -- A template saved from the other unit system used to be refused here. It is
+   -- not any more (2026-08-04 metric-jobs spec): Aspire converts a template's
+   -- stored lengths into the job's units on load, so patch_template_run writes
+   -- ours in the TEMPLATE's units and Aspire converts them back. What the units
+   -- flag has to be is READABLE - we cannot convert into units we cannot name.
+   -- Caught here, before anything is drawn; the patcher's own guard on the same
+   -- condition is a backstop with a technical sentence nobody should ever see.
+   if CO.read_template_units(bytes) == nil then
+      return nil, "The template doesn't say what units it was saved in. "
+                  .. "Re-save it from any job (see Help)."
+   end
+   return true
+end
+
+-- The chamfer template's pre-flight, the same contract as validate_template:
+-- true, or nil plus a sentence the operator can act on. Checks in order of how
+-- clearly they name the problem. Wording is a DRAFT for Tim's redline.
+function CO.validate_chamfer_template(bytes)
+   if type(bytes) ~= "string" or #bytes == 0 then
+      return nil, "Couldn't read " .. CO.CHAMFER_TEMPLATE_NAME
+         .. " - it should be in the gadget's folder. Reinstall the gadget to put it back."
+   end
+   local ed = CO.read_editing_dialog(bytes)
+   if ed ~= CO.CHAMFER_DIALOG_ID then
+      return nil, CO.CHAMFER_TEMPLATE_NAME
+         .. " isn't a chamfer toolpath template. Reinstall the gadget to put the right one back."
+   end
+   local checks = {
+      { CO.find_chamfer_depth_offset, "cut depth" },
+      { CO.find_chamfer_start_offset, "start depth" },
+      { CO.find_chamfer_side_offset,  "side" },
+      { CO.find_chamfer_angle_offset, "chamfer angle" },
+      { CO.find_chamfer_slope_offset, "slope" },
+   }
+   for _, c in ipairs(checks) do
+      local off = c[1](bytes)
+      if off == nil then
+         return nil, CO.CHAMFER_TEMPLATE_NAME .. " is missing its " .. c[2]
+            .. " setting. Reinstall the gadget to put the right one back."
+      end
+   end
+   local layers = CO.read_template_layers(bytes)
+   if layers == nil or #layers ~= 1 or layers[1] ~= CO.TEMPLATE_LAYER then
+      return nil, CO.CHAMFER_TEMPLATE_NAME .. " isn't limited to the '"
+         .. CO.TEMPLATE_LAYER .. "' layer, so it can't aim at the right shapes. "
+         .. "Reinstall the gadget to put the right one back."
+   end
+   -- A units mismatch used to be refused here; see validate_template above for
+   -- why it is not any more. What still has to hold is that the flag can be READ,
+   -- because the conversion needs to name the template's units.
+   local tunits = CO.read_chamfer_units(bytes)
+   if tunits == nil then
+      return nil, CO.CHAMFER_TEMPLATE_NAME .. " doesn't say what units it was saved in. "
+         .. "Reinstall the gadget to put the right one back."
    end
    return true
 end
@@ -1643,6 +2119,18 @@ function CO.toolpath_name(size, suffix, slot, band, passes)
    return string.format("%s pass %d of %d", base, band, passes)
 end
 
+-- The chamfer engine's toolpath name (direction-split spec section 3d). A
+-- split run cuts outward and inward loops as separate toolpaths, and the
+-- operator has to be able to tell them apart in the panel - the direction
+-- words are the same ones the run report uses, which session 075 proved are a
+-- working diagnostic. A single-direction run keeps the exact pre-split name,
+-- so existing jobs stay recognised.
+function CO.chamfer_toolpath_name(size, suffix, slot, dir, split)
+   local base = CO.toolpath_name(size, suffix, slot, 1, 1)
+   if not split then return base end
+   return base .. " " .. dir
+end
+
 -- Plain-text find: the marker's [ ] are Lua pattern magic, so never
 -- pattern-match it. The two digits after the space ARE matched as a pattern,
 -- but only on the remainder, after the brackets are out of the way.
@@ -1697,13 +2185,62 @@ function CO.offset_count_phrase(total, offset_count)
    return string.format("%d of %d vector(s)", offset_count, total)
 end
 
+-- The narrow-break guard's refusal (spec 6c). Pure, so the wording is pinned by
+-- the suite. DRAFT until Tim's redline.
+--
+-- No size named is a real case, not a bug: CO.size_from_w returns nil where the
+-- conversion divides by ~0, and printing "Try nil" would be worse than printing
+-- nothing. The run is refused either way -- the suggestion is help, not the
+-- reason.
+function CO.narrow_refusal(f)
+   local asked = CO.fmt_len(f.asked) .. " " .. f.unit
+   local body = "At " .. asked .. " this chamfer cuts right through the thin parts of "
+      .. "these shapes - some of the detail would come away."
+   local rows = { { "Selected", string.format("%d vector(s)", f.n_sel) } }
+   local plain = "Chamfer's too big for this artwork.\n\n" .. body
+   if f.suggest ~= nil then
+      local fits = CO.fmt_len(f.suggest) .. " " .. f.unit
+      body = body .. "\n\nTry " .. fits .. " or less."
+      rows[#rows + 1] = { "Biggest that fits", fits }
+      plain = plain .. "\n\nTry " .. fits .. " or less."
+   end
+   plain = plain .. "\n\nNothing was changed."
+   return {
+      kind = "error",
+      headline = "Chamfer's too big for this artwork",
+      body = body,
+      rows = rows,
+      plain = plain,
+   }
+end
+
 -- nil when nothing was skipped: an absent line is the right report for
 -- "nothing to report", and the summary is already long.
-function CO.skip_summary(skipped)
+-- strategy "aspire" drops the closing clause: that path draws its copies ON
+-- their originals, so there is no orange offset to look beside and naming one
+-- would send the operator hunting for something that was never drawn.
+--
+-- `suggest`/`unit` (2026-08-06, Tim's ruling): when the per-loop bisect at the
+-- skip sites found a size that takes every skipped shape, the note names it -
+-- the same "Try X or less" sentence the whole-run refusal uses - instead of
+-- telling the operator to guess. The vague fallback survives only when no
+-- number could be found, which is the bisect's stand-down, not a default.
+function CO.skip_summary(skipped, strategy, suggest, unit)
    if type(skipped) ~= "number" or skipped <= 0 then return nil end
-   return string.format(
+   local try = nil
+   if type(suggest) == "number" and suggest > 0 and type(unit) == "string" then
+      try = "Try " .. CO.fmt_len(suggest) .. " " .. unit .. " or less."
+   end
+   if strategy == "aspire" then
+      return string.format(
+         "Note: %d vector(s) were too narrow to chamfer at this size and were skipped."
+         .. " %s", skipped, try or "Try a smaller chamfer size.")
+   end
+   local base = string.format(
       "Note: %d vector(s) were too narrow to chamfer at this size and were skipped"
       .. " - they are the ones with no orange offset beside them.", skipped)
+   if try then return base .. " " .. try end
+   return base
 end
 
 -- v1.7.0: does this run have anything to say? A clean run says NOTHING -- no
@@ -1765,8 +2302,17 @@ function CO.selection_skip_notes(skipped_open, skipped_own)
       notes = notes .. string.format("\n\nNote: %d open vector(s) skipped.", skipped_open)
    end
    if type(skipped_own) == "number" and skipped_own > 0 then
+      -- Says the same thing on both paths. The bands path draws OFFSETS,
+      -- displaced from the operator's lines; the aspire path draws COPIES
+      -- sitting exactly on them, and calling those "offsets" reads as nonsense
+      -- at the machine (S6b, Tim's redline 2026-08-06). "Drew itself" is true
+      -- either way and nobody has to know which path they are on.
+      --
+      -- Spelt out rather than "vector(s)": the note reads better than it looks
+      -- in the source, and one ignored vector is the common case.
       notes = notes .. string.format(
-         "\n\nNote: ignored %d selected vector(s) that are EdgeBreaker's own offsets.", skipped_own)
+         "\n\nNote: ignored %d selected %s that EdgeBreaker drew itself.",
+         skipped_own, skipped_own == 1 and "vector" or "vectors")
    end
    return notes
 end
@@ -1929,6 +2475,23 @@ end
 
 function CO.old_slot_from_layer_name(name)
    return slot_from_prefixed_layer(name, CO.OLD_LAYER_PREFIX, false)
+end
+
+-- Is this layer one the gadget OWNS -- created, drawn on, and wiped on every
+-- run? Every generation counts, because CO.doomed_layer wipes every generation.
+--
+-- This is the guard's whole ownership test as of 2026-08-05. It replaced a
+-- bounding-box fingerprint, which had been standing in for the object -> layer
+-- direction since 2026-07-24 on the strength of a live probe finding
+-- `obj.LayerName` nil. That probe used a name Aspire does not have: CadObject
+-- registers LayerId and RawLayerId, and CadLayer registers Id and RawId. The
+-- geometric test could never separate an aspire-path COINCIDENT COPY from the
+-- original underneath it, which is the defect this replaced (session 080).
+function CO.layer_is_ours(name)
+   if type(name) ~= "string" then return false end
+   return CO.slot_from_layer_name(name) ~= nil
+       or CO.old_slot_from_layer_name(name) ~= nil
+       or name == CO.LEGACY_OFFSET_LAYER
 end
 
 -- Where Aspire remembers the bit a given chamfer was built with. The empty key
@@ -2176,17 +2739,42 @@ end
 
 -- Selection -> plain span records (pure code does the rest). Groups recursed.
 -- Each loop also carries the source OBJECT (so main() can re-select the
--- user's input at the end) and its bbox fingerprint (so the gadget's own
--- offsets can be recognized and dropped from the input — see partition_loops).
-function CO.sdk_selection_spans(job)
+-- user's input at the end), its bbox fingerprint (chamfer MEMORY -- which
+-- shapes a chamfer was built from, matched across save/close/reopen) and the
+-- id of the layer it sits on (the own-offsets guard -- see CO.partition_loops).
+--
+-- The two are not interchangeable and neither can do the other's job. A
+-- coincident copy and its original share a bounding box exactly and always
+-- will; only the layer separates them. A remembered shape lives on the
+-- operator's own layer and has to be found again in a later session; only the
+-- geometry survives that.
+--
+-- `LayerId`, NOT `RawLayerId` (measured 2026-08-05): LayerId is a plain GUID
+-- string, RawLayerId is opaque userdata with no tostring and no == -- luabind
+-- raises "No such operator defined" on both. A non-string reads as nil here, so
+-- a wrong-member slip refuses the run rather than silently matching nothing.
+--
+-- Groups: whether an Aspire group's CHILD reports its own layer or its
+-- parent's is still not known -- the Q7 round could not tell, because every
+-- vector in it sat on one layer -- so the recursion carries the nearest
+-- enclosing OURS group's id down with it. A child of a group sitting on one of
+-- our layers is ours whatever the child itself says, which is correct under
+-- either answer. own_ids is the set from CO.sdk_own_layer_ids; an empty set
+-- makes this inheritance inert.
+function CO.sdk_selection_spans(job, own_ids)
+   own_ids = own_ids or {}
    local loops, skipped_open = {}, 0
-   local function add_object(obj)
+   local function add_object(obj, inherited)
+      local ok_id, raw = pcall(function() return obj.LayerId end)
+      local layer_id = (ok_id and type(raw) == "string") and raw or nil
       if obj.ClassName == "vcCadObjectGroup" then
+         local down = inherited
+         if layer_id ~= nil and own_ids[layer_id] then down = layer_id end
          local pos = obj:GetHeadPosition()
          while pos ~= nil do
             local child
             child, pos = obj:GetNext(pos)
-            add_object(child)
+            add_object(child, down)
          end
          return
       end
@@ -2196,7 +2784,9 @@ function CO.sdk_selection_spans(job)
       if c.IsOpen then skipped_open = skipped_open + 1; return end
       local spans = contour_spans(c)
       if #spans > 0 then
-         loops[#loops + 1] = { spans = spans, obj = obj, bbox = bbox_fingerprint(obj) }
+         loops[#loops + 1] = { spans = spans, obj = obj,
+                               bbox = bbox_fingerprint(obj),
+                               layer_id = inherited or layer_id }
       end
    end
    local sel = job.Selection
@@ -2204,17 +2794,22 @@ function CO.sdk_selection_spans(job)
    while pos ~= nil do
       local obj
       obj, pos = sel:GetNext(pos)
-      add_object(obj)
+      add_object(obj, nil)
    end
    return loops, skipped_open
 end
 
 -- True when two bbox fingerprints {cx, cy, xlen, ylen} agree within eps.
 -- The SAME underlying object always yields the same bounding box, so a
--- non-match PROVES two wrappers are different objects — the sound direction
--- for partition_loops below. A coincidental match between different objects
--- merely drops a loop from the input (and the summary says so), never deletes
--- anything the wipe would not have deleted anyway.
+-- non-match PROVES two wrappers are different objects.
+--
+-- The own-offsets guard does NOT use this any more (see CO.partition_loops,
+-- which compares layer ids, not geometry). What is left is chamfer MEMORY --
+-- CO.owner_of, CO.chamfer_relation and CO.sdk_find_objects_by_fps -- matching
+-- a chamfer's remembered shapes across save/close/reopen, where geometry is
+-- the only thing that survives. A coincidental match there is not harmless:
+-- it resolves a remembered shape to the WRONG object, or misattributes which
+-- chamfer owns a selected shape.
 function CO.same_bbox(a, b, eps)
    return math.abs(a.cx - b.cx) <= eps and math.abs(a.cy - b.cy) <= eps
       and math.abs(a.xlen - b.xlen) <= eps and math.abs(a.ylen - b.ylen) <= eps
@@ -2223,26 +2818,35 @@ end
 -- Sort the gadget's own output OUT of the selection instead of refusing the
 -- run: box-selecting everything (originals + the orange offsets) is the
 -- natural way to re-run, and v1.0.7's refusal there blocked the whole
--- adjust-and-rerun loop (live-hit 2026-07-25). A selected loop whose bbox
--- matches an object on the offset layer IS one of the gadget's own offsets —
--- regenerated every run — so it is dropped as input, not a reason to stop.
--- Matching is by VALUE (bbox fingerprint) because wrapper identity is
--- live-disproven: a wrapper from job.Selection is never == the wrapper for
--- the SAME object iterated from the layer, and obj.LayerName reads nil on
--- Aspire 12.5 (both live-disproven 2026-07-24, see 7c1af84).
--- Returns (kept, skipped, unknown); main() fails closed on unknown > 0.
-function CO.partition_loops(loops, layer_fps, eps)
+-- adjust-and-rerun loop (live-hit 2026-07-25).
+--
+-- A loop is ours when it SITS ON one of our layers -- own_ids is the set from
+-- CO.sdk_own_layer_ids. Those layers are regenerated every run, so a match is
+-- a reason to drop the loop as input, never a reason to stop.
+--
+-- This matched BOUNDING BOXES until 2026-08-05, on the strength of a
+-- 2026-07-24 probe finding obj.LayerName nil. Aspire has no such member --
+-- CadObject registers LayerId, a plain GUID string -- so the geometric test was
+-- a workaround for a capability that existed. It could not survive the aspire
+-- chamfer strategy, which draws COINCIDENT copies (the chamfer engine has to
+-- cut the operator's own edge): an original matched its own copy at any
+-- tolerance and was silently dropped. Wrapper identity is still no use --
+-- a wrapper from job.Selection is never == the wrapper for the same object
+-- iterated from a layer (live-disproven 2026-07-24, 7c1af84) -- but a GUID
+-- string is a VALUE, and values compare.
+--
+-- Returns (kept, skipped, unknown); main() fails closed on unknown > 0. A loop
+-- with no readable bbox is unknown too: the guard no longer needs it, but
+-- chamfer memory downstream does.
+function CO.partition_loops(loops, own_ids)
    local kept, skipped, unknown = {}, 0, 0
    for _, loop in ipairs(loops) do
-      if loop.bbox == nil then
+      if loop.layer_id == nil or loop.bbox == nil then
          unknown = unknown + 1
+      elseif own_ids[loop.layer_id] then
+         skipped = skipped + 1
       else
-         local matched = false
-         for _, fp in ipairs(layer_fps) do
-            if CO.same_bbox(loop.bbox, fp, eps) then matched = true; break end
-         end
-         if matched then skipped = skipped + 1
-         else kept[#kept + 1] = loop end
+         kept[#kept + 1] = loop
       end
    end
    return kept, skipped, unknown
@@ -2350,48 +2954,48 @@ function CO.chamfer_relation(sel_fps, chamfer, eps)
    return "match"
 end
 
--- Bbox fingerprints of everything on EVERY chamfer layer -- every numbered
--- 'EdgeBreaker - Offset NN' plus the pre-1.4.0 unnumbered one -- not just
--- the layer for the chamfer being built. Groups are recursed and fingerprinted
--- both as themselves and as children, so a selected child can match whichever
--- side of a grouping the offsets ended up on. unknown counts objects whose
--- bbox could not be read — the caller fails closed. The offsets of a chamfer
--- you are not building right now are still the gadget's own output and must
--- never be fed back in as input, or building chamfer 3 on a whole-job
--- selection offsets chamfers 1 and 2's offsets and cuts them.
-function CO.sdk_offset_layer_fingerprints(job)
-   local fps, unknown = {}, 0
-   local function visit(obj)
-      local fp = bbox_fingerprint(obj)
-      if fp then fps[#fps + 1] = fp else unknown = unknown + 1 end
-      if obj.ClassName == "vcCadObjectGroup" then
-         local pos = obj:GetHeadPosition()
-         while pos ~= nil do
-            local child
-            child, pos = obj:GetNext(pos)
-            visit(child)
-         end
-      end
-   end
+-- The Id of every layer the gadget owns, as a set. This is the own-offsets
+-- guard's whole input: a selected object whose LayerId is in here is one of ours
+-- (see CO.partition_loops). Every chamfer's layers count, not just the one being
+-- built -- box-selecting a whole job to build chamfer 3 sweeps in chamfer 1 and
+-- 2's offsets, and offsetting our own offsets cuts them.
+--
+-- `Id`, NOT `RawId`, and the difference is not cosmetic (measured 2026-08-05).
+-- Id is a plain GUID STRING: comparable, hashable, printable. RawId is opaque
+-- userdata with NO tostring and NO == -- luabind raises "No such operator
+-- defined" on both -- so it can key nothing and identify nothing. "Raw" means
+-- the raw HANDLE, not the raw value. A non-string id is therefore counted
+-- UNKNOWN rather than used, so a wrong-member slip fails closed instead of
+-- keying this set with something no object's LayerId can ever match.
+--
+-- Layers are ENUMERATED. Never GetLayerWithName (it get-or-CREATEs), and never
+-- GetLayerWithId either -- the GetLayerWithName precedent makes any Get... call
+-- suspect for creation, and enumeration needs no such assumption.
+-- FindLayerWithName is registered on CadLayerManager and is genuinely
+-- non-creating, but it resolves ONE name and this pass needs four generations
+-- across every layer, which enumeration already gives.
+--
+-- unknown counts a layer whose NAME could not be read (it might be ours) and a
+-- layer that IS ours whose Id could not be read or is not a string (a copy could
+-- then ride into the input, which is the defect). The caller fails closed on
+-- either. A FOREIGN layer with an unreadable id is ignored -- its id was never
+-- going in the set.
+function CO.sdk_own_layer_ids(job)
+   local ids, unknown = {}, 0
    local lpos = job.LayerManager:GetHeadPosition()
    while lpos ~= nil do
       local layer
       layer, lpos = job.LayerManager:GetNext(lpos)
-      local ok, name = pcall(function() return layer.Name end)
-      if not ok then
-         -- Could be one of ours; we cannot tell. Fail closed: main() refuses
-         -- when unknown > 0, which is the right answer for a wiped layer.
+      local ok_name, name = pcall(function() return layer.Name end)
+      if not ok_name then
          unknown = unknown + 1
-      elseif CO.slot_from_layer_name(name) ~= nil or name == CO.LEGACY_OFFSET_LAYER then
-         local pos = layer:GetHeadPosition()
-         while pos ~= nil do
-            local obj
-            obj, pos = layer:GetNext(pos)
-            visit(obj)
-         end
+      elseif CO.layer_is_ours(name) then
+         local ok_id, id = pcall(function() return layer.Id end)
+         if ok_id and type(id) == "string" then ids[id] = true
+         else unknown = unknown + 1 end
       end
    end
-   return fps, unknown
+   return ids, unknown
 end
 
 -- What chamfers does this job already hold? Layers give the offsets, toolpath
@@ -2519,13 +3123,41 @@ end
 
 -- Find the job objects a chamfer remembers, so main() can tell "rebuild what
 -- is still there" from "these shapes are gone". Our own offset layers are
--- skipped under BOTH name generations: an offset ring can share a bbox with
--- nothing but itself, but a remembered shape must never resolve to the copy
--- we drew from it. Groups recurse exactly as sdk_offset_layer_fingerprints.
+-- skipped under all four name generations CO.layer_is_ours knows: an offset
+-- ring can share a bbox with nothing but itself, but a remembered shape must
+-- never resolve to the copy we drew from it. Groups recurse depth-first,
+-- same as everywhere else here.
 function CO.sdk_find_objects_by_fps(job, fps, eps)
    local objs, seen = {}, {}
+   -- Only what could have come IN as input may hold a fingerprint. A remembered
+   -- shape was selected as a vector or inside a group; nothing else can be the
+   -- object we are looking for. And a wrong match does not merely miss -- first
+   -- match wins and the search stops, so a decoy SHADOWS the real shape on
+   -- every run, permanently. Measured 2026-08-06: Aspire's toolpath previews
+   -- did exactly that (see the layer loop below).
+   local function can_be_input(obj)
+      local ok, cls = pcall(function() return obj.ClassName end)
+      if not ok then return false end
+      return cls == "vcCadContour" or cls == "vcCadPolyline"
+          or cls == "vcCadObjectGroup"
+   end
+   -- Which layers are ours, by id. The layer loop below already skips them, but
+   -- skipping a LAYER only reaches what that layer's walk reaches -- and a copy
+   -- GROUPED onto the operator's layer is reached through THEIR layer while
+   -- still belonging to ours (measured 2026-08-06, S6c: a group's child reports
+   -- its own layer, not its parent's). That copy shares the original's bounding
+   -- box exactly, so whichever of the two is enumerated first wins the match.
+   -- Ask the OBJECT what layer it is on rather than trusting the layer it
+   -- arrived through. Unreadable ids leave the set empty, which is exactly
+   -- today's behaviour -- this can only ever drop a copy, never a shape.
+   local own_ids = CO.sdk_own_layer_ids(job)
+   local function is_ours(obj)
+      local ok, id = pcall(function() return obj.LayerId end)
+      return ok and type(id) == "string" and own_ids[id] == true
+   end
    local function visit(obj)
-      local fp = bbox_fingerprint(obj)
+      local fp = (can_be_input(obj) and not is_ours(obj))
+                 and bbox_fingerprint(obj) or nil
       if fp then
          for i, want in ipairs(fps) do
             if not seen[i] and CO.same_bbox(fp, want, eps) then
@@ -2546,10 +3178,18 @@ function CO.sdk_find_objects_by_fps(job, fps, eps)
    while pos ~= nil do
       local layer
       layer, pos = job.LayerManager:GetNext(pos)
-      local name = layer.Name
-      local ours = CO.slot_from_layer_name(name) ~= nil
-                or CO.old_slot_from_layer_name(name) ~= nil
-                or name == CO.LEGACY_OFFSET_LAYER
+      -- System layers are Aspire's, never the operator's, so nothing we are
+      -- looking for is on one -- and one of them is actively harmful. Aspire
+      -- keeps a preview object per toolpath on 'Toolpath Previews', and an
+      -- aspire-path chamfer's copies are COINCIDENT with the operator's vector,
+      -- so that preview carries the operator's own bounding box exactly. Aspire
+      -- lists the system layer FIRST, so it won every match and the real vector
+      -- was never reached: "remembered shapes could not be read back", on a
+      -- shape that was sitting right there (LayerVisProbe round 6, 2026-08-06).
+      -- An unreadable IsSystemLayer is treated as an ordinary layer -- searching
+      -- one layer too many is harmless now that can_be_input filters the objects.
+      local ok_sys, sys = pcall(function() return layer.IsSystemLayer end)
+      local ours = CO.layer_is_ours(layer.Name) or (ok_sys and sys == true)
       if not ours then
          local lpos = layer:GetHeadPosition()
          while lpos ~= nil do
@@ -2583,9 +3223,10 @@ end
 
 -- Get-or-create THIS chamfer's n output layers and clear stale offsets from the
 -- previous run. Wiping is safe because partition_loops has already dropped
--- anything selected on these layers from the input, and they are documented as
--- gadget-owned (wiped every run) -- nothing durable belongs here. Other
--- chamfers' layers are never touched.
+-- everything selected ON these layers from the input -- by layer membership, so
+-- with no geometric tolerance in it -- and they are documented as gadget-owned
+-- (wiped every run). Nothing durable belongs here. Other chamfers' layers are
+-- never touched.
 --
 -- Layers are found by ENUMERATION, never by GetLayerWithName: that call CREATES
 -- the layer when it is missing, and we are here to remove some of them.
@@ -2830,6 +3471,122 @@ function CO.sdk_offset_loop(job, obj, dist, sharp_dist)
    return res, err
 end
 
+-- Shrink a whole SHAPE by one signed distance and count what comes back
+-- (narrow-break guard spec 4a). That count is the guard: a chamfer eats W off
+-- the material side of every wall, so this result is exactly what the chamfer
+-- leaves, and a piece that split, vanished or merged changes the number of
+-- contours while a merely blunted point does not.
+--
+-- With a `back` distance this is the OPENING instead: shrink by W, then grow
+-- the RESULT back by W. What survives is the material a disc of width W can
+-- reach. That is the difference between the two ways a shrunken count can
+-- change, and it needs no threshold to tell them apart:
+--
+--   * A sharp inside corner WASHES OUT. Eroding a concave corner drives its
+--     apex in by w/sin(half-angle), so a notch travels many times the setback
+--     and parts the shrunken top face in two - while the part below is
+--     untouched, because a chamfer is a valley, not a cut. Grow back and the
+--     disc reaches through the thick material either side: joined again.
+--   * A NECK PINCHES THROUGH. No disc of width W fits in it, so there is
+--     nothing to grow back from and the pieces stay apart.
+--
+-- Measured 2026-08-05 on the word EDGEBREAKER (the letter K, 1 -> 2 from a 0.05
+-- setback on 0.3-thick strokes, clean once opened) and on spec section 5a's
+-- welded dumbbell (1 -> 2 at 0.2 on BOTH rows - opening does not rescue it).
+-- Chaining :Offset onto an offset's own group is the call shape
+-- CO.sdk_offset_group already uses on the finishing pass.
+--
+-- Handed every loop of one shape at once, deliberately -- the opposite of
+-- sdk_offset_loop's per-loop rule. A split, a vanish and a merge are events of
+-- the REGION; no per-loop offset can see them. The caller decides what a shape
+-- is (CO.shape_groups) and calls this once per shape, so that two shapes cannot
+-- cancel each other's count out.
+--
+-- Bi-state, not tri-state despite how it reads at the call site: every path
+-- here returns either a NUMBER (an answer, zero included - the chamfer ate
+-- everything) or nil + a message (an SDK call that actually failed - a short
+-- selection, an unreadable Count, a thrown error). There is no path that
+-- returns a bare nil; a nil offset group is read as Count 0, not as
+-- "unreadable". A failed check STOPS the run - the deliberate exception to
+-- "every ambiguous case proceeds" (spec 7): the check itself could not be
+-- trusted, which is not the same as the artwork being fine.
+--
+-- Draws nothing and leaves nothing behind: the copy is detached and the offset
+-- result is read for its Count and dropped. It DOES clear the selection, so the
+-- caller puts the operator's own selection back.
+function CO.sdk_erode_count(job, objs, dist, back)
+   local ok, res, err = pcall(function()
+      job.Selection:Clear()
+      for _, obj in ipairs(objs) do job.Selection:Add(obj, true, true) end
+      -- Anything short here means the offset would describe a different set of
+      -- loops than the number it is about to be compared against, and the
+      -- comparison would be meaningless in the silent direction.
+      if job.Selection.Count ~= #objs then
+         return nil, "could not select these shapes to check them (are they inside a "
+             .. "group? ungroup and retry)"
+      end
+      local src = CreateCopyOfSelectedContours(false, false, 0.01)
+      -- Names the remedy, like the two branches either side of it. Measured at
+      -- the machine (N9, session 088): a GROUPED selection lands here, and the
+      -- operator got a dead end -- the copy failed, and nothing said what to do
+      -- about it, while the right words were already sitting on the neighbouring
+      -- branch. A refusal that names no remedy is worse than the refusal.
+      if src == nil then
+         return nil, "could not copy the selected vectors to check them (are they "
+             .. "inside a group? ungroup and retry)"
+      end
+      local g = src:Offset(dist, math.abs(dist), 1, true)
+      -- Whether a fully-consumed region comes back as nil or as an empty group
+      -- is Aspire's business; both mean the same thing here.
+      if g == nil then return 0 end
+      if back ~= nil then
+         -- A region already eaten away has nothing to grow back from and never
+         -- reaches here, so the round trip can only ever recover material the
+         -- shrink left standing.
+         g = g:Offset(back, math.abs(back), 1, true)
+         if g == nil then return 0 end
+      end
+      local n = g.Count
+      if type(n) ~= "number" then
+         return nil, "could not read the check result (Count)"
+      end
+      return n
+   end)
+   if not ok then return nil, tostring(res) end
+   return res, err
+end
+
+-- An unoffset, winding-controlled copy of one loop, for the aspire strategy
+-- (large-chamfer spec section 3c). Aspire's chamfer engine offsets by itself,
+-- so the drawn vector's only job is to sit on the slot's layer where the
+-- template's restriction can find it. The copies land exactly on the originals
+-- and are visually silent.
+--
+-- The winding control is the point (2026-08-04 direction-split sitting):
+-- _chpdInside is read against the loop's TRAVEL direction, and a vector's
+-- direction is not stable - Aspire's own toolpath calculation reversed one
+-- original mid-sitting and the same byte started cutting the opposite side.
+-- So the caller says whether to reverse, and the copy is a Contour clone we
+-- can actually reverse - GetContour + Clone + Reverse is the join loop's
+-- proven trio - rather than CreateCopyOfSelectedContours' group, whose
+-- contents there is no proven way to reach.
+function CO.sdk_clone_loop(obj, reverse)
+   local ok, res, err = pcall(function()
+      local c = obj:GetContour()
+      if c == nil or c.IsEmpty then
+         return nil, "this vector has no usable outline"
+      end
+      local copy = c:Clone()
+      if copy == nil then
+         return nil, "could not copy this vector's outline"
+      end
+      if reverse then copy:Reverse() end
+      return copy
+   end)
+   if not ok then return nil, tostring(res) end
+   return res, err
+end
+
 -- Offset a group we already hold, rather than a document object. This is what
 -- makes the relief passes nest: a relief loop is cut from the FINISHING pass's
 -- loop, so it is literally "the finishing path, backed off" and physically
@@ -2867,6 +3624,15 @@ end
 -- loading the template no matter which kind is on disk.
 function CO.sdk_draw_group(layer, group)
    local cad = CreateCadGroup(group)
+   layer:AddObject(cad, true)
+   return cad
+end
+
+-- One contour onto a layer, for the aspire path's clones. CreateCadContour +
+-- AddObject is the skill's own rebuild-geometry idiom; sdk_draw_group stays
+-- for the bands path, whose offsets really are groups.
+function CO.sdk_draw_contour(layer, contour)
+   local cad = CreateCadContour(contour)
    layer:AddObject(cad, true)
    return cad
 end
@@ -3042,10 +3808,23 @@ end
 -- "outside" write different Machine Vectors codes, and nil is still off. A
 -- caller that passes true rather than a side now gets a refusal instead of an
 -- inside cut on an outside chamfer.
-function CO.patch_template_run(bytes, depth, start, slot, band, sharp)
-   local patched, err = CO.patch_template_depth(bytes, depth)
+-- job_units is required, and a run without it REFUSES rather than writing the
+-- number unconverted (2026-08-04 metric-jobs spec section 3). Both lengths are
+-- converted here rather than at the leaves because the leaves cascade: the
+-- converted depth reaches the pass list through patch_template_depth, and the
+-- converted start reaches the _mctddStartDepth mirror through
+-- patch_template_start_depth.
+function CO.patch_template_run(bytes, depth, start, slot, band, sharp, job_units)
+   local tunits = CO.read_template_units(bytes)
+   local d = CO.length_in_template_units(depth, job_units, tunits)
+   local s = CO.length_in_template_units(start or 0, job_units, tunits)
+   if d == nil or s == nil then
+      return nil, "cannot tell what units to write the depth in (job "
+         .. tostring(job_units) .. ", template " .. tostring(tunits) .. ")"
+   end
+   local patched, err = CO.patch_template_depth(bytes, d)
    if patched == nil then return nil, err end
-   patched, err = CO.patch_template_start_depth(patched, start or 0)
+   patched, err = CO.patch_template_start_depth(patched, s)
    if patched == nil then return nil, err end
    patched, err = CO.patch_template_layer(patched, slot, band)
    if patched == nil then return nil, err end
@@ -3056,12 +3835,12 @@ function CO.patch_template_run(bytes, depth, start, slot, band, sharp)
    return patched
 end
 
-function CO.sdk_apply_template(dir, filename, depth, start, slot, band, new_name, tool, sharp)
+function CO.sdk_apply_template(dir, filename, depth, start, slot, band, new_name, tool, sharp, job_units)
    local src = dir .. "\\" .. filename
    local f = io.open(src, "rb")
    if f == nil then return nil, "cannot read template: " .. src end
    local bytes = f:read("*a"); f:close()
-   local patched, perr = CO.patch_template_run(bytes, depth, start, slot, band, sharp)
+   local patched, perr = CO.patch_template_run(bytes, depth, start, slot, band, sharp, job_units)
    if patched == nil then return nil, perr .. " (" .. filename .. ")" end
    -- Read the restriction back out of the bytes we are about to hand Aspire.
    -- A template aimed at the wrong layer cuts the wrong vectors at the wrong
@@ -3124,6 +3903,80 @@ function CO.sdk_apply_template(dir, filename, depth, start, slot, band, new_name
    -- tp is the wrapper the run's memory is written to. On the recalc path it
    -- may already be stale (RecalculateToolpath recreates the toolpath), so the
    -- caller re-finds it by name rather than trusting this one.
+   return { n = #news, renamed = renamed, retooled = retooled, tp = news[1],
+            status = calced and "calculated" or "loaded" }
+end
+
+-- The same job for the chamfer engine's template (large-chamfer spec section
+-- 3c). Deliberately a twin of CO.sdk_apply_template above rather than a shared
+-- one with branches: the two templates are patched differently, aimed
+-- differently and validated differently, and the only thing they truly share is
+-- what Aspire does AFTER the load - which is why everything from the temp file
+-- down is the same sequence, line for line.
+--
+-- Aspire steps down internally (_chpdStepdown), so there is one load per
+-- DIRECTION, not per depth band: the engine does not nest, so a mixed run
+-- calls this twice, each aimed at its own band layer (direction-split spec).
+function CO.sdk_apply_chamfer_template(dir, filename, depth, start, slot, band, new_name, tool, dir_side, included_deg, job_units)
+   local src = dir .. "\\" .. filename
+   local f = io.open(src, "rb")
+   if f == nil then return nil, "cannot read template: " .. src end
+   local bytes = f:read("*a"); f:close()
+   local patched, perr = CO.patch_chamfer_run(bytes, depth, start, slot, band, dir_side, included_deg, job_units)
+   if patched == nil then return nil, perr .. " (" .. filename .. ")" end
+   -- Read the restriction back out of the bytes we are about to hand Aspire.
+   -- A template aimed at the wrong layer cuts the wrong vectors at the wrong
+   -- depth without complaining, so this is checked, never assumed.
+   local want = CO.offset_layer_name(slot, band)
+   local back = CO.read_template_layers(patched)
+   if back == nil or #back ~= 1 or back[1] ~= want then
+      return nil, "patched template does not target '" .. want .. "' - nothing was loaded"
+   end
+   local tmp = dir .. "\\_EdgeBreaker_patched.ToolpathTemplate"
+   local o = io.open(tmp, "wb")
+   if o == nil then return nil, "cannot write temp template: " .. tmp end
+   o:write(patched); o:close()
+   local tpm = ToolpathManager()
+   local before = tpm.Count
+   tpm:LoadToolpathTemplate(tmp)
+   pcall(os.remove, tmp)                 -- best-effort cleanup; a leftover is harmless
+   if tpm.Count <= before then
+      return nil, "The patched template did not load (Count unchanged)"
+   end
+   -- The new toolpaths are the TAIL of the list, same as the profile path.
+   local news, idx = {}, 0
+   local pos = tpm:GetHeadPosition()
+   while pos ~= nil do
+      local tp
+      tp, pos = tpm:GetNext(pos)
+      idx = idx + 1
+      if idx > before then news[#news + 1] = tp end
+   end
+   -- Swap in the bit the user picked, and rename, both BEFORE any recalc -
+   -- which recreates the toolpath and invalidates the wrapper we hold.
+   local retooled = true
+   if tool ~= nil then
+      for _, tp in ipairs(news) do
+         local ok = pcall(function() tp:ReplaceTool(tool); tpm:ToolpathModified(tp) end)
+         if not ok then retooled = false end
+      end
+   end
+   local renamed = true
+   for _, tp in ipairs(news) do
+      local ok = pcall(function() tp.Name = new_name; tpm:ToolpathModified(tp) end)
+      local okr, back = pcall(function() return tp.Name end)
+      if not (ok and okr and back == new_name) then renamed = false end
+   end
+   local calced = true
+   for _, tp in ipairs(news) do
+      local ok, res = pcall(function() return tpm:RecalculateToolpath(tp) end)
+      -- tp must not be touched past this line (recreated on success)
+      if not (ok and res == true) then calced = false end
+   end
+   if not calced and CO.should_recalc_all(before) then
+      tpm:RecalculateAllToolpaths()
+      calced = true
+   end
    return { n = #news, renamed = renamed, retooled = retooled, tp = news[1],
             status = calced and "calculated" or "loaded" }
 end
@@ -3206,23 +4059,25 @@ function main(script_path)
    -- picker opens on. It has to happen before the picker for that last reason
    -- (spec 4, "order unchanged"), and the two refusals it can reach are worth
    -- reaching before the user is made to choose a bit.
-   local raw_loops, skipped_open = CO.sdk_selection_spans(job)
    -- Drop the gadget's own offsets from the input instead of refusing:
    -- box-selecting originals + orange offsets together is the natural way
-   -- to re-run (live-hit 2026-07-25).
-   local ok_guard, layer_fps, layer_unknown = pcall(CO.sdk_offset_layer_fingerprints, job)
+   -- to re-run (live-hit 2026-07-25). Ownership is decided by which LAYER a
+   -- vector sits on, so an aspire-path copy sitting exactly on the operator's
+   -- own vector is separable from it -- which a bounding box never was.
+   local ok_guard, own_ids, layer_unknown = pcall(CO.sdk_own_layer_ids, job)
    if not ok_guard then
       DisplayMessageBox("EdgeBreaker could not examine its working layers ('"
-         .. CO.OFFSET_LAYER_PREFIX .. "NN-K'):\n" .. tostring(layer_fps)
+         .. CO.OFFSET_LAYER_PREFIX .. "NN-K'):\n" .. tostring(own_ids)
          .. "\n\nNothing was changed. Please report this message.")
       return false
    end
-   local kept, skipped_own, bbox_unknown = CO.partition_loops(raw_loops, layer_fps, 1e-6)
-   if layer_unknown > 0 or bbox_unknown > 0 then
-      DisplayMessageBox(string.format("EdgeBreaker couldn't compare %d vector(s) against its "
-         .. "own offset layers ('%sNN-K'), so it can't safely continue (those layers are wiped "
-         .. "on every run).\n\nNothing was changed. Please report this message.",
-         layer_unknown + bbox_unknown, CO.OFFSET_LAYER_PREFIX))
+   local raw_loops, skipped_open = CO.sdk_selection_spans(job, own_ids)
+   local kept, skipped_own, loop_unknown = CO.partition_loops(raw_loops, own_ids)
+   if layer_unknown > 0 or loop_unknown > 0 then
+      DisplayMessageBox(string.format("EdgeBreaker couldn't work out which layer %d of your "
+         .. "vectors are on, so it can't safely continue (it wipes its own layers, "
+         .. "'%sNN-K', on every run).\n\nNothing was changed. Please report this message.",
+         layer_unknown + loop_unknown, CO.OFFSET_LAYER_PREFIX))
       return false
    end
    -- Selecting only open vectors is a mistake with an obvious fix, not the
@@ -3305,7 +4160,19 @@ function main(script_path)
    local tbytes = nil
    local tf = io.open(gadget_dir .. "\\" .. CO.TEMPLATE_NAME, "rb")
    if tf then tbytes = tf:read("*a"); tf:close() end
-   template_ok, template_err = CO.validate_template(tbytes, unit.suffix)
+   template_ok, template_err = CO.validate_template(tbytes)
+
+   -- The second template, Aspire's own chamfer strategy, used only above the
+   -- sharpening ceiling (large-chamfer spec section 3c). Read here with the
+   -- other one so a broken install is found before anything is cut - but
+   -- deliberately NOT fed into HiddenNote: that field carries the profile
+   -- template's message, and this file is irrelevant to every run that does not
+   -- take the aspire path. A run that does take it says so then.
+   local chamfer_bytes = nil
+   local cf = io.open(gadget_dir .. "\\" .. CO.CHAMFER_TEMPLATE_NAME, "rb")
+   if cf then chamfer_bytes = cf:read("*a"); cf:close() end
+   local chamfer_bytes_ok, chamfer_template_err =
+      CO.validate_chamfer_template(chamfer_bytes)
 
    -- A chamfer we are rebuilding seeds the dialog with ITS OWN settings, not
    -- with whatever was typed last: "adjust chamfer 2" should open showing
@@ -3602,6 +4469,20 @@ function main(script_path)
       })
       return false
    end
+   -- Which engine cuts this one (large-chamfer spec section 3a). The 0% preset
+   -- is the shallowest cut this bit and chamfer can make, so if even that is too
+   -- deep to sharpen, no cut position can be - and the ceiling stops being a
+   -- refusal and becomes a switch to Aspire's own chamfer engine. Found the same
+   -- way `s` was, by percent, so the two can never disagree about which row is
+   -- which; falling back to `s` if there is somehow no 0% row keeps this honest
+   -- rather than nil.
+   --
+   -- Settled HERE, before anything reads the Side field, because the side
+   -- override has to be dropped before resolve_directions folds it in (side-greyed
+   -- spec section 3a). One value, one place.
+   local d0 = s.d
+   for _, p in ipairs(r.presets) do if p.percent == 0 then d0 = p.d end end
+   local strategy = CO.chamfer_strategy(sharp, d0, r.d_max)
    -- What actually gets chamfered. A selection is always the input; only when
    -- nothing usable was selected does the chosen chamfer rebuild from what it
    -- remembers (spec 2, last row -- this is what fixes the old refusal when the
@@ -3640,6 +4521,8 @@ function main(script_path)
          job.Selection:Clear()
          for _, obj in ipairs(res.objs) do job.Selection:Add(obj, true, true) end
       end)
+      -- No own_ids: these objects came back from CO.sdk_find_objects_by_fps,
+      -- which never visits our own layers, so there is nothing to filter.
       input = CO.sdk_selection_spans(job)
       recalled_missing = res.missing
       if #input == 0 then
@@ -3663,7 +4546,11 @@ function main(script_path)
    for _, rl in ipairs(input) do
       loops[#loops + 1] = { pts = CO.polygonize(rl.spans, 0.001), obj = rl.obj, bbox = rl.bbox }
    end
-   local dirs = CO.resolve_directions(loops, side)
+   -- ONE dirs, from the effective side: the narrow-break guard, the band
+   -- grouping, the layer count and the side byte all read this, and computing it
+   -- twice would let the guard measure one run while the cut does another.
+   local eff_side = CO.effective_side(side, strategy)
+   local dirs = CO.resolve_directions(loops, eff_side)
    -- Measured on the INPUT loops, before anything is offset, because the sharp
    -- distance is what gets drawn and so sharp_run has to be settled first.
    --
@@ -3675,17 +4562,219 @@ function main(script_path)
    -- no bigger than its container's; both are offset by the same distance. So
    -- the inner one always collapses first, and the dangerous case cannot arise.
    local depths = CO.nesting_depths(loops)
+   -- THE NARROW-BREAK GUARD (spec 2026-08-04-edgebreaker-narrow-break-guard).
+   --
+   -- A chamfer eats W off the material side of every wall, so shrinking the
+   -- selection by W is exactly what the chamfer leaves behind. If that changes
+   -- the number of contours something BROKE - a neck pinched through, a thin
+   -- stroke vanished, two counters merged - and the run is refused instead of
+   -- reproducing the mess silently, which is what every release before this one
+   -- did (measured 2026-08-04 on the word EDGEBREAKER at 0.2: G's spur, B's
+   -- waist and R's junction cut away, and not a word from the gadget).
+   --
+   -- A blunted point moves no count. That is the whole reason this is a piece
+   -- count and not a thickness measurement: a sharp point genuinely IS thinner
+   -- than the chamfer, and refusing those would refuse most lettering.
+   --
+   -- HERE, before sdk_prepare_layers, because a refusal has to leave the job
+   -- exactly as the operator left it - nothing wiped, nothing deleted, nothing
+   -- to apologise for in the message.
+   --
+   -- ONE COUNT PER SHAPE, not one for the selection. Two shapes can move an
+   -- aggregate count in opposite directions and cancel - a thin bar eaten away
+   -- (-1) beside a welded dumbbell pinching in two (+1) nets zero - and a word
+   -- is exactly where several simultaneous events are normal. CO.shape_groups
+   -- puts each depth-0 loop with everything nested inside it, so a letter is
+   -- still checked together with its counters and a waist is still found, but
+   -- one letter can no longer hide another. The cost is one offset per shape
+   -- instead of one per run.
+   --
+   -- WHAT THIS DOES NOT CATCH, and it is deliberate (spec section 9):
+   --   * A thin limb that stays ATTACHED. Shrink an E's arms away and the spine
+   --     is still one piece, so the count does not move - the arm comes out as
+   --     a knife ridge and nothing is said. Every rule that closes this gap is
+   --     a threshold tuned to artwork we will never see, and two of them were
+   --     designed and killed by their own tests before this one.
+   --   * ONE shape that loses a limb and splits in the same breath. Grouping
+   --     stops letters cancelling against each other; it cannot stop a shape
+   --     cancelling against itself, and nothing short of comparing the pieces
+   --     themselves would.
+   --   * Anything not SELECTED. Chamfer a B's outline without its counters and
+   --     there is no waist here to find.
+   --   * A forced Side over a nested selection - erosion_sign returns nil and
+   --     the guard stands down, because there is no single region to shrink.
+   --
+   -- The size it names is the biggest that keeps the topology, which at the
+   -- boundary is a knife edge with no flat left. That is the boundary, not a
+   -- failure.
+   local check_objs = {}
+   for _, rl in ipairs(input) do
+      if rl.obj ~= nil then check_objs[#check_objs + 1] = rl.obj end
+   end
+   -- sdk_erode_count clears the selection to do its work, so every path out of
+   -- the guard puts the operator's own selection back first.
+   local function restore_selection_after_check()
+      pcall(function()
+         job.Selection:Clear()
+         for _, o in ipairs(check_objs) do job.Selection:Add(o, true, true) end
+      end)
+   end
+   local esign = CO.erosion_sign(dirs, depths)
+   if esign ~= nil and #check_objs > 0 then
+      -- The selection split into shapes, each carrying only the loops that have
+      -- a CAD object to offset. A group with nothing left in it is dropped
+      -- rather than compared against zero.
+      local shape_objs = {}
+      for _, g in ipairs(CO.shape_groups(loops)) do
+         local objs = {}
+         for _, i in ipairs(g) do
+            -- Indexed off `loops`, because that is what shape_groups was handed
+            -- and so what its indices mean.
+            if loops[i].obj ~= nil then objs[#objs + 1] = loops[i].obj end
+         end
+         if #objs > 0 then shape_objs[#shape_objs + 1] = objs end
+      end
+      -- true = every shape survives this setback, false = at least one broke,
+      -- nil + message = the check itself failed. Stops at the first shape that
+      -- breaks: a refusal needs to know THAT one did, not how many.
+      -- The count is read on the OPENED shape - shrunk by w, then grown back by
+      -- w - and any count that DIFFERS refuses. The two halves of that sentence
+      -- are one decision and neither survives alone.
+      --
+      -- Why not the shrunken count: it refused ordinary lettering. Measured
+      -- 2026-08-05 on the word EDGEBREAKER, the letter K came back as 2 loops
+      -- from 1 at a setback of 0.05 on strokes that measure 0.3+, and the run
+      -- was refused with 0.04 named as the biggest that fits. Eroding a CONCAVE
+      -- corner drives its apex in by w/sin(half-angle), so the sharp notch
+      -- between the K's arms travels many times the setback and parts the eroded
+      -- TOP FACE in two - while the part below is untouched, because a chamfer
+      -- is a valley, not a cut. Every sharp inside corner does this (K, M, N, V,
+      -- W, X, Y, Z, R junctions, serifs, star points, gear roots, a B's crook).
+      --
+      -- Why not "fewer, not different", which is what fixed that first: a real
+      -- break can RISE too. Spec section 5a row P5's welded dumbbell pinches
+      -- through its 0.3 neck and reads 1 -> 2, exactly like the K, so a
+      -- drop-only rule lets a shape come apart in silence - a false negative,
+      -- the worse direction.
+      --
+      -- The opening separates them where no threshold could, because what
+      -- survives it is the material a disc of width w can reach: the K's 0.3
+      -- junction is thick enough to hold the disc and comes back joined, the
+      -- 0.3 neck at 0.2 is not and stays severed. Measured both ways on the
+      -- machine before this was built (the word: K clean once opened, and the G
+      -- keeps its break at 0.2; the dumbbell: still 1 -> 2 opened, so opening is
+      -- not merely forgiving everything).
+      --
+      -- The counts are also NOT MONOTONE in w - the B in the same run held at
+      -- 0.12, read 1 at 0.15, and read 3 again at 0.2 - so the bisect below
+      -- finds a boundary, not THE boundary. Conservative either way: it only
+      -- ever reports a size it watched pass.
+      --
+      -- WHAT THIS STILL DOES NOT CATCH is the list above: an attached thin limb,
+      -- a shape cancelling against itself, anything unselected.
+      local function shapes_hold(w)
+         for _, objs in ipairs(shape_objs) do
+            local c, e = CO.sdk_erode_count(job, objs, esign * w, -esign * w)
+            if e ~= nil then return nil, e end
+            if c ~= #objs then return false end
+         end
+         return true
+      end
+      local held, check_err = shapes_hold(r.W)
+      if check_err ~= nil then
+         restore_selection_after_check()
+         CO.show_message(gadget_dir, {
+            kind = "error",
+            headline = "Couldn't check the shapes",
+            body = "EdgeBreaker checks that the chamfer fits before it cuts, and that "
+                .. "check failed:\n" .. tostring(check_err),
+            plain = "Could not check whether the chamfer fits: " .. tostring(check_err)
+                .. "\n\nNothing was changed.",
+         })
+         return false
+      end
+      if held == false then
+         -- An SDK failure inside the search reads as "this setback does not
+         -- fit", which sends the search SMALLER - the safe direction. The
+         -- suggestion can come back more conservative than it needed to be; it
+         -- can never come back bigger than a size that passed.
+         local fits = CO.bisect_w(r.W, CO.BISECT_STEPS, function(w)
+            return shapes_hold(w) == true
+         end)
+         -- fits == nil means the count was ALREADY wrong at the smallest
+         -- setback bisect_w probes (essentially zero) - which proves the
+         -- mismatch is not something the CHAMFER causes. Overlapping,
+         -- touching or duplicated vectors union under a region-aware group
+         -- offset at any distance, hairline included, and a DXF import
+         -- carries these routinely. There is no size to blame and none to
+         -- suggest, so this is exactly the erosion_sign-nil case one level
+         -- up: the guard has no signal, and stands down rather than refuse a
+         -- run that would have cut correctly with no remedy to offer.
+         if fits ~= nil then
+            local suggest = CO.size_from_w(mode, fits, r.a)
+            -- CO.bisect_w rounds W down to the nearest 0.001, but the
+            -- message prints through CO.fmt_len, which rounds to 4dp to
+            -- NEAREST. In Face or Leg mode (a non-1 conversion factor) that
+            -- can push the printed number just above the W that actually
+            -- passed, so typing the suggestion back in gets refused again.
+            -- CO.floor4 - the same fixed-direction rounding
+            -- CO.display_max_size uses, for the same reason - guarantees the
+            -- printed number converts back to a W at or below the one that
+            -- passed.
+            if suggest ~= nil then
+               suggest = CO.floor4(suggest)
+               if suggest <= 0 then suggest = nil end
+            end
+            restore_selection_after_check()
+            CO.show_message(gadget_dir, CO.narrow_refusal({
+               asked = size, suggest = suggest,
+               n_sel = #check_objs, unit = unit.suffix,
+            }))
+            return false
+         end
+      end
+      restore_selection_after_check()
+   end
    -- Rebuilding an ADOPTED v1.4.x chamfer migrates it: this run replaces its
    -- layer and its toolpath with the EdgeBreaker-named pair, so the old ones
    -- have to go with it or the number owns two of each.
    local migrating = (by_slot[slot] ~= nil and by_slot[slot].origin == "old")
    local n_passes = s.passes or 1
+   -- What this run actually cuts to. On the bands path that is the preset's own
+   -- plunge; Aspire's engine is handed the whole setback in one number and steps
+   -- down to it by itself.
+   local cut_depth = s.d
+   local dirbands = nil
+   if strategy == "aspire" then
+      cut_depth = CO.chamfer_cut_depth(r.W, angle)
+      -- A layer and a toolpath PER DIRECTION present, whatever the pass count
+      -- said. Depth bands are Aspire's business now (_chpdStepdown), but its
+      -- chamfer engine does NOT nest - one _chpdInside byte serves every loop
+      -- in a toolpath (measured 2026-08-04, session 075) - so outward and
+      -- inward loops cannot share one. Settled here because the layer count is
+      -- this answer, and it has to exist before the layers are prepared.
+      -- resolve_directions only ever emits the two words, so a refusal here is
+      -- a coding error, not an operator state - fail loudly, never guess.
+      local db, dberr = CO.chamfer_bands(dirs)
+      if db == nil then error("chamfer banding: " .. tostring(dberr)) end
+      dirbands = db
+      -- db.n is never 0 here: an empty selection was refused long before this
+      -- point (loops is non-empty), so every dirs entry banded.
+      n_passes = db.n
+   end
    -- Two gates, computed once and reused at the offset site below and at the
    -- template-patch call further down -- one answer, not two chances to
    -- disagree. sharp_ok is the box and the depth; sharp_nesting_ok is whether
    -- our direction for every loop matches what Aspire's nesting will do to it
    -- once Machine Vectors leaves "On" (spec section 3a).
    local sharp_ok = CO.sharp_applies(sharp, s.d, r.d_max)
+   -- Both of these are BANDS concepts, and the aspire path builds no bands. The
+   -- ticked box is still honoured there - by Aspire's engine, which sharpens at
+   -- any size - so nothing is refused and nothing is reported. Belt and braces:
+   -- the depth test above already reads false whenever the strategy is aspire
+   -- (s.d is never shallower than d0), and this makes that a fact rather than an
+   -- inference for anyone changing the presets later.
+   if strategy ~= "bands" then sharp_ok = false end
    local sharp_dir, sharp_why = nil, nil
    if sharp_ok then sharp_dir, sharp_why = CO.sharp_nesting_ok(dirs, depths) end
    local sharp_run = sharp_ok and sharp_dir ~= nil
@@ -3733,11 +4822,13 @@ function main(script_path)
    for _, rl in ipairs(input) do
       if rl.obj ~= nil then orig_sel[#orig_sel + 1] = rl.obj end
    end
-   -- One :Offset call per loop, not one for the whole selection: a group offsets
-   -- uniformly by a single signed distance, but outer boundaries go outward and
-   -- holes go inward. Per-loop also preserves which input produced which output,
-   -- which is what makes the skip count possible. N calls on a 17-vector job is
-   -- not worth optimising.
+   -- One :Offset call per loop, not one for the whole selection: a group offset
+   -- already moves outer boundaries and holes correctly on one signed distance
+   -- (measured at the machine 2026-08-04: offset a ring inward and its outline
+   -- shrinks while its hole GROWS), so direction isn't why this is per-loop.
+   -- Per-loop offsetting preserves which input produced which output, which is
+   -- what makes the skip count possible. N calls on a 17-vector job is not
+   -- worth optimising.
    -- built_fps is what this chamfer will REMEMBER: the fingerprint of every
    -- input shape that actually produced an offset. A shape too narrow to
    -- chamfer at this size produced nothing, so remembering it would promise a
@@ -3751,113 +4842,140 @@ function main(script_path)
    -- relief band's probe (sdk_offset_group) offsets that same in-memory group --
    -- neither deposits anything in the document.
    local n_out, n_in, skipped_narrow, drawn, built_fps = 0, 0, 0, {}, {}
+   -- What the skip note can promise (2026-08-06, Tim's ruling): the biggest
+   -- setback whose top edge still offsets for the skipped loop, bisected per
+   -- skip and min-accumulated so one printed number takes every skipped shape.
+   -- The top edge is the deepest inset either path draws, so a size that
+   -- passes it passes every band. skip_fit_dead stands the sentence down when
+   -- any skipped loop passes at NO size - there is nothing to promise, same
+   -- rule as the whole-run guard's bisect. Only ever paid on a skip, never on
+   -- a clean run.
+   local skip_fit_min, skip_fit_dead = nil, false
+   local function note_skip(obj, dir)
+      skipped_narrow = skipped_narrow + 1
+      if skip_fit_dead then return end
+      local fit = CO.bisect_w(r.W, CO.BISECT_STEPS, function(w)
+         local g = CO.sdk_offset_loop(job, obj, CO.chamfer_probe_distance(dir, w))
+         return g ~= nil
+      end)
+      if fit == nil then
+         skip_fit_min, skip_fit_dead = nil, true
+      elseif skip_fit_min == nil or fit < skip_fit_min then
+         skip_fit_min = fit
+      end
+   end
    local viable = {}                      -- ordered { i, dir, groups = {1..n} }
-   for i, loop in ipairs(loops) do
-      local groups, dead, oerr = {}, false, nil
-      -- The finishing band FIRST, and from the document object -- it is the one
-      -- that shapes the chamfer face, so every relief band is cut from it. Its
-      -- corners are then the corners of the whole chamfer, and a relief band,
-      -- being that loop backed off, physically cannot reach past it. Offsetting
-      -- each band from the original vector instead is v1.13.0's hook: at a
-      -- corner the finishing band mitres and under-reaches while a shallower
-      -- band rounds and over-reaches, and the material between them stands.
-      local pg_n = CO.pass_geometry(n_passes, n_passes, r.W, s.g, r.a)
-      local dist_n = CO.band_offset_distance(dirs[i], pg_n.offset)
-      -- sharp runs shift the drawn loop against Aspire's own off-"On"
-      -- displacement, which it computes from THAT pass's cut depth -- so the
-      -- shift is per band, not per chamfer (proved live 2026-07-31), which is
-      -- why this uses pg_n.depth and not the whole chamfer's s.d. At one pass
-      -- the two are the same number. dirs[i] puts the sign on: the loop goes
-      -- toward the material either way, which is outside a pocket wall and
-      -- inside an outline.
-      -- sdk_offset_loop still gets the plain dist as its viability probe.
-      local sharp_dist = sharp_run
-         and CO.sharp_offset_distance(dirs[i], pg_n.offset, pg_n.depth, angle) or nil
-      local group
-      group, oerr = CO.sdk_offset_loop(job, loop.obj, dist_n, sharp_dist)
-      if group ~= nil then
-         groups[n_passes] = group
-         -- Then the relief bands, each from the finishing group. Order within
-         -- this loop does not matter -- every one is cut from the same source --
-         -- but they must ALL be built before phase 2 draws anything, because
-         -- handing a group to CreateCadGroup and then offsetting it again is
-         -- untested and there is no reason to risk it.
-         --
-         -- NOT on a sharp run -- where there is nothing to nest, because every
-         -- band is already the SAME loop. A sharpened band is drawn at
-         -- CO.sharp_offset_distance(dir, offset_k, depth_k), and depth_k is
-         -- (offset_k + W)/tan a on BOTH branches of pass_geometry, so the
-         -- inner term is offset_k - (offset_k + W) = -W whatever the band. The
-         -- tan cancels exactly and every band lands W from the wall on the
-         -- material side -- any bit angle, any pass count, any preset, and
-         -- either side (pinned in tests/test_geometry.lua). sharp_applies only
-         -- ever fires on a FORCED side, and resolve_directions then sends every
-         -- loop the same way, so dir is one value for the whole run and the
-         -- sign it applies is common to all of them. The nested relief offset
-         -- is therefore identically ZERO: nesting and not nesting produce the
-         -- same loop. The branch exists because offsetting by zero and squaring
-         -- the result again is a meaningless operation, and re-deriving the
-         -- identical loop from the source object is the honest spelling of it.
-         -- v1.13.0's hook needs two differently-treated corners to mismatch,
-         -- and a sharp run has one loop and one corner treatment, so the
-         -- mechanism is absent by construction. What Aspire then does with that
-         -- loop -- sharpening as a depth-parametrised sweep along the same legs
-         -- -- is inference from the recorded mechanism, the same inference the
-         -- shipped one-pass sharp feature already runs on; the 2026-08-03
-         -- corner-nesting spec, section 7e, is where that gets settled at a
-         -- sitting.
-         for k = 1, n_passes - 1 do
-            local rg, rerr
-            if sharp_run then
-               local pg = CO.pass_geometry(k, n_passes, r.W, s.g, r.a)
-               local dk = CO.band_offset_distance(dirs[i], pg.offset)
-               rg, rerr = CO.sdk_offset_loop(job, loop.obj, dk,
-                             CO.sharp_offset_distance(dirs[i], pg.offset, pg.depth, angle))
-            else
-               local delta = CO.relief_offset_distance(k, n_passes, r.W, s.g, r.a, dirs[i])
-               -- This calls Offset on the SAME groups[n_passes] handle up to
-               -- n_passes-1 times. That Offset returns a group at all is already
-               -- deduced-not-attested (offset_and_check); calling it repeatedly
-               -- on one receiver rests on a second, stronger assumption nothing
-               -- offline can test: that Offset reads groups[n_passes] rather than
-               -- consuming or mutating it. If that assumption is wrong, every
-               -- relief band after the first would be silently wrong on a
-               -- 3-or-more-pass run. UNTESTED -- the sitting must confirm it:
-               -- offset the same group twice and check both results are right.
-               rg, rerr = CO.sdk_offset_group(groups[n_passes], delta)
+   -- Bands only. The aspire path draws its own vectors further down and leaves
+   -- `viable` empty, which is what makes phase 2 below a no-op there without a
+   -- second guard.
+   if strategy == "bands" then
+      for i, loop in ipairs(loops) do
+         local groups, dead, oerr = {}, false, nil
+         -- The finishing band FIRST, and from the document object -- it is the one
+         -- that shapes the chamfer face, so every relief band is cut from it. Its
+         -- corners are then the corners of the whole chamfer, and a relief band,
+         -- being that loop backed off, physically cannot reach past it. Offsetting
+         -- each band from the original vector instead is v1.13.0's hook: at a
+         -- corner the finishing band mitres and under-reaches while a shallower
+         -- band rounds and over-reaches, and the material between them stands.
+         local pg_n = CO.pass_geometry(n_passes, n_passes, r.W, s.g, r.a)
+         local dist_n = CO.band_offset_distance(dirs[i], pg_n.offset)
+         -- sharp runs shift the drawn loop against Aspire's own off-"On"
+         -- displacement, which it computes from THAT pass's cut depth -- so the
+         -- shift is per band, not per chamfer (proved live 2026-07-31), which is
+         -- why this uses pg_n.depth and not the whole chamfer's s.d. At one pass
+         -- the two are the same number. dirs[i] puts the sign on: the loop goes
+         -- toward the material either way, which is outside a pocket wall and
+         -- inside an outline.
+         -- sdk_offset_loop still gets the plain dist as its viability probe.
+         local sharp_dist = sharp_run
+            and CO.sharp_offset_distance(dirs[i], pg_n.offset, pg_n.depth, angle) or nil
+         local group
+         group, oerr = CO.sdk_offset_loop(job, loop.obj, dist_n, sharp_dist)
+         if group ~= nil then
+            groups[n_passes] = group
+            -- Then the relief bands, each from the finishing group. Order within
+            -- this loop does not matter -- every one is cut from the same source --
+            -- but they must ALL be built before phase 2 draws anything, because
+            -- handing a group to CreateCadGroup and then offsetting it again is
+            -- untested and there is no reason to risk it.
+            --
+            -- NOT on a sharp run -- where there is nothing to nest, because every
+            -- band is already the SAME loop. A sharpened band is drawn at
+            -- CO.sharp_offset_distance(dir, offset_k, depth_k), and depth_k is
+            -- (offset_k + W)/tan a on BOTH branches of pass_geometry, so the
+            -- inner term is offset_k - (offset_k + W) = -W whatever the band. The
+            -- tan cancels exactly and every band lands W from the wall on the
+            -- material side -- any bit angle, any pass count, any preset, and
+            -- either side (pinned in tests/test_geometry.lua). sharp_applies only
+            -- ever fires on a FORCED side, and resolve_directions then sends every
+            -- loop the same way, so dir is one value for the whole run and the
+            -- sign it applies is common to all of them. The nested relief offset
+            -- is therefore identically ZERO: nesting and not nesting produce the
+            -- same loop. The branch exists because offsetting by zero and squaring
+            -- the result again is a meaningless operation, and re-deriving the
+            -- identical loop from the source object is the honest spelling of it.
+            -- v1.13.0's hook needs two differently-treated corners to mismatch,
+            -- and a sharp run has one loop and one corner treatment, so the
+            -- mechanism is absent by construction. What Aspire then does with that
+            -- loop -- sharpening as a depth-parametrised sweep along the same legs
+            -- -- is inference from the recorded mechanism, the same inference the
+            -- shipped one-pass sharp feature already runs on; the 2026-08-03
+            -- corner-nesting spec, section 7e, is where that gets settled at a
+            -- sitting.
+            for k = 1, n_passes - 1 do
+               local rg, rerr
+               if sharp_run then
+                  local pg = CO.pass_geometry(k, n_passes, r.W, s.g, r.a)
+                  local dk = CO.band_offset_distance(dirs[i], pg.offset)
+                  rg, rerr = CO.sdk_offset_loop(job, loop.obj, dk,
+                                CO.sharp_offset_distance(dirs[i], pg.offset, pg.depth, angle))
+               else
+                  local delta = CO.relief_offset_distance(k, n_passes, r.W, s.g, r.a, dirs[i])
+                  -- This calls Offset on the SAME groups[n_passes] handle up to
+                  -- n_passes-1 times. That Offset returns a group at all is already
+                  -- deduced-not-attested (offset_and_check); calling it repeatedly
+                  -- on one receiver rests on a second, stronger assumption nothing
+                  -- offline can test: that Offset reads groups[n_passes] rather than
+                  -- consuming or mutating it. If that assumption is wrong, every
+                  -- relief band after the first would be silently wrong on a
+                  -- 3-or-more-pass run. UNTESTED -- the sitting must confirm it:
+                  -- offset the same group twice and check both results are right.
+                  rg, rerr = CO.sdk_offset_group(groups[n_passes], delta)
+               end
+               if rerr then
+                  oerr = rerr
+                  break
+               elseif rg == nil then
+                  -- Too narrow to chamfer on this band: Aspire collapsed it to
+                  -- nothing. One dead band kills the whole shape, exactly as
+                  -- before -- a chamfer on part of a face and nothing on the rest
+                  -- is worse than a skip the user is told about.
+                  dead = true
+                  break
+               end
+               groups[k] = rg
             end
-            if rerr then
-               oerr = rerr
-               break
-            elseif rg == nil then
-               -- Too narrow to chamfer on this band: Aspire collapsed it to
-               -- nothing. One dead band kills the whole shape, exactly as
-               -- before -- a chamfer on part of a face and nothing on the rest
-               -- is worse than a skip the user is told about.
-               dead = true
-               break
-            end
-            groups[k] = rg
+         elseif oerr == nil then
+            dead = true
          end
-      elseif oerr == nil then
-         dead = true
-      end
-      -- One failure report for both offset calls: which of the two could not
-      -- offset the vector is not something the operator can act on differently.
-      if oerr then
-         CO.sdk_leave_user_layer(job)
-         CO.show_message(gadget_dir, {
-            kind = "error",
-            headline = "Couldn't offset a vector",
-            body = "Failed offsetting vector " .. i .. ":\n" .. tostring(oerr),
-            plain = "Failed offsetting vector " .. i .. ":\n" .. tostring(oerr),
-         })
-         return false
-      end
-      if dead then
-         skipped_narrow = skipped_narrow + 1
-      else
-         viable[#viable + 1] = { i = i, dir = dirs[i], groups = groups, loop = loop }
+         -- One failure report for both offset calls: which of the two could not
+         -- offset the vector is not something the operator can act on differently.
+         if oerr then
+            CO.sdk_leave_user_layer(job)
+            CO.show_message(gadget_dir, {
+               kind = "error",
+               headline = "Couldn't offset a vector",
+               body = "Failed offsetting vector " .. i .. ":\n" .. tostring(oerr),
+               plain = "Failed offsetting vector " .. i .. ":\n" .. tostring(oerr),
+            })
+            return false
+         end
+         if dead then
+            note_skip(loop.obj, dirs[i])
+         else
+            viable[#viable + 1] = { i = i, dir = dirs[i], groups = groups, loop = loop }
+         end
       end
    end
    -- Phase 2: draw. Band by band, so each band's layer holds exactly its own
@@ -3888,6 +5006,116 @@ function main(script_path)
       if v.dir == "outward" then n_out = n_out + 1 else n_in = n_in + 1 end
    end
 
+   if strategy == "aspire" then
+      -- ASPIRE STRATEGY BEGIN (large-chamfer spec sections 3b-3e). Above the
+      -- sharpening ceiling with Sharp corners ticked: coincident copies onto the
+      -- slot's layer for each loop's DIRECTION (band_of), then Aspire's own
+      -- chamfer engine via the second template, loaded once per direction.
+      -- Flute position does not apply - the tip rides the mitre - and
+      -- Aspire steps down internally, so there is no band loop and no relief
+      -- arithmetic here.
+      for i, loop in ipairs(loops) do
+         -- Does the chamfer still fit this shape? A coincident copy cannot
+         -- collapse the way an offset can, which is why this path shipped with
+         -- no check at all - but that answers the wrong question. What can fail
+         -- is the CHAMFER: it eats W off the material side of both walls, so
+         -- anything narrower than 2W has no top edge left.
+         --
+         -- The probe is the bands path's own, at the chamfer's top-edge
+         -- distance. Its result is thrown away - the vector actually drawn is
+         -- still the coincident clone below - so this asks a question and
+         -- changes nothing.
+         --
+         -- WHAT IT CATCHES, and it is narrower than it first looks: a loop that
+         -- is too thin EVERYWHERE, because the whole offset has to come back
+         -- empty. A narrow ring, a thin rectangle, a lone stem. That is a real
+         -- case and it is worth the skip.
+         --
+         -- WHAT IT CANNOT CATCH: local narrowing. A waist between an outline
+         -- and its counter, a reflex junction, a spur. Those collapse a PART of
+         -- the loop while the rest survives, so Count stays >= 1 and the probe
+         -- passes - correctly, on the question it was asked. Measured
+         -- 2026-08-04 on "EDGEBREAKER", 90 deg bit, W 0.2, strokes 0.30-0.40:
+         -- G's spur, B's waist and R's bowl-to-leg junction were all over-cut
+         -- and no loop collapsed, so nothing was counted.
+         --
+         -- SUPERSEDED 2026-08-04: that conclusion ("not a defect, Aspire's
+         -- own hand-built chamfer does the same thing, a skipped R is worse
+         -- than a gouged one") was this session's, and the product owner
+         -- reversed it the same day - reproducing Aspire's own mess is not
+         -- good enough. What replaced it is the whole-selection narrow-break
+         -- guard about 300 lines above this, in main() (spec
+         -- 2026-08-04-edgebreaker-narrow-break-guard): it shrinks the WHOLE
+         -- selection at once and refuses the entire run on a count change,
+         -- which sees exactly what this per-loop probe cannot - a waist
+         -- between an outline and its counter, a reflex junction, a spur -
+         -- because it looks at the region, not one loop in isolation. This
+         -- probe's narrower reach is still true and still worth keeping
+         -- (spec 6d): until a machine sitting proves the new guard actually
+         -- fires inside Aspire, this older, narrower check is the only thing
+         -- standing between fine lettering and a silent over-cut.
+         local probe, perr = CO.sdk_offset_loop(job, loop.obj,
+            CO.chamfer_probe_distance(dirs[i], r.W))
+         if perr then
+            CO.sdk_leave_user_layer(job)
+            CO.show_message(gadget_dir, {
+               kind = "error",
+               headline = "Couldn't measure a vector",
+               body = "Failed checking whether the chamfer fits vector " .. i
+                   .. ":\n" .. tostring(perr),
+               plain = "Failed checking whether the chamfer fits vector " .. i
+                   .. ":\n" .. tostring(perr),
+            })
+            return false
+         end
+         if probe == nil then
+            -- Too narrow: skipped and COUNTED, never drawn. skip_summary turns
+            -- the count into a sentence and should_report lifts the message box
+            -- on it, so this cannot end in the silence a clean run gets.
+            note_skip(loop.obj, dirs[i])
+         else
+            -- Winding pinned before anything is drawn: _chpdInside is read
+            -- against the loop's travel direction (see CH_INSIDE_FOR_DIR), so
+            -- every copy goes down counter-clockwise whatever way the original
+            -- runs - Aspire's own toolpath calculation can reverse an original
+            -- between runs, and did, mid-sitting.
+            local rev = CO.chamfer_copy_reverse(CO.signed_area(loop.pts))
+            local ok_copy, contour, cerr = pcall(CO.sdk_clone_loop, loop.obj, rev)
+            if not (ok_copy and contour ~= nil) then
+               CO.sdk_leave_user_layer(job)
+               CO.show_message(gadget_dir, {
+                  kind = "error",
+                  headline = "Couldn't copy a vector",
+                  body = "Failed copying vector " .. i .. ":\n"
+                      .. tostring(ok_copy and cerr or contour),
+                  plain = "Failed copying vector " .. i .. ":\n"
+                      .. tostring(ok_copy and cerr or contour),
+               })
+               return false
+            end
+            local bk = dirbands.band_of[i]
+            local ok_draw, cad, derr = pcall(CO.sdk_draw_contour, layers[bk], contour)
+            if not (ok_draw and cad) then
+               CO.sdk_leave_user_layer(job)
+               CO.show_message(gadget_dir, {
+                  kind = "error",
+                  headline = "Couldn't draw a copy of a vector",
+                  body = "Failed drawing the copy of vector " .. i .. ":\n"
+                      .. tostring(ok_draw and derr or cad),
+                  plain = "Failed drawing the copy of vector " .. i .. ":\n"
+                      .. tostring(ok_draw and derr or cad),
+               })
+               return false
+            end
+            band_drawn[bk][#band_drawn[bk] + 1] = cad
+            drawn[#drawn + 1] = cad
+            if loop.bbox ~= nil then built_fps[#built_fps + 1] = loop.bbox end
+            if dirs[i] == "outward" then n_out = n_out + 1 else n_in = n_in + 1 end
+         end
+      end
+      -- ASPIRE STRATEGY END
+   end
+
    -- Every loop collapsed. The layer wipe already happened unconditionally
    -- (above), so the offset vectors really are gone -- say so. The old-toolpath
    -- delete was only ATTEMPTED, though: replaced_note already carries whether
@@ -3908,7 +5136,9 @@ function main(script_path)
       -- whose offset comes from the chamfer width and the pass count -- so
       -- "nearer the tip" would be advice that cannot help. A smaller chamfer is
       -- the only remedy true in both cases.
-      local remedy = (n_passes > 1)
+      -- The cut position is greyed out on the aspire path (the tip rides the
+      -- mitre), so naming it there would be advice the operator cannot take.
+      local remedy = (strategy == "aspire" or n_passes > 1)
          and "Try a smaller chamfer size."
          or "Try a smaller chamfer size, or a cut position nearer the tip."
       CO.show_message(gadget_dir, {
@@ -3938,7 +5168,12 @@ function main(script_path)
    job:Refresh2DView()
 
    local toolpath_note
-   if template_ok then
+   -- Which template this run stands or falls on. Each path is judged by its own
+   -- file: a broken chamfer template must not stop a bands run, and a broken
+   -- profile one must not stop an aspire run.
+   local build_ok, build_err = template_ok, template_err
+   if strategy == "aspire" then build_ok, build_err = chamfer_bytes_ok, chamfer_template_err end
+   if build_ok then
       -- pcall shapes: (true,table)=success, (true,nil,err)=soft failure, (false,errstr)=raw throw
       -- depth stored in job units (docs/m0-results.md, mm-sample)
       local built, fail_at, fail_why = 0, nil, nil
@@ -3957,6 +5192,10 @@ function main(script_path)
       -- warning past a teardown would tell the operator to go and change the
       -- tool on a toolpath the same message has just said was removed.
       local retool_warnings, tag_warnings = "", ""
+      -- On the aspire path n_passes counts DIRECTIONS, not passes, and the
+      -- operator was never told about passes there - name toolpaths by their
+      -- direction in every sentence below.
+      local aspire_split = (strategy == "aspire") and n_passes > 1
       for k = 1, n_passes do
          -- Select this band's offsets before its template loads. The shipped
          -- template is layer-restricted, but a hand-re-created, UNRESTRICTED one
@@ -3967,15 +5206,47 @@ function main(script_path)
             for _, obj in ipairs(band_drawn[k]) do job.Selection:Add(obj, true, true) end
          end)
          if not ok_sel then
-            fail_at, fail_why = k, (n_passes > 1)
+            fail_at, fail_why = k, aspire_split
+               and ("could not select the " .. dirbands.dir_of_band[k] .. " offsets")
+               or (n_passes > 1)
                and ("could not select band " .. k .. "'s offsets")
                or "could not select the drawn offsets"
             break
          end
-         local pg = CO.pass_geometry(k, n_passes, r.W, s.g, r.a)
-         local tp_name = CO.toolpath_name(size, unit.suffix, slot, k, n_passes)
-         local ok_tp, res, terr = pcall(CO.sdk_apply_template, gadget_dir, CO.TEMPLATE_NAME,
-                                        pg.depth, start, slot, k, tp_name, tool, sharp_side)
+         local ok_tp, res, terr
+         if strategy == "aspire" then
+            -- ASPIRE STRATEGY BEGIN. One template load per DIRECTION, k
+            -- indexing dirbands: Aspire's engine takes the whole setback as a
+            -- cut depth and steps down to it by itself, but it does not nest -
+            -- one _chpdInside byte serves every loop in a toolpath - so each
+            -- direction present cuts as its own toolpath aimed at its own band
+            -- layer. The direction comes from the banding, NEVER from the
+            -- dialog's side field: resolve_directions already folded side in,
+            -- and under Auto the loops legitimately disagree (session 075).
+            local chamfer_dir = dirbands.dir_of_band[k]
+            local tp_name = CO.chamfer_toolpath_name(size, unit.suffix, slot,
+                                                     chamfer_dir, aspire_split)
+            -- Called through a closure rather than pcall's argument list purely
+            -- so the call site reads as a call - the source pin looks for it,
+            -- and `pcall(CO.sdk_apply_chamfer_template, ...)` names a value
+            -- instead. Same pcall shapes either way.
+            ok_tp, res, terr = pcall(function()
+               -- `angle` is the bit's INCLUDED angle, the same number
+               -- chamfer_cut_depth was handed above. Aspire will not derive it
+               -- from the tool ReplaceTool installs (sitting check D8), so it
+               -- travels with the depth or the cut comes out at 45 degrees.
+               return CO.sdk_apply_chamfer_template(gadget_dir, CO.CHAMFER_TEMPLATE_NAME,
+                                                    cut_depth, start, slot, k, tp_name,
+                                                    tool, chamfer_dir, angle, unit.suffix)
+            end)
+            -- ASPIRE STRATEGY END
+         else
+            local pg = CO.pass_geometry(k, n_passes, r.W, s.g, r.a)
+            local tp_name = CO.toolpath_name(size, unit.suffix, slot, k, n_passes)
+            ok_tp, res, terr = pcall(CO.sdk_apply_template, gadget_dir, CO.TEMPLATE_NAME,
+                                     pg.depth, start, slot, k, tp_name, tool, sharp_side,
+                                     unit.suffix)
+         end
          if not (ok_tp and type(res) == "table") then
             fail_at, fail_why = k, tostring(ok_tp and terr or res)
             break
@@ -3985,7 +5256,8 @@ function main(script_path)
          -- One pass and the operator has one toolpath, so naming a pass number
          -- would be v1.12.0's words changed for nothing. The N = 1 path is meant
          -- to be indistinguishable, right down to the strings.
-         local which = (n_passes > 1) and ("pass " .. k) or "the toolpath"
+         local which = aspire_split and ("the " .. dirbands.dir_of_band[k] .. " toolpath")
+            or ((n_passes > 1) and ("pass " .. k) or "the toolpath")
          if not res.retooled then
             trouble = true
             retool_warnings = retool_warnings
@@ -4023,14 +5295,18 @@ function main(script_path)
          -- sweep above could not see and has therefore left in the job. The
          -- retool warnings describe passes it did delete.
          toolpath_note = "TOOLPATH NOT CREATED: "
-            .. ((n_passes > 1)
+            .. (aspire_split
+                and ("the " .. dirbands.dir_of_band[fail_at] .. " toolpath failed - ")
+                or (n_passes > 1)
                 and ("pass " .. fail_at .. " of " .. n_passes .. " failed - ") or "")
             .. tostring(fail_why)
             .. ((cleaned and built > 0)
-                and "\n\nThe passes that had already been built were removed."
+                and (aspire_split and "\n\nThe toolpath that had already been built was removed."
+                     or "\n\nThe passes that had already been built were removed.")
                 or "")
             .. ((not cleaned)
-                and ("\n\nSome of the earlier passes are still in the Toolpaths panel. "
+                and ("\n\n" .. (aspire_split and "The other toolpath may still be in the Toolpaths panel. "
+                                or "Some of the earlier passes are still in the Toolpaths panel. ")
                      .. "Delete every toolpath marked " .. CO.toolpath_marker(slot)
                      .. " before cutting, and any profile toolpath this run left untagged.")
                 or "")
@@ -4042,20 +5318,26 @@ function main(script_path)
          -- 6 of 6' created" reads as a contradiction and says it twice. The names
          -- are in the Toolpaths panel; the count is what this line is for.
          local how
-         if n_passes > 1 then
+         if aspire_split then
+            how = "Outward and inward toolpaths created"
+         elseif n_passes > 1 then
             how = string.format("%d passes created", n_passes)
          else
             local shown = last_res.renamed
                and ("'" .. CO.toolpath_name(size, unit.suffix, slot, 1, 1) .. "' ") or ""
             how = string.format("Toolpath %screated", shown)
          end
+         -- Name the strategy the operator will actually see in the Toolpaths
+         -- panel. Saying "Profile On" over an Aspire chamfer toolpath would send
+         -- anyone who opened it looking for a setting that is not there.
+         local how_word = (strategy == "aspire") and "Chamfer" or "Profile On"
          if last_res.status == "calculated" then
-            toolpath_note = string.format("%s and calculated (Profile On, depth %.4f %s)\nusing %s.",
-                                          how, s.d, unit.suffix, geom.name)
+            toolpath_note = string.format("%s and calculated (%s, depth %.4f %s)\nusing %s.",
+                                          how, how_word, cut_depth, unit.suffix, geom.name)
          else
             trouble = true
-            toolpath_note = string.format("%s (Profile On, depth %.4f %s)\nusing %s.",
-                                          how, s.d, unit.suffix, geom.name)
+            toolpath_note = string.format("%s (%s, depth %.4f %s)\nusing %s.",
+                                          how, how_word, cut_depth, unit.suffix, geom.name)
                .. "\n\nYour other toolpaths were left untouched, and the chamfer toolpath "
                .. "could not be calculated on its own - open it and click Calculate."
          end
@@ -4080,7 +5362,7 @@ function main(script_path)
       end
    else
       trouble = true
-      toolpath_note = "TOOLPATH NOT CREATED: " .. tostring(template_err)
+      toolpath_note = "TOOLPATH NOT CREATED: " .. tostring(build_err)
          .. "\n\nThe offset vectors were still drawn."
    end
    if replaced_note ~= "" then
@@ -4109,7 +5391,18 @@ function main(script_path)
    end
 
    local sel_notes = CO.selection_skip_notes(skipped_open, skipped_own)
-   local narrow_note = CO.skip_summary(skipped_narrow)
+   -- The skipped shapes' biggest-that-fits, converted and floored exactly the
+   -- way the whole-run refusal's suggestion is (CO.floor4: fmt_len rounds to
+   -- NEAREST and could print a number just above the W that actually passed).
+   local skip_suggest = nil
+   if skip_fit_min ~= nil and not skip_fit_dead then
+      skip_suggest = CO.size_from_w(mode, skip_fit_min, r.a)
+      if skip_suggest ~= nil then
+         skip_suggest = CO.floor4(skip_suggest)
+         if skip_suggest <= 0 then skip_suggest = nil end
+      end
+   end
+   local narrow_note = CO.skip_summary(skipped_narrow, strategy, skip_suggest, unit.suffix)
    if narrow_note then sel_notes = sel_notes .. "\n\n" .. narrow_note end
    -- The chamfer was still built, correctly, with rounded corners -- a sharp run
    -- that cannot sharpen has a safe answer and takes it. But the operator ticked
@@ -4146,18 +5439,31 @@ function main(script_path)
    -- reason the dialog's warning does.
    local start_txt = (start > 0) and string.format(
       "\nStart depth: %.4f %s (total reach %.4f %s)",
-      start, unit.suffix, start + s.d, unit.suffix) or ""
+      start, unit.suffix, start + cut_depth, unit.suffix) or ""
 
-   local rows = {
-      { "Offset", string.format("%s (%d outward, %d inward)",
-           CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in) },
-      { "G", string.format("%.4f %s", s.g, unit.suffix) },
-      { "Plunge D", string.format("%.4f %s", s.d, unit.suffix) },
-      { "Standoff", string.format("%.4f %s", s.standoff, unit.suffix) },
-   }
+   -- On the aspire path nothing was offset: the copies sit exactly on their
+   -- originals and Aspire's chamfer toolpath does the cutting. G and the
+   -- standoff come from the flute position, which that path never uses, so
+   -- printing them would describe a run that did not happen.
+   local rows
+   if strategy == "aspire" then
+      rows = {
+         { "Copied", string.format("%s (%d outward, %d inward)",
+              CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in) },
+         { "Chamfer depth", string.format("%.4f %s", cut_depth, unit.suffix) },
+      }
+   else
+      rows = {
+         { "Offset", string.format("%s (%d outward, %d inward)",
+              CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in) },
+         { "G", string.format("%.4f %s", s.g, unit.suffix) },
+         { "Plunge D", string.format("%.4f %s", cut_depth, unit.suffix) },
+         { "Standoff", string.format("%.4f %s", s.standoff, unit.suffix) },
+      }
+   end
    if start > 0 then
       rows[#rows + 1] = { "Start depth", string.format("%.4f %s (total reach %.4f %s)",
-         start, unit.suffix, start + s.d, unit.suffix) }
+         start, unit.suffix, start + cut_depth, unit.suffix) }
    end
    -- Plural and a range on a multi-pass run: one layer per band, and the
    -- operator is going to go looking for all of them. The phrase is quoted, so
@@ -4179,18 +5485,35 @@ function main(script_path)
       note_text = (note_text ~= "" and (note_text .. "\n\n") or "") .. toolpath_note
    end
 
+   -- Same split as the rows, for the same reason: the plain fallback is what a
+   -- machine with scripting off gets, so it has to be as true as the styled box.
+   -- The tip-flat advisory goes with G and the standoff - it is advice about the
+   -- cut position, and the aspire path has no cut position.
+   local plain_text
+   if strategy == "aspire" then
+      plain_text = string.format(
+         "EdgeBreaker - Chamfer %d %s\n\nCopied %s (%d outward, %d inward)\nonto %s %s.\n\nAspire's chamfer toolpath cuts them from the tip down, so there's no offset and no standoff.\n\nChamfer depth: %.4f %s%s\n\n%s\n\n%s",
+         slot, DID[kind_out] or "built",
+         CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in,
+         ((n_passes > 1) and "layers" or "layer"), CO.offset_layer_phrase(slot, n_passes),
+         cut_depth, unit.suffix, start_txt,
+         sel_notes, toolpath_note)
+   else
+      plain_text = string.format(
+         "EdgeBreaker - Chamfer %d %s\n\nOffset %s (%d outward, %d inward) by G %.4f %s\nonto %s %s.\n\nPlunge depth D: %.4f %s%s\nStandoff from wall: %.4f %s%s\n\n%s\n\n%s",
+         slot, DID[kind_out] or "built",
+         CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in, s.g, unit.suffix,
+         ((n_passes > 1) and "layers" or "layer"), CO.offset_layer_phrase(slot, n_passes),
+         cut_depth, unit.suffix, start_txt, s.standoff, unit.suffix,
+         sel_notes, r.tip_flat_advisory, toolpath_note)
+   end
+
    CO.show_message(gadget_dir, {
       kind = (trouble or note_text ~= "") and "warn" or "done",
       headline = string.format("Chamfer %d %s", slot, DID[kind_out] or "built"),
       rows = rows,
       note = note_text,
-      plain = string.format(
-         "EdgeBreaker - Chamfer %d %s\n\nOffset %s (%d outward, %d inward) by G %.4f %s\nonto %s %s.\n\nPlunge depth D: %.4f %s%s\nStandoff from wall: %.4f %s%s\n\n%s\n\n%s",
-         slot, DID[kind_out] or "built",
-         CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in, s.g, unit.suffix,
-         ((n_passes > 1) and "layers" or "layer"), CO.offset_layer_phrase(slot, n_passes),
-         s.d, unit.suffix, start_txt, s.standoff, unit.suffix,
-         sel_notes, r.tip_flat_advisory, toolpath_note),
+      plain = plain_text,
    })
    return true
 end

@@ -109,3 +109,39 @@ do
          "'EdgeBreaker Offset 07-1' to 'EdgeBreaker Offset 07-2'",
          "the slot is carried into both ends")
 end
+
+-- CO.narrow_refusal: the refusal the narrow-break guard shows. Pure, so the
+-- wording is pinned here and cannot drift. DRAFT strings - awaiting Tim's
+-- redline - which is exactly why they are pinned: one target to change.
+do
+   local m = CO.narrow_refusal({ asked = 0.2, suggest = 0.15, n_sel = 17, unit = "in" })
+   CHECK(m.kind == "error", "narrow_refusal: refusals are red")
+   CHECK(m.headline == "Chamfer's too big for this artwork",
+         "narrow_refusal: headline (got " .. tostring(m.headline) .. ")")
+   CHECK(m.body:find("0.2 in", 1, true) ~= nil,
+         "narrow_refusal: body names the size that was asked for")
+   CHECK(m.body:find("Try 0.15 in or less", 1, true) ~= nil,
+         "narrow_refusal: body names the size that fits")
+   CHECK(#m.rows == 2, "narrow_refusal: two rows when a size is known")
+   CHECK(m.rows[1][1] == "Selected" and m.rows[1][2] == "17 vector(s)",
+         "narrow_refusal: first row counts the selection")
+   CHECK(m.rows[2][1] == "Biggest that fits" and m.rows[2][2] == "0.15 in",
+         "narrow_refusal: second row names the size")
+   CHECK(m.plain:find("0.15 in", 1, true) ~= nil,
+         "narrow_refusal: the fallback box carries the size too")
+
+   -- size_from_w returns nil where the conversion divides by ~0. Print no
+   -- number rather than the word nil, and still refuse.
+   local n = CO.narrow_refusal({ asked = 0.2, suggest = nil, n_sel = 3, unit = "mm" })
+   CHECK(n.kind == "error", "narrow_refusal: still refuses with no size to name")
+   CHECK(n.body:find("Try", 1, true) == nil,
+         "narrow_refusal: no 'Try ...' line when there is no size")
+   CHECK(n.body:find("nil", 1, true) == nil, "narrow_refusal: never prints nil")
+   CHECK(#n.rows == 1, "narrow_refusal: one row when no size is known")
+   CHECK(n.plain:find("nil", 1, true) == nil, "narrow_refusal: nor in the fallback")
+
+   -- Trailing zeros are stripped the same way every other length in the
+   -- product is, so two messages about the same size read identically.
+   local z = CO.narrow_refusal({ asked = 0.2000, suggest = 0.1500, n_sel = 1, unit = "in" })
+   CHECK(z.body:find("0.2000", 1, true) == nil, "narrow_refusal: no trailing zeros")
+end

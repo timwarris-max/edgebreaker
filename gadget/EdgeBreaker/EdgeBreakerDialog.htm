@@ -112,11 +112,12 @@ input[type=radio] { zoom: 2.5; }
    second line regardless). */
 #SharpWrap { width: auto; font-weight: normal; margin-left: 18px; font-size: 22px; }
 #SharpWrap.off { color: #9aa0a6; }
-/* .modecap is display:block everywhere else it's used (it is always alone on
-   its row), but here that would push the caption to a THIRD line even
-   though it easily fits beside the checkbox on the second -- so #SharpCap
-   overrides it back to inline. */
-#SharpCap { display: inline; margin-left: 14px; }
+/* Greyed on the aspire path, where Aspire's engine picks each loop's side from
+   the geometry and a forced side has no correct behaviour (side-greyed spec 3c).
+   The GROUP and its label grey, never the whole #SideRow -- #SharpWrap shares
+   the row and is the control that causes this state, so greying it would trap
+   the operator above the ceiling with no way back. */
+#SideGroup.off label, #SideLabel.off { color: #9aa0a6; }
 /* Trims .row's default 16px bottom margin to 2px, and forces line-height:1
    (default "normal" adds leading on top of the checkbox/caption line that
    this row doesn't have room for) -- the row is now two lines instead of
@@ -182,9 +183,38 @@ input[type=radio] { zoom: 2.5; }
 .seg.sel { background: #f76707; border-color: #d95a04; box-shadow: 0 2px 5px rgba(217,90,4,.35); }
 .seg.sel .p { color: #fff; font-weight: 700; }
 .seg.sel .d { color: #ffe1c7; }
+/* Aspire mode (2026-08-04): a chamfer past the sharpening ceiling is cut by
+   Aspire's own chamfer engine, whose tip rides the mitre from the top of the
+   chamfer to the bottom. There is no cut position to pick, so the row greys.
+   GREYED, not hidden: six buttons vanishing and reappearing as the size crosses
+   a threshold is a bigger surprise than a row that stops responding with a
+   caption beside it saying why.
+   Colour only -- no padding, border WIDTH or margin moves -- so the row keeps
+   the 6 x (108 + 8) = 696 arithmetic above, greyed or not. The children carry
+   their own colours (.seg .p, .seg.sel .p), so greying the parent alone would
+   leave the lit button's white-on-nothing text invisible; the #Presets id gives
+   these the specificity to win. */
+#Presets.off .seg { border-color: #c9ced4; background: #f6f7f9; cursor: default; }
+#Presets.off .seg .p, #Presets.off .seg .d { color: #9aa0a6; }
+#Presets.off .seg.sel { background: #f6f7f9; box-shadow: none; }
+#Presets.off .seg.sel .p { color: #9aa0a6; }
 
 .modecap { font-size: 22px; color: #667; display: block; margin-top: 6px; }
 #ChartWrap { border: 1px solid #e2e6ea; border-radius: 8px; background: #fff; margin-top: 4px; }
+/* The flute chart greys with the row it belongs to (2026-08-04). It is a chart
+   OF cut positions, so in aspire mode every number on it -- six depths, six
+   standoffs, the contact band -- describes a run that is not going to happen,
+   and it is the loudest thing in the column. Same .off idiom as #Presets above:
+   a class on the container, colours only on the children, so nothing moves.
+   The SVG ink is set as presentation attributes by redraw(); CSS beats a
+   presentation attribute, so these win without redraw() knowing about them.
+   #SelTxt is the exception and the point of the whole treatment: that one line
+   is rewritten in aspire mode to say what the run WILL do, so it stays dark
+   while the reference around it fades. */
+#ChartWrap.off #Chart line   { stroke: #c9ced4; }
+#ChartWrap.off #Chart circle { fill: #c9ced4; }
+#ChartWrap.off #Chart text   { fill: #9aa0a6; }
+#ChartWrap.off #SelTxt       { fill: #333; }
 #SecWrap { border: 1px solid #e2e6ea; border-radius: 8px; background: #fff; margin-top: 6px; }
 #BlockMsg { color: #b00000; font-size: 26px; padding: 24px; display: none; }
 /* Waiting for the operator is not a problem, so it must not look like one.
@@ -203,7 +233,7 @@ input[type=radio] { zoom: 2.5; }
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.13.0</span>
+ <div id="Hdr">EdgeBreaker<span class="ver">v1.14.0</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="Choose bit ..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
@@ -235,14 +265,17 @@ input[type=radio] { zoom: 2.5; }
       <div class="row"><label id="StartLabel">Start depth (in):</label>
         <input type="text" id="StartDepth" name="StartDepth" value="0"></div>
       <div class="row" id="SideRow">
-        <label>Chamfer side:</label>
+        <label id="SideLabel">Chamfer side:</label>
         <span id="SideGroup">
           <label><input type="radio" name="SideRadio" value="auto" checked> Auto</label>
           <label><input type="radio" name="SideRadio" value="outside"> Outside</label>
           <label><input type="radio" name="SideRadio" value="inside"> Inside</label>
         </span>
         <label id="SharpWrap"><input type="checkbox" id="SharpBox"> Sharp corners</label>
-        <span class="modecap" id="SharpCap">needs a smaller chamfer, or a bigger bit</span>
+        <!-- Only ever shown with the radios greyed beside it (applyAspireState),
+             same pattern as #PresetCap. It wears .modecap, so it is display:block
+             and drops onto its own line rather than fighting the row for width. -->
+        <span class="modecap" id="SideCap" style="display:none">big chamfers always cut on the material side</span>
       </div>
       <!-- Named for what it holds, not "Help": the button in the bar is now the
            Help, and two controls called Help on one dialog would mean two
@@ -291,9 +324,12 @@ input[type=radio] { zoom: 2.5; }
           &mdash; right when you select an outline together with its holes. It cannot
           recognize a pocket edge or a hole selected on its own: pick <b>Inside</b> for those.
           <b>Outside</b> forces every selected vector to chamfer on its outer side.<br><br>
-          <b>Sharp corners:</b> works on any side, as long as the cut stays inside the
-          bit's cutting edge. The bit rises
-          into each corner so the two edges meet in a point instead of a round. The corner
+          <b>Sharp corners:</b> the bit rises
+          into each corner so the two edges meet in a point instead of a round. Past what
+          the bit can sharpen in one flat pass, EdgeBreaker hands the cut to Aspire's own
+          chamfer engine &mdash; you lose the cut-position buttons for that chamfer, and
+          it picks the side itself.<br><br>
+          The corner
           moves cut nearer the tip than your chosen position &mdash; that's the only way in.
           On an outside chamfer the guide line is drawn inside the shape, so anything
           narrower than two chamfers gets skipped. If you've selected shapes that sit inside
@@ -342,6 +378,11 @@ input[type=radio] { zoom: 2.5; }
              class="seg" data-pct="60"><span class="p">60%</span><span class="d">&nbsp;</span></div><div
              class="seg sel" data-pct="80"><span class="p">80%</span><span class="d">&nbsp;</span></div><div
              class="seg" data-pct="100"><span class="p">100%</span><span class="d">&nbsp;</span></div>
+        <!-- Only ever shown with the row greyed above it (applyAspireState). It
+             wears .modecap, so it is display:block and drops onto its own line;
+             the newline before it is therefore free and cannot disturb the
+             no-whitespace chaining of the six buttons. -->
+        <span class="modecap" id="PresetCap" style="display:none">big sharp chamfers cut from the tip</span>
       </div>
       <div id="DepthWarn" style="display:none"></div>
       <div id="PassNote" style="display:none"></div>
@@ -713,11 +754,6 @@ var sharpRestorePercent = null;
 // as opposed to a redraw the page ran for itself. Which one it is decides
 // whose value a drop remembers -- see the ceiling-drop check in redraw().
 var percentFromClick = false;
-// True when the PAGE unticked the box (no cut position could sharpen the
-// chamfer any more), so it knows to tick it back on when sharpening becomes
-// possible again. A tick the OPERATOR removed clears this and is never given
-// back: the gadget only ever undoes its own doing.
-var sharpAutoUnticked = false;
 var stockThickness = NaN;   // from Lua; NaN means the job did not say
 var startDepth = 0;   // how far below the stock top the edge sits; 0 = at the top
 
@@ -902,11 +938,8 @@ function seedFrom(rec) {
   // this, switching chamfers while one is mid-drop leaks its remembered
   // percent into the next one, and unticking there would hand back a position
   // that chamfer never had -- the one case where "the operator's own choice
-  // comes back" would be false again. The auto-untick goes with it, for the
-  // same reason: a tick the page removed on one chamfer must not reappear on
-  // another the operator never ticked.
+  // comes back" would be false again.
   sharpRestorePercent = null;
-  sharpAutoUnticked = false;
   if (!rec) return;
   if (rec.size !== "") {
     el("Size").value = rec.size;
@@ -1042,43 +1075,99 @@ function applySideDefault() {
   applySharpState();
 }
 
-// The checkbox is live exactly when this chamfer can be sharpened at some cut
-// position. Greying is UX -- CO.sharp_applies and CO.sharp_nesting_ok are the
-// real gates and refuse whatever this field says -- but it is also the only
-// warning the operator gets before Aspire fails the run half way through, so
-// when sharpening is impossible the box unticks as well as greys: a ticked box
-// the run will ignore states something untrue about the cut.
+// True when Aspire's own chamfer engine will cut this run rather than our
+// bands: the box is ticked and NO cut position on this bit can sharpen a
+// chamfer this big. That is exactly what `currentSharpMax === null` means, and
+// it is the page's copy of CO.chamfer_strategy in EdgeBreaker.lua, which is
+// authoritative -- everything here is preview.
 //
-// The SIDE is deliberately not tested here any more (2026-08-03). Auto
-// sharpens -- it is the only side that CAN sharpen a letter set, because a
-// letter set contains both directions at once. What a forced side cannot do is
-// sharpen a NESTED selection, and this page cannot know whether the selection
-// nests: the dialog is shown before the loops are ever read. That refusal is
-// reported after the run, the same way shapes too narrow to chamfer are.
+// The no-bit state is the STRING "unknown" and must never come in here (see the
+// three states where currentSharpMax is declared). `=== null` rather than a
+// falsiness test is what keeps the two apart.
+function aspireMode() {
+  return el("Sharp").value === "1" && currentSharpMax === null;
+}
+
+// The checkbox is live, always. Nothing on this page greys it any more.
+//
+// It used to grey AND untick itself past the sharpening ceiling, with a caption
+// naming the two remedies, because the ceiling was a refusal: no cut position
+// could sharpen the corner, so a ticked box promised something the run would
+// not do. The ceiling is not a refusal any more. Past it the run switches to
+// Aspire's chamfer engine, whose tip rides the mitre and sharpens at any size,
+// and the price is the CUT POSITION rather than the corner (Tim's ruling:
+// sharp corners at any size outrank flute control). So that whole state is
+// gone -- no greying, no self-untick, no caption -- and what greys instead is
+// the cut-position row. See applyAspireState below.
+//
+// Greying at all is still only UX: CO.sharp_applies and CO.sharp_nesting_ok are
+// the real gates and refuse whatever this field says.
+//
+// The SIDE is deliberately not tested here (2026-08-03). Auto sharpens -- it is
+// the only side that CAN sharpen a letter set, because a letter set contains
+// both directions at once. What a forced side cannot do is sharpen a NESTED
+// selection, and this page cannot know whether the selection nests: the dialog
+// is shown before the loops are ever read. That refusal is reported after the
+// run, the same way shapes too narrow to chamfer are.
 //
 // The old sharpSideOk helper is deleted with it. It held one copy of the side
 // test for three readers; there is no side test left to hold.
 function applySharpState() {
   var box = el("SharpBox");
   if (!box) return;
-  // Only a KNOWN impossible greys the box. "unknown" leaves it alone.
-  var live = currentSharpMax !== null;
-  // Remembered, so redraw() can tick it back on if sharpening becomes possible
-  // again -- and hand back the cut position the tick had moved.
-  if (!live && el("Sharp").value === "1") {
-    el("Sharp").value = "0";
-    sharpAutoUnticked = true;
-  }
-  box.disabled = !live;
-  el("SharpWrap").className = live ? "" : "off";
-  // The depth ceiling is the only reason left to grey. Both remedies for it are
-  // real and the README names both, so this does too -- one place saying
-  // "smaller chamfer" and another "bigger bit" reads as two different rules.
-  // This string is pinned by a source check in tests/test_release.lua; reword it
-  // there too.
-  el("SharpCap").innerHTML = "needs a smaller chamfer, or a bigger bit";
-  el("SharpCap").style.display = live ? "none" : "";
+  // Deliberately not conditional, and deliberately still written on every
+  // redraw: v1.13.0 greyed the box on `currentSharpMax === null` and left the
+  // "unknown" no-bit state alone, and only the null case has changed meaning.
+  // With null now a buildable run, no value of currentSharpMax greys anything,
+  // so this is the whole of what is left. The "unknown" state is UNCHANGED from
+  // v1.13.0 -- box enabled, no .off, no caption -- which is what the gate's
+  // "no bit yet" case pins.
+  box.disabled = false;
+  el("SharpWrap").className = "";
   box.checked = el("Sharp").value === "1";
+  applyAspireState();
+}
+
+// Aspire's chamfer engine has no cut position: its tip runs down the mitre from
+// the top of the chamfer to the bottom, so which part of the flute does the
+// cutting is not a choice anyone gets to make. The row greys and says so.
+//
+// Greyed rather than hidden, and the caption sits with the row rather than with
+// the checkbox that caused it: the buttons are the control that stopped
+// working, and an explanation a column away is one the operator has to go
+// looking for.
+//
+// The flute chart greys with the row (2026-08-04): it is a chart of cut
+// positions, so with no cut position to pick it is six rows of numbers that
+// contradict the section view below it. One state, one function, both halves.
+// The SIDE row joins it for the same reason (2026-08-06, side-greyed spec 3c).
+// Aspire's chamfer engine fills the loops in a toolpath by the even-odd rule and
+// picks each loop's side from that, so a forced Inside/Outside has no correct
+// behaviour up here -- writing one is what left the step S5 measured. Lua drops
+// it (CO.effective_side) and the row says so instead of offering a control that
+// can only make the cut worse.
+//
+// The greyed radios show AUTO, not the operator's stored pick: a greyed "Inside"
+// beside a caption saying the run cuts on the material contradicts itself on the
+// face of the dialog. Their real choice is never touched -- it lives in the
+// hidden #Side field the whole time, which is what hands it back when the box is
+// unticked, so there is deliberately no second copy of it to drift.
+function applyAspireState() {
+  var on = aspireMode();
+  el("Presets").className = on ? "row off" : "row";
+  el("PresetCap").style.display = on ? "" : "none";
+  el("ChartWrap").className = on ? "off" : "";
+  el("SideGroup").className = on ? "off" : "";
+  el("SideLabel").className = on ? "off" : "";
+  el("SideCap").style.display = on ? "" : "none";
+  // Disabled as well as greyed: a click that still landed would write #Side and
+  // silently change what an un-tick hands back.
+  var shown = on ? "auto" : (el("Side").value || "auto");
+  var radios = document.getElementsByName("SideRadio");
+  for (var i = 0; i < radios.length; i++) {
+    radios[i].checked  = (radios[i].value === shown);
+    radios[i].disabled = on;
+  }
 }
 // The click itself must run redraw(), not just set the field: redraw() is
 // where the ceiling-drop check lives, and without it a tick is a silent no-op
@@ -1090,10 +1179,6 @@ function applySharpState() {
 function initSharp() {
   el("SharpBox").onclick = function () {
     el("Sharp").value = this.checked ? "1" : "0";
-    // The operator has spoken, so the page's own record of having unticked the
-    // box is void either way: it must never tick back on something they turned
-    // off, and there is nothing to give back on a tick they made themselves.
-    sharpAutoUnticked = false;
     if (!this.checked && sharpRestorePercent !== null) {
       var restore = sharpRestorePercent;
       sharpRestorePercent = null;
@@ -1109,6 +1194,11 @@ function initSharp() {
 // move the position itself, visibly, rather than a click being the only way
 // in.
 function selectPreset(percent, fromClick) {
+  // A greyed row ignores clicks. Only the CLICK is refused: a programmatic
+  // restore -- unticking Sharp and handing back the position a drop moved away
+  // from -- still has to land, or the operator's own choice would be stranded
+  // behind a row they cannot use.
+  if (aspireMode() && fromClick) return;
   currentPercent = percent;
   el("Percent").value = currentPercent;
   applyPresetSelection();
@@ -1491,6 +1581,24 @@ function depthWarning(rows, selectedDepth) {
     ? "Reaches " + fnum(total) + " " + UNIT + " (" + fnum(startDepth) +
       " start + " + fnum(selectedDepth) + " cut)"
     : "Cuts " + fnum(selectedDepth) + " " + UNIT + " deep";
+  // Name the lever that can actually help. Once the start depth alone reaches
+  // the stock, no bit and no chamfer size can fix it -- "use a wider-angle bit"
+  // is then advice that cannot work, which is worse than no advice at all
+  // (live 2026-07-27: 0.25 start depth on 0.25 stock).
+  // Hoisted out of the last branch 2026-08-04 so the aspire branch below can use
+  // the same words; every string this function returns is otherwise unchanged.
+  var cure = (startDepth >= stockThickness)
+    ? "The start depth alone already reaches it — reduce the start depth."
+    : (startDepth > 0)
+      ? "Use a wider-angle bit, a smaller chamfer, or less start depth."
+      : "Use a wider-angle bit or a smaller chamfer.";
+  // Aspire mode cuts from the tip and has no cut position, so both of the
+  // sentences below that offer one -- "40% would fit", "even at 0%" -- would be
+  // naming a control that is greyed out. Same measurement, same remedies, minus
+  // the lever that does not exist here.
+  if (aspireMode())
+    return lead + " — past your " + fnum(stockThickness) + " " + UNIT +
+           " stock. " + cure;
   if (fits) {
     return lead + " — past your " + fnum(stockThickness) + " " + UNIT + " stock. " +
            fits.p + "% would fit, at " + fnum(startDepth + fits.d) + " " + UNIT + ".";
@@ -1498,15 +1606,6 @@ function depthWarning(rows, selectedDepth) {
   var lead0 = (startDepth > 0)
     ? "Reaches " + fnum(startDepth + rows[0].d) + " " + UNIT + " even at " + rows[0].p + "%"
     : "Cuts " + fnum(rows[0].d) + " " + UNIT + " deep even at " + rows[0].p + "%";
-  // Name the lever that can actually help. Once the start depth alone reaches
-  // the stock, no bit and no chamfer size can fix it -- "use a wider-angle bit"
-  // is then advice that cannot work, which is worse than no advice at all
-  // (live 2026-07-27: 0.25 start depth on 0.25 stock).
-  var cure = (startDepth >= stockThickness)
-    ? "The start depth alone already reaches it — reduce the start depth."
-    : (startDepth > 0)
-      ? "Use a wider-angle bit, a smaller chamfer, or less start depth."
-      : "Use a wider-angle bit or a smaller chamfer.";
   return lead0 + " — past your " + fnum(stockThickness) + " " + UNIT +
          " stock. " + cure;
 }
@@ -1539,10 +1638,14 @@ function setSummary(sizeText) {
   // button now, so how long it is decides whether the two collide -- and the
   // real fields can only make it so long. The gate uses this to measure the bar
   // against a summary longer than today's wording, not just today's.
+  // In aspire mode there is no cut position, so the bar must not quote one --
+  // it would be the only place left on the dialog still promising a percentage,
+  // with the row greyed out and the chart faded behind it. DRAFT wording.
+  var where = aspireMode() ? " from the tip · " : " @ " + currentPercent + "% · ";
   el("Summary").innerHTML = window.__FORCE_SUMMARY ||
     (verb + " <b>Chamfer " + slot + "</b> · " +
     shapesPhrase(buildCount()) + " · <b>" +
-    sizeText + " " + UNIT + "</b> @ " + currentPercent + "% · " +
+    sizeText + " " + UNIT + "</b>" + where +
     (haveBit ? currentAngle + "° bit" : "no bit yet"));
 }
 
@@ -1646,24 +1749,13 @@ function redraw() {
     return;
   }
 
-  // Sharpening on the operator's behalf, both ways round. applySharpState()
-  // unticks the box when no cut position can sharpen this chamfer any more --
-  // and when it does, the position that tick had dropped comes back with it,
-  // or they are left cutting somewhere they never chose for a reason that no
-  // longer exists. When sharpening becomes possible again the tick comes back
-  // too, and the drop below re-applies. Whatever the gadget takes on your
-  // behalf, it gives back on your behalf; a tick the OPERATOR removed clears
-  // the flag in initSharp and is never given back.
+  // Greys the box only when there is nothing to sharpen at all, and greys the
+  // CUT POSITION row when this run has passed to Aspire's chamfer engine.
+  //
+  // The auto-untick/auto-retick pair that used to live here is deleted with the
+  // state it managed (2026-08-04): the page no longer takes the tick away when
+  // a chamfer outgrows the bands, so there is nothing to hand back.
   applySharpState();
-  if (sharpAutoUnticked && typeof currentSharpMax === "number") {
-    sharpAutoUnticked = false;
-    el("Sharp").value = "1";
-  } else if (sharpAutoUnticked && sharpRestorePercent !== null) {
-    var giveBack = sharpRestorePercent;
-    sharpRestorePercent = null;
-    selectPreset(giveBack);
-    return;                     // selectPreset redraws; do not draw twice
-  }
 
   // The cut position gives way to the corner: sharpening dies as the position
   // rises, and the window where a multi-pass chamfer can still be sharpened
@@ -1687,6 +1779,19 @@ function redraw() {
   // a stale restore point would have it claim a drop that is not in force.
   if (percentFromClick) sharpRestorePercent = null;
 
+  // Which engine cuts this run. In aspire mode the bands play no part: the tool
+  // is driven from the tip down the mitre, so the standoff is zero, the cut
+  // position is not a choice, and the depth is the whole chamfer's --
+  // W / tan(half angle), the same number CO.chamfer_cut_depth computes in Lua.
+  // One bite, so no seams and no pass note. `a` is already the half angle in
+  // radians (halfAngle above), which is the page's one conversion; nothing here
+  // re-derives it.
+  var aspire = aspireMode();
+  // Mirrors CO.chamfer_cut_depth in EdgeBreaker.lua, which is the authority -
+  // if that line ever flips (sitting check C2), this one must flip with it.
+  var dTip = W / Math.tan(a);
+  var shownPasses = aspire ? 1 : passes;
+
   blockMsg.style.display = "none";
   chart.style.display = "block";
   el("SecWrap").style.display = "";
@@ -1697,13 +1802,18 @@ function redraw() {
   // The drop moved a control the operator can see, and nothing else on the
   // page would say why. It goes here, beside the cut position it moved --
   // not beside the checkbox that caused it, which is a column away.
-  if (el("Sharp").value === "1" &&
+  // Not in aspire mode: a restore point can still be sitting there from a
+  // smaller chamfer, and a note explaining a cut position beside a row that is
+  // greyed out points at a control that no longer does anything. Unticking
+  // still hands the position back (initSharp), which is where that promise
+  // belongs.
+  if (!aspire && el("Sharp").value === "1" &&
       sharpRestorePercent !== null) {
     notes.push("Dropped to " + currentPercent + "% so the corners can be sharp. " +
                "Untick <b>Sharp corners</b> to go back to " +
                sharpRestorePercent + "%.");
   }
-  if (passes > 1) {
+  if (shownPasses > 1) {
     // The pronoun has to follow the count the same way the noun does: two
     // passes leaves exactly one seam, and "1 faint line ... they sand out"
     // does not agree in number.
@@ -1760,8 +1870,10 @@ function redraw() {
     var s = solveBand(p, currentDia, W, bw, a);
     rows.push({ p: p, d: s.d });
     // Each cut-position button carries its own depth: the choice is made on
-    // the number that ends up on the toolpath, not on a percentage.
-    if (segs[i]) segs[i].children[1].innerHTML = "D " + f4(s.d);
+    // the number that ends up on the toolpath, not on a percentage. In aspire
+    // mode none of them is the number that ends up on the toolpath, so they
+    // blank rather than quote six depths the run will not use.
+    if (segs[i]) segs[i].children[1].innerHTML = aspire ? "&nbsp;" : "D " + f4(s.d);
     var t = p / 100;
     var x = TIPX - t * HALFW;
     var y = TIPY - t * (TIPY - TOPY);
@@ -1790,16 +1902,31 @@ function redraw() {
     " dia, chamfer size " + size + " " + UNIT;
   chart.appendChild(cap);
 
-  var selTxt = svgEl("text", {x:500,y:296,"font-size":24,fill:"#333","text-anchor":"middle","font-weight":"600"});
-  selTxt.textContent = "selected " + currentPercent + "%  ·  D " + f4(selected.d) +
-    "  ·  G " + f4(selected.g) +
-    "  ·  contact band " + f4(selected.band_lo) + "–" + f4(selected.band_hi);
+  // The one line in this chart that still describes the run. In aspire mode
+  // that means the tip depth and nothing else: there is no percentage to
+  // select, and no standoff to quote (G is zero by construction -- the tip
+  // rides the mitre), so naming either would be the contradiction the greying
+  // above is there to remove. It keeps its dark ink while the rest fades
+  // (#ChartWrap.off #SelTxt), because it is the fact and they are the
+  // background. Id added for that rule; DRAFT wording.
+  var selTxt = svgEl("text", {id:"SelTxt",x:500,y:296,"font-size":24,fill:"#333","text-anchor":"middle","font-weight":"600"});
+  selTxt.textContent = aspire
+    ? "from the tip  ·  D " + f4(dTip)
+    : "selected " + currentPercent + "%  ·  D " + f4(selected.d) +
+      "  ·  G " + f4(selected.g) +
+      "  ·  contact band " + f4(selected.band_lo) + "–" + f4(selected.band_hi);
   chart.appendChild(selTxt);
 
   // The same numbers the caption above just quoted, drawn. `selected` is
   // resolved in the preset loop and is what the toolpath will actually cut.
-  var drew = drawSection(W, selected.d, selected.g, currentAngle, startDepth,
-                         deepest.d, deepest.g, currentDia, shallowest.d, passes);
+  //
+  // In aspire mode the tip sits ON the mitre: G is zero (no standoff), the
+  // depth is dTip, and the same dTip is the scale reference at both ends --
+  // deepest and shallowest are the same single cut, because there is only one.
+  var drew = aspire
+    ? drawSection(W, dTip, 0, currentAngle, startDepth, dTip, 0, currentDia, dTip, 1)
+    : drawSection(W, selected.d, selected.g, currentAngle, startDepth,
+                  deepest.d, deepest.g, currentDia, shallowest.d, passes);
   // Only when there is a choice to explain. At 90 deg setback and leg are the
   // same quantity, updateModeVisibility() hides the row and forces setback, and
   // an inset would be answering a question nobody asked.
@@ -1807,7 +1934,9 @@ function redraw() {
     drawModeInset(currentMode, size, currentAngle, el("Size").value);
 
   // Last, because it depends on the selected preset resolved in the loop above.
-  var msg = depthWarning(rows, selected.d);
+  // The quantity is always the depth this run will really reach, which in aspire
+  // mode is the tip depth and has nothing to do with the selected preset.
+  var msg = depthWarning(rows, aspire ? dTip : selected.d);
   depthWarn.innerHTML = msg;
   depthWarn.style.display = msg ? "block" : "none";
   setSummary(el("Size").value);

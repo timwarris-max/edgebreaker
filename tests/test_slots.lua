@@ -238,6 +238,27 @@ CHECK(CO.slot_from_toolpath_name("Chamfer 0.25 in [EdgeBreaker 07] pass 2 of 3")
 CHECK(CO.size_text_from_toolpath_name("Chamfer 0.25 in [EdgeBreaker 07] pass 2 of 3")
       == "0.25 in", "and so does the size, for the dropdown label")
 
+-- Direction words on a split chamfer run (2026-08-04 direction-split spec
+-- section 3d, wording Tim's choice). A mixed run above the ceiling cuts one
+-- toolpath per direction; the words match the run report's own.
+CHECK(CO.chamfer_toolpath_name(0.2, "in", 1, "outward", true)
+      == "Chamfer 0.2 in [EdgeBreaker 01] outward",
+      "a split run's outward toolpath is named by its direction")
+CHECK(CO.chamfer_toolpath_name(0.2, "in", 1, "inward", true)
+      == "Chamfer 0.2 in [EdgeBreaker 01] inward",
+      "and the inward one likewise")
+CHECK(CO.slot_from_toolpath_name(CO.chamfer_toolpath_name(0.2, "in", 7, "inward", true)) == 7,
+      "a direction-suffixed name still carries its slot")
+CHECK(CO.size_text_from_toolpath_name(CO.chamfer_toolpath_name(0.2, "in", 7, "outward", true))
+      == "0.2 in", "and its size text")
+-- The negative pin: a single-direction run keeps the exact pre-split name -
+-- no direction word anywhere - so existing jobs stay recognised.
+local single = CO.chamfer_toolpath_name(0.2, "in", 1, "outward", false)
+CHECK(single == CO.toolpath_name(0.2, "in", 1, 1, 1),
+      "an unsplit run's name is exactly the pre-split name")
+CHECK(single:find("outward", 1, true) == nil and single:find("inward", 1, true) == nil,
+      "and carries no direction word")
+
 -- The sign rule. An outward loop (a part's outline) takes the offset as given;
 -- an inward loop (a pocket) takes it mirrored, because its waste is on the other
 -- side. Upper bands therefore push INTO the material on an outer boundary and

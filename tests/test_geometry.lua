@@ -343,36 +343,87 @@ CHECK(not CO.same_bbox(A, { cx = 1.25, cy = -0.5, xlen = 3.155, ylen = 2.155 }, 
 CHECK(not CO.same_bbox(A, { cx = 1.25, cy = -0.5, xlen = 3.0, ylen = 1.9 }, 1e-6),
       "same_bbox: one differing dimension is enough to reject")
 
--- CO.partition_loops: drop the gadget's own offsets from the selection
--- instead of refusing the run (v1.0.8; box-select-everything is the natural
--- way to re-run). A loop is "ours" when its bbox matches an offset-layer
--- fingerprint; an unreadable bbox is unknown and the caller fails closed.
-local FP = { cx = 5, cy = 5, xlen = 10, ylen = 10 }
-local L_keep = { spans = { "user" }, bbox = { cx = 1, cy = 1, xlen = 2, ylen = 2 } }
-local L_ours = { spans = { "offset" }, bbox = { cx = 5, cy = 5, xlen = 10, ylen = 10 } }
-local L_unk  = { spans = { "mystery" } }
-local kept, skipped, unk = CO.partition_loops({ L_keep, L_ours }, { FP }, 1e-6)
+-- CO.partition_loops: drop the gadget's own offsets from the selection instead
+-- of refusing the run (v1.0.8; box-select-everything is the natural way to
+-- re-run). A loop is "ours" when it SITS ON one of our layers.
+--
+-- It matched bounding boxes until 2026-08-05, and that is the defect this
+-- replaced: the aspire chamfer strategy draws copies exactly on top of the
+-- operator's vectors, because Aspire's chamfer engine has to cut the operator's
+-- own edge -- so an original matched its own copy and was silently dropped.
+-- Measured at the machine: two vectors selected, one seen.
+--
+-- The ids are GUID strings because that is what Aspire returns -- these two are
+-- the real ones from the 2026-08-05 Q8 run, 'EdgeBreaker Offset 01-1' and
+-- 'Layer 1'. A fixture keyed by small integers would pass while the product
+-- failed live, which is the class of mistake this whole design exists to undo.
+local OURS_ID = "17f31c3e-499d-4e70-98fd-98df4a7eea99"
+local USER_ID = "484e94a6-a0a9-4984-8da5-2aeb9e8d9f7a"
+local OWN = { [OURS_ID] = true }
+local L_keep = { spans = { "user" }, bbox = { cx = 1, cy = 1, xlen = 2, ylen = 2 },
+                 layer_id = USER_ID }
+local L_ours = { spans = { "offset" }, bbox = { cx = 5, cy = 5, xlen = 10, ylen = 10 },
+                 layer_id = OURS_ID }
+local kept, skipped, unk = CO.partition_loops({ L_keep, L_ours }, OWN)
 CHECK(#kept == 1 and kept[1] == L_keep and skipped == 1 and unk == 0,
       "partition: our offset dropped, user loop kept")
-kept, skipped, unk = CO.partition_loops({ L_keep, L_ours }, {}, 1e-6)
+
+kept, skipped, unk = CO.partition_loops({ L_keep, L_ours }, {})
 CHECK(#kept == 2 and skipped == 0 and unk == 0,
-      "partition: empty offset layer keeps everything (first run)")
-kept, skipped, unk = CO.partition_loops({ L_unk }, { FP }, 1e-6)
+      "partition: no layers of ours yet keeps everything (first run)")
+
+-- THE DEFECT, as a test. Byte-identical bounding boxes, one on our layer and
+-- one on the operator's: the original survives and the copy does not. No
+-- tolerance can separate these two, which is why the test is the right one.
+local SAME = { cx = 3, cy = 3, xlen = 2, ylen = 2 }
+local original = { spans = { "user" }, bbox = SAME, layer_id = USER_ID }
+local copy     = { spans = { "copy" }, bbox = SAME, layer_id = OURS_ID }
+kept, skipped, unk = CO.partition_loops({ original, copy }, OWN)
+CHECK(#kept == 1 and kept[1] == original and skipped == 1 and unk == 0,
+      "partition: a coincident copy is dropped and its original is kept")
+
+-- Fail closed, both reasons. main() refuses when unknown > 0.
+local L_no_layer = { spans = { "mystery" }, bbox = { cx = 1, cy = 1, xlen = 1, ylen = 1 } }
+kept, skipped, unk = CO.partition_loops({ L_no_layer }, OWN)
 CHECK(#kept == 0 and skipped == 0 and unk == 1,
-      "partition: unreadable bbox is unknown, never silently kept or dropped")
-kept, skipped, unk = CO.partition_loops({}, { FP }, 1e-6)
+      "partition: an unreadable layer id is unknown, never silently kept or dropped")
+
+-- The bbox is still needed downstream for chamfer memory, so an unreadable one
+-- is still a stop even though the guard itself no longer looks at it.
+local L_no_bbox = { spans = { "mystery" }, layer_id = USER_ID }
+kept, skipped, unk = CO.partition_loops({ L_no_bbox }, OWN)
+CHECK(#kept == 0 and skipped == 0 and unk == 1,
+      "partition: an unreadable bbox is unknown too -- memory still needs it")
+
+kept, skipped, unk = CO.partition_loops({}, OWN)
 CHECK(#kept == 0 and skipped == 0 and unk == 0, "partition: no loops, no drama")
-local L_noise = { spans = {}, bbox = { cx = 5 + 1e-9, cy = 5, xlen = 10, ylen = 10 } }
-kept, skipped = CO.partition_loops({ L_noise }, { FP }, 1e-6)
-CHECK(#kept == 0 and skipped == 1,
-      "partition: sub-epsilon float noise still identifies our offset")
-local L_near = { spans = {}, bbox = { cx = 5.1, cy = 5, xlen = 10, ylen = 10 } }
-kept, skipped = CO.partition_loops({ L_near }, { FP }, 1e-6)
-CHECK(#kept == 1 and skipped == 0,
-      "partition: a genuinely different bbox stays user input")
-local L2 = { spans = {}, bbox = { cx = 9, cy = 9, xlen = 4, ylen = 4 } }
-kept = CO.partition_loops({ L_keep, L2 }, { FP }, 1e-6)
+
+local L2 = { spans = {}, bbox = { cx = 9, cy = 9, xlen = 4, ylen = 4 }, layer_id = USER_ID }
+kept = CO.partition_loops({ L_keep, L2 }, OWN)
 CHECK(kept[1] == L_keep and kept[2] == L2, "partition: kept loops preserve order")
+
+-- CO.layer_is_ours: is this layer one the gadget owns and wipes? This is the
+-- three-way test sdk_find_objects_by_fps has always done inline, lifted into
+-- one place so the own-offsets guard can ask it too. The v1.4.x generation
+-- matters: CO.doomed_layer wipes it on adopt, and the old two-way sweep rule
+-- did not recognise it -- so a box-selected old-generation offset was kept as
+-- input and then wiped out from under the run.
+CHECK(CO.layer_is_ours(CO.offset_layer_name(3, 1)) == true,
+      "layer_is_ours: the current banded name")
+CHECK(CO.layer_is_ours(CO.V112_LAYER_PREFIX .. "03") == true,
+      "layer_is_ours: the v1.5.0-1.12.0 unbanded name")
+CHECK(CO.layer_is_ours(CO.OLD_LAYER_PREFIX .. "02") == true,
+      "layer_is_ours: the v1.4.x generation, which the old sweep rule missed")
+CHECK(CO.layer_is_ours(CO.LEGACY_OFFSET_LAYER) == true,
+      "layer_is_ours: the pre-1.4.0 unnumbered layer")
+CHECK(CO.layer_is_ours("Layer 1") == false,
+      "layer_is_ours: someone else's layer is never ours")
+CHECK(CO.layer_is_ours("EdgeBreaker Offset ") == false,
+      "layer_is_ours: the bare prefix with no slot number is not a layer of ours")
+CHECK(CO.layer_is_ours(CO.offset_layer_name(3, 1) .. " ") == false,
+      "layer_is_ours: a trailing space is a different layer")
+CHECK(CO.layer_is_ours(nil) == false, "layer_is_ours: a nil name is not ours")
+CHECK(CO.layer_is_ours(42) == false, "layer_is_ours: a non-string is not ours")
 
 -- CO.resolve_directions: per-run side override (spec 2026-07-25).
 -- "outside"/"inside" force every loop; anything else falls back to the
@@ -408,6 +459,33 @@ CHECK(type(sk3) == "string" and sk3:find("3 vector(s)", 1, true) ~= nil
       "skip_summary: names the count and the reason")
 CHECK(sk3:find("orange", 1, true) ~= nil,
       "skip_summary: tells the user where to look for the missing ones")
+-- The aspire path draws its copies ON their originals, so there is no orange
+-- offset to look beside and that clause would send the operator hunting for
+-- something that was never drawn.
+local ska = CO.skip_summary(3, "aspire")
+CHECK(type(ska) == "string" and ska:find("3 vector(s)", 1, true) ~= nil
+      and ska:find("too narrow", 1, true) ~= nil,
+      "skip_summary: the aspire wording still names the count and the reason")
+CHECK(ska:find("orange", 1, true) == nil,
+      "skip_summary: and drops the orange-offset clause, which cannot apply there")
+CHECK(CO.skip_summary(0, "aspire") == nil,
+      "skip_summary: nothing skipped is still silent on the aspire path")
+-- 2026-08-06 (Tim's ruling): a skip note that says "too narrow" without saying
+-- what size WOULD work leaves the operator guessing. When the per-loop bisect
+-- found a size that takes every skipped shape, the note names it - the same
+-- "Try X or less" sentence the whole-run refusal uses - and the vague "try a
+-- smaller size" fallback survives only for runs where no number could be found.
+local sks = CO.skip_summary(2, "aspire", 0.12, "in")
+CHECK(type(sks) == "string" and sks:find("Try 0.12 in or less", 1, true) ~= nil,
+      "skip_summary: a known biggest-that-fits is named, aspire wording")
+CHECK(sks:find("smaller chamfer size", 1, true) == nil,
+      "skip_summary: the vague sentence gives way to the specific number")
+local skb = CO.skip_summary(2, nil, 0.12, "in")
+CHECK(type(skb) == "string" and skb:find("orange", 1, true) ~= nil
+      and skb:find("Try 0.12 in or less", 1, true) ~= nil,
+      "skip_summary: bands wording keeps the orange clause and adds the number")
+CHECK(CO.skip_summary(2, "aspire"):find("smaller chamfer size", 1, true) ~= nil,
+      "skip_summary: no number found keeps the old fallback sentence")
 CHECK(CO.offset_count_phrase(17, 17) == "17 vector(s)",
       "count_phrase: nothing skipped stays a bare count")
 CHECK(CO.offset_count_phrase(17, 14) == "14 of 17 vector(s)",
@@ -430,13 +508,13 @@ do
    local base = CO.patch_template_layer(
       CO.patch_template_start_depth(
          CO.patch_template_depth(shipped_sharp, 0.0838), 0.05), 3, 1)
-   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, nil) == base,
+   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, nil, "in") == base,
          "sharp off: patch_template_run is byte-identical to the old pipeline")
    -- 2026-08-03: the sharp argument carries the SIDE, not a bare yes.
-   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "inside")
+   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "inside", "in")
          == CO.patch_template_sharp(base, "inside"),
          "sharp inside: exactly the old pipeline plus the inside sharp patch")
-   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "outside")
+   CHECK(CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "outside", "in")
          == CO.patch_template_sharp(base, "outside"),
          "sharp outside: exactly the old pipeline plus the outside sharp patch")
    -- The exact bytes each side produces, asserted against the fields themselves
@@ -450,8 +528,8 @@ do
    -- The inside cut changes as a result, which sitting check B6 exists to look
    -- at. Nothing about it was measured before -- v1.11.0's sitting checked leg
    -- widths, never corners.
-   local ins = CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "inside")
-   local outs = CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "outside")
+   local ins = CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "inside", "in")
+   local outs = CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, "outside", "in")
    local mv_i, sh_i = CO.find_mv_value_offset(base), CO.find_sharpen_offset(base)
    local sq_i = CO.find_square_offset(base)
    local function hand(mv)
@@ -466,12 +544,12 @@ do
    CHECK(ins ~= outs, "the two sides really do produce different bytes")
    -- A caller that still passes a boolean gets a refusal, not an inside cut on
    -- an outside chamfer.
-   local br, berr = CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, true)
+   local br, berr = CO.patch_template_run(shipped_sharp, 0.0838, 0.05, 3, 1, true, "in")
    CHECK(br == nil and type(berr) == "string" and berr:find("Outside", 1, true) ~= nil,
          "the old boolean `true` is refused by the pipeline, not silently sharpened inside")
 end
 do
-   local bad, err = CO.patch_template_run("junk", 0.1, 0, 1, 1, nil)
+   local bad, err = CO.patch_template_run("junk", 0.1, 0, 1, 1, nil, "in")
    CHECK(bad == nil and type(err) == "string", "pipeline propagates a patch failure")
 end
 
@@ -874,6 +952,83 @@ do
    CHECK(#CO.nesting_depths({}) == 0, "no loops, no depths")
 end
 
+-- CO.shape_groups (narrow-break guard, Finding A): each depth-0 loop plus
+-- everything nested inside it. The guard runs its piece count once per group, so
+-- that a thin bar eaten away in one shape cannot cancel against a dumbbell
+-- splitting in another and leave the total unmoved.
+do
+   local function box(x0, y0, x1, y1)
+      return { pts = { {x0, y0}, {x1, y0}, {x1, y1}, {x0, y1} } }
+   end
+   local function sorted(g)
+      local t = {}
+      for _, i in ipairs(g) do t[#t + 1] = i end
+      table.sort(t)
+      return table.concat(t, ",")
+   end
+
+   -- Three squares side by side: three shapes, one loop each. This is the case
+   -- Finding A exists for - before grouping these shared one count.
+   local flat = { box(0, 0, 10, 10), box(20, 0, 30, 10), box(40, 0, 50, 10) }
+   local g = CO.shape_groups(flat)
+   CHECK(#g == 3, "three separate loops are three shapes")
+   CHECK(sorted(g[1]) == "1" and sorted(g[2]) == "2" and sorted(g[3]) == "3",
+         "each sibling is alone in its own group")
+
+   -- A letter B: one shape carrying its own two counters, so a waist between
+   -- the outline and a counter is still inside a single count.
+   local letter = { box(0, 0, 100, 100), box(20, 60, 40, 80), box(20, 20, 40, 40) }
+   g = CO.shape_groups(letter)
+   CHECK(#g == 1, "an outline and its counters are ONE shape, not three")
+   CHECK(sorted(g[1]) == "1,2,3", "the counters travel with their outline")
+
+   -- Two letters, each with a counter. Four loops, two shapes - and neither
+   -- letter can hide the other's break.
+   local word = { box(0, 0, 100, 100), box(20, 20, 40, 40),
+                  box(200, 0, 300, 100), box(220, 20, 240, 40) }
+   g = CO.shape_groups(word)
+   CHECK(#g == 2, "two letters are two shapes")
+   CHECK(sorted(g[1]) == "1,2" and sorted(g[2]) == "3,4",
+         "each letter keeps its own counter and nothing else")
+
+   -- Depth 2: an island inside a counter still belongs to the ONE top-level
+   -- loop, not to a group of its own. Grouping is by outermost container, not
+   -- by immediate parent.
+   local deep = { box(0, 0, 200, 200), box(50, 50, 150, 150), box(80, 80, 100, 100) }
+   g = CO.shape_groups(deep)
+   CHECK(#g == 1, "three nested levels are one shape")
+   CHECK(sorted(g[1]) == "1,2,3", "depth 2 joins the top-level loop, not its parent")
+
+   -- List order must not matter, same as nesting_depths.
+   local reversed = { box(80, 80, 100, 100), box(50, 50, 150, 150), box(0, 0, 200, 200) }
+   g = CO.shape_groups(reversed)
+   CHECK(#g == 1 and sorted(g[1]) == "1,2,3", "grouping follows containment, not list order")
+
+   -- The twins case: two identical loops each contain the other, so NOTHING is
+   -- depth 0 and neither can be placed. Each is checked on its own, which is
+   -- always safe - a group can only hide a change by cancelling inside itself.
+   local twins = { box(0, 0, 10, 10), box(0, 0, 10, 10) }
+   g = CO.shape_groups(twins)
+   CHECK(#g == 2, "loops with no depth-0 container each become their own shape")
+   CHECK(sorted(g[1]) == "1" and sorted(g[2]) == "2", "and they are not merged together")
+
+   -- Every input loop reaches exactly one group, in every fixture above.
+   for _, fixture in ipairs({ flat, letter, word, deep, reversed, twins }) do
+      local seen, total = {}, 0
+      for _, grp in ipairs(CO.shape_groups(fixture)) do
+         for _, i in ipairs(grp) do
+            CHECK(seen[i] == nil, "no loop lands in two shapes")
+            seen[i] = true
+            total = total + 1
+         end
+      end
+      CHECK(total == #fixture, "every selected loop reaches a shape")
+   end
+
+   CHECK(#CO.shape_groups({}) == 0, "no loops, no shapes")
+   CHECK(#CO.shape_groups({ box(0, 0, 10, 10) }) == 1, "one loop is one shape")
+end
+
 -- classify_directions is now a map over nesting_depths, and must answer exactly
 -- what it answered before: outermost outward, everything nested inward. Pinned
 -- against the same fixtures so the factoring cannot quietly change what Auto does.
@@ -889,4 +1044,577 @@ do
    dirs = CO.classify_directions(deep)
    CHECK(dirs[1] == "outward" and dirs[2] == "inward" and dirs[3] == "inward",
          "and depth 2 is still inward - classify_directions is two-level, deliberately")
+end
+
+-- Reading the Aspire chamfer template (2026-08-04, large-chamfer spec section 2).
+-- Values verified against the spec's decode of Tim's saved file: start 0,
+-- Inside = 1, inches, EditingDialog = uiChamferDialog. The depth is
+-- 0.34641016151378 in the first save (docs/Chamfer 1.ToolpathTemplate, the
+-- manual fixture below) but the SHIPPED template is the second save, made to
+-- pick up the layer restriction (spec section 2a-4) -- and resaving through
+-- Aspire's own decimal field rounded the depth to 0.3464101615. Pinned against
+-- what is actually in the shipped bytes, not the earlier, more precise save.
+do
+   local function slurp(p)
+      local f = assert(io.open(p, "rb")); local b = f:read("*a"); f:close(); return b
+   end
+   local shipped = slurp("gadget/EdgeBreaker/" .. CO.CHAMFER_TEMPLATE_NAME)
+   local manual  = slurp("tests/fixtures/chamfer-manual.ToolpathTemplate")
+   local profile = slurp("gadget/EdgeBreaker/" .. CO.TEMPLATE_NAME)
+
+   CHECK(CO.read_editing_dialog(shipped) == "uiChamferDialog",
+         "the shipped chamfer template identifies itself")
+   CHECK(CO.read_editing_dialog(manual) == "uiChamferDialog",
+         "so does the manual fixture")
+   local ped = CO.read_editing_dialog(profile)
+   CHECK(ped ~= "uiChamferDialog",
+         "the profile template does NOT read as a chamfer one (got "
+         .. tostring(ped) .. ")")
+
+   local doff = CO.find_chamfer_depth_offset(shipped)
+   CHECK(type(doff) == "number", "chamfer depth offset found")
+   CHECK(shipped:sub(doff, doff + 7) == CO.encode_double(0.3464101615),
+         "and the value there is the depth Tim saved")
+   local soff = CO.find_chamfer_start_offset(shipped)
+   CHECK(type(soff) == "number", "chamfer start-depth offset found")
+   CHECK(shipped:sub(soff, soff + 7) == CO.encode_double(0), "saved start depth is 0")
+   local ioff = CO.find_chamfer_side_offset(shipped)
+   CHECK(type(ioff) == "number", "chamfer side offset found")
+   CHECK(shipped:byte(ioff) == 1, "Tim saved the template with Inside = 1")
+   local sloff = CO.find_chamfer_slope_offset(shipped)
+   CHECK(type(sloff) == "number", "chamfer slope offset found")
+   CHECK(shipped:byte(sloff) == 1, "Tim saved the template with Slope Downwards = 1")
+   CHECK(CO.read_chamfer_units(shipped) == "in", "template units read as inches")
+
+   -- The profile template must refuse every chamfer finder - no _chpd* records.
+   local x, why = CO.find_chamfer_depth_offset(profile)
+   CHECK(x == nil and type(why) == "string", "profile template has no chamfer depth")
+   x, why = CO.find_chamfer_side_offset(profile)
+   CHECK(x == nil and type(why) == "string", "profile template has no chamfer side")
+   x, why = CO.find_chamfer_slope_offset(profile)
+   CHECK(x == nil and type(why) == "string", "profile template has no chamfer slope")
+   x, why = CO.read_chamfer_units(profile)
+   CHECK(x == nil and type(why) == "string", "profile template has no chamfer units flag")
+
+   -- And the chamfer template must refuse the PROFILE finders, both ways round.
+   x, why = CO.find_depth_offset(shipped)
+   CHECK(x == nil and type(why) == "string", "chamfer template has no _ppdCutDepth")
+end
+
+-- Patching the chamfer template (2026-08-04, large-chamfer spec section 3e).
+-- Every patch is a value overwrite of a kind already proven; the composite runs
+-- them in one order so main() cannot invent its own.
+do
+   local function slurp(p)
+      local f = assert(io.open(p, "rb")); local b = f:read("*a"); f:close(); return b
+   end
+   local shipped = slurp("gadget/EdgeBreaker/" .. CO.CHAMFER_TEMPLATE_NAME)
+
+   -- Round-trip the doubles to 1e-12 (spec section 5).
+   local p1 = CO.patch_chamfer_depth(shipped, 0.5196152422706631)
+   CHECK(p1 ~= nil and #p1 == #shipped, "depth patch preserves length")
+   local off = CO.find_chamfer_depth_offset(p1)
+   CHECK(p1:sub(off, off + 7) == CO.encode_double(0.5196152422706631),
+         "patched depth reads back exactly")
+   local p2 = CO.patch_chamfer_start_depth(shipped, 0.05)
+   CHECK(p2 ~= nil
+         and p2:sub(CO.find_chamfer_start_offset(p2), CO.find_chamfer_start_offset(p2) + 7)
+             == CO.encode_double(0.05),
+         "patched start depth reads back exactly")
+
+   -- The side bool, both directions, and the refusal. Measured 2026-08-04 on
+   -- the waste-removed ring with the slope patched and the copies normalized
+   -- counter-clockwise: 0 is the form's Inside, which is what an outward loop
+   -- (material inside the vector) needs.
+   local po = CO.patch_chamfer_side(shipped, "outward")
+   CHECK(po ~= nil and po:byte(CO.find_chamfer_side_offset(po)) == 0,
+         "outward writes _chpdInside = 0")
+   local pi = CO.patch_chamfer_side(shipped, "inward")
+   CHECK(pi ~= nil and pi:byte(CO.find_chamfer_side_offset(pi)) == 1,
+         "inward writes _chpdInside = 1")
+   for _, bad in ipairs({ "auto", "inside", "outside", "", 1, true }) do
+      local x, why = CO.patch_chamfer_side(shipped, bad)
+      CHECK(x == nil and type(why) == "string",
+            "side " .. tostring(bad) .. " refuses instead of guessing")
+   end
+   -- nil can't ride inside the ipairs table literal above (it would terminate
+   -- the array early), so it gets its own explicit call.
+   local nx, nwhy = CO.patch_chamfer_side(shipped, nil)
+   CHECK(nx == nil and type(nwhy) == "string",
+         "side nil refuses instead of guessing")
+
+   -- Single-value patches touch exactly the bytes they claim. Measured against
+   -- `po`, not `pi`: the template was saved with Inside = 1, which is what
+   -- INWARD writes now, so `pi` changes nothing and would make this check
+   -- vacuous. This pin has been re-pointed twice, each time the table flipped -
+   -- flipping a constant can turn a byte-diff assertion into a tautology
+   -- without ever failing first, so re-check it whenever these values move.
+   local diff = 0
+   for i = 1, #shipped do if shipped:byte(i) ~= po:byte(i) then diff = diff + 1 end end
+   CHECK(diff == 1, "the side patch changes exactly one byte (got " .. diff .. ")")
+
+   -- The layer patch works on this file unchanged - the C0 result, now pinned
+   -- offline forever.
+   local pl = CO.patch_template_layer(shipped, 7, 1)
+   CHECK(pl ~= nil and #pl == #shipped, "patch_template_layer accepts the chamfer template")
+   local layers = CO.read_template_layers(pl)
+   CHECK(layers ~= nil and #layers == 1 and layers[1] == CO.offset_layer_name(7, 1),
+         "and the restriction re-reads as the slot's own layer")
+
+   -- The bit's own angle (sitting 2026-08-04 check D8). The template was saved
+   -- with a 90 degree bit, so it carries a 45 degree half-angle; ReplaceTool does
+   -- NOT re-derive it when the run installs a different bit, and Aspire then
+   -- computes the chamfer's width from the stale number. The patch takes the
+   -- bit's INCLUDED angle, the same unit every other call site uses, and halves
+   -- it here - so no caller can hand this one a half-angle by mistake.
+   CHECK(CO.find_chamfer_angle_offset(shipped) ~= nil, "the shipped template has an angle record")
+   local a_at = CO.find_chamfer_angle_offset(shipped)
+   CHECK(shipped:sub(a_at, a_at + 7) == CO.encode_double(45),
+         "and it reads 45 degrees, the 90 degree bit it was saved with")
+   local pa = CO.patch_chamfer_angle(shipped, 60)
+   CHECK(pa ~= nil and #pa == #shipped, "angle patch preserves length")
+   CHECK(pa:sub(CO.find_chamfer_angle_offset(pa), CO.find_chamfer_angle_offset(pa) + 7)
+         == CO.encode_double(30), "a 60 degree bit writes a 30 degree half-angle")
+   local pa90 = CO.patch_chamfer_angle(shipped, 90)
+   CHECK(pa90 == shipped, "a 90 degree bit rewrites the same 45 and changes nothing")
+   local pa120 = CO.patch_chamfer_angle(shipped, 120)
+   CHECK(pa120 ~= nil
+         and pa120:sub(CO.find_chamfer_angle_offset(pa120), CO.find_chamfer_angle_offset(pa120) + 7)
+             == CO.encode_double(60), "an obtuse bit writes the larger half-angle")
+   -- Not a count - 45 and 30 are both small exact doubles and share six of their
+   -- eight bytes. What matters is that nothing OUTSIDE the value window moved.
+   local astray = 0
+   for i = 1, #shipped do
+      if shipped:byte(i) ~= pa:byte(i) and (i < a_at or i > a_at + 7) then astray = astray + 1 end
+   end
+   CHECK(astray == 0, "the angle patch touches nothing outside its value (got " .. astray .. ")")
+   for _, bad in ipairs({ 0, -90, "90", true, {} }) do
+      local x, why = CO.patch_chamfer_angle(shipped, bad)
+      CHECK(x == nil and type(why) == "string",
+            "angle " .. tostring(bad) .. " refuses instead of writing nonsense")
+   end
+   local anx, anwhy = CO.patch_chamfer_angle(shipped, nil)
+   CHECK(anx == nil and type(anwhy) == "string", "angle nil refuses instead of writing nonsense")
+
+   -- The slope bool (2026-08-04 direction-split sitting, the S1 fail). The form
+   -- calls it Slope Downwards / Slope Upwards; the template stores it as
+   -- _chpdVectorsAtTop, and Tim saved it Downwards (1) - which anchors the
+   -- bevel's SURFACE edge at the drawn vector and digs deeper moving away, so a
+   -- coincident copy leaves the part's own edge sharp and sinks a groove into
+   -- the face beside it, on both directions at once, with both side bytes
+   -- correct. Every EdgeBreaker copy is the wall the chamfer breaks, so every
+   -- run wants the vector at the BOTTOM: Slope Upwards, 0. Measured live: both
+   -- toolpaths recut correctly the moment the form's slope was flipped.
+   local ps = CO.patch_chamfer_slope(shipped)
+   CHECK(ps ~= nil and #ps == #shipped, "slope patch preserves length")
+   CHECK(ps:byte(CO.find_chamfer_slope_offset(ps)) == 0,
+         "slope patch writes Slope Upwards = 0")
+   local sldiff = 0
+   for i = 1, #shipped do if shipped:byte(i) ~= ps:byte(i) then sldiff = sldiff + 1 end end
+   CHECK(sldiff == 1, "the slope patch changes exactly one byte (got " .. sldiff .. ")")
+
+   -- The composite: one call, one order.
+   local pr = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, 1, "inward", 60, "in")
+   CHECK(pr ~= nil and #pr == #shipped, "composite patch preserves length")
+   CHECK(pr:sub(CO.find_chamfer_depth_offset(pr), CO.find_chamfer_depth_offset(pr) + 7)
+         == CO.encode_double(0.25), "composite wrote the depth")
+   CHECK(pr:byte(CO.find_chamfer_side_offset(pr)) == 1, "composite wrote the side")
+   CHECK(pr:sub(CO.find_chamfer_angle_offset(pr), CO.find_chamfer_angle_offset(pr) + 7)
+         == CO.encode_double(30), "composite wrote the half-angle")
+   -- The shipped byte is 1, so this pin cannot go vacuous.
+   CHECK(pr:byte(CO.find_chamfer_slope_offset(pr)) == 0, "composite wrote the slope")
+   local prl = CO.read_template_layers(pr)
+   CHECK(prl ~= nil and prl[1] == CO.offset_layer_name(12, 1),
+         "composite restricted to slot 12 band 1")
+   local x, why = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, 1, "banana", 60, "in")
+   CHECK(x == nil and type(why) == "string", "composite propagates a side refusal")
+   -- A missing angle must never mean "leave the template's 45 alone" - that
+   -- silence IS the defect D8 found, so the composite refuses rather than
+   -- shipping a toolpath cut at the wrong angle.
+   local ax, awhy = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, 1, "inward", nil, "in")
+   CHECK(ax == nil and type(awhy) == "string", "composite refuses a run with no bit angle")
+
+   -- The band argument (2026-08-04 direction-split spec section 3b). A mixed
+   -- run loads the template once per direction, aimed at its own band layer.
+   local pb2 = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, 2, "inward", 60, "in")
+   CHECK(pb2 ~= nil, "the composite accepts band 2")
+   local pb2l = CO.read_template_layers(pb2)
+   CHECK(pb2l ~= nil and pb2l[1] == CO.offset_layer_name(12, 2),
+         "band 2 aims the template at the slot's band-2 layer")
+   -- Band is REQUIRED. A caller that forgot it on a mixed run would silently
+   -- aim band 1's layer with band 2's side - the metric-jobs shape: remove the
+   -- dangerous fall-through by refusing, not defaulting.
+   local bx, bwhy = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, nil, "inward", 60, "in")
+   CHECK(bx == nil and type(bwhy) == "string", "a run with no band refuses")
+   -- The split's byte guarantees, pinned as pair-diffs. Same depth, start and
+   -- angle in every call, so ONLY the named byte may move. Both directions of
+   -- each pair differ from the SHIPPED bytes too, so neither comparison can go
+   -- vacuous the way the po/pi pin nearly did (session 075).
+   local b1o = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, 1, "outward", 60, "in")
+   local b1i = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, 1, "inward", 60, "in")
+   local b2i = CO.patch_chamfer_run(shipped, 0.25, 0.1, 12, 2, "inward", 60, "in")
+   CHECK(b1o ~= nil and b1i ~= nil and b2i ~= nil, "all three pair-diff patches built")
+   local sdiff = 0
+   for i = 1, #b1o do if b1o:byte(i) ~= b1i:byte(i) then sdiff = sdiff + 1 end end
+   CHECK(sdiff == 1, "outward vs inward on one band is exactly the side byte (got " .. sdiff .. ")")
+   CHECK(b1o:byte(CO.find_chamfer_side_offset(b1o)) == 0
+         and b1i:byte(CO.find_chamfer_side_offset(b1i)) == 1,
+         "and it is the side byte that moved")
+   local bdiff = 0
+   for i = 1, #b1i do if b1i:byte(i) ~= b2i:byte(i) then bdiff = bdiff + 1 end end
+   CHECK(bdiff == 1, "band 1 vs band 2 on one direction is exactly the band digit (got " .. bdiff .. ")")
+end
+
+-- The too-narrow probe for the aspire path (2026-08-04 direction-split sitting,
+-- S3). Aspire's chamfer engine eats W off the MATERIAL side of every wall, so a
+-- shape survives only where it is wider than 2W - the sitting cut a word whose
+-- strokes sat between 0.30 and 0.40 and watched 0.15 work and 0.2 destroy them,
+-- silently, because this path had no viability check at all.
+--
+-- The probe distance is the chamfer's own top edge: W into the material, which
+-- is band_offset_distance's negative-offset case and therefore the SAME loop a
+-- sharp band gets drawn at. If offsetting by it collapses the shape, there is
+-- no top edge left to chamfer.
+do
+   NEAR(CO.chamfer_probe_distance("outward", 0.2), -0.2, 1e-12,
+        "an outward loop probes inward, into the material")
+   NEAR(CO.chamfer_probe_distance("inward", 0.2), 0.2, 1e-12,
+        "an inward loop probes outward, into the material")
+   -- Tied to the one sign rule, so the two can never disagree about which way
+   -- the material is.
+   for _, dir in ipairs({ "outward", "inward" }) do
+      for _, W in ipairs({ 0.05, 0.2, 3.5 }) do
+         NEAR(CO.chamfer_probe_distance(dir, W), CO.band_offset_distance(dir, -W), 1e-12,
+              "probe distance is band_offset_distance(-W) for " .. dir .. " " .. W)
+      end
+   end
+end
+
+-- Winding normalization for the aspire path's copies (2026-08-04 direction-split
+-- sitting, the step defect). _chpdInside is stored relative to the loop's TRAVEL
+-- direction, not absolute inside/outside: a hand chamfer toolpath reversed one
+-- original vector mid-sitting and the same byte started cutting the opposite
+-- side of that loop. So every copy is laid down counter-clockwise (positive
+-- signed area) and the side table speaks that winding only.
+do
+   CHECK(CO.chamfer_copy_reverse(-2.5) == true,
+         "a clockwise loop (negative area) reverses")
+   CHECK(CO.chamfer_copy_reverse(3.1) == false,
+         "a counter-clockwise loop is left alone")
+   CHECK(CO.chamfer_copy_reverse(0) == false,
+         "a degenerate zero-area loop has no winding to fix")
+   -- Tied to the real area function, so the two can never disagree about signs.
+   local ccw = { {0, 0}, {2, 0}, {2, 2}, {0, 2} }
+   local cw  = { {0, 2}, {2, 2}, {2, 0}, {0, 0} }
+   CHECK(CO.chamfer_copy_reverse(CO.signed_area(ccw)) == false,
+         "a counter-clockwise square stays as drawn")
+   CHECK(CO.chamfer_copy_reverse(CO.signed_area(cw)) == true,
+         "the same square drawn clockwise reverses")
+end
+
+-- Metric jobs (2026-08-04 metric-jobs spec). Aspire converts a template's stored
+-- lengths to the job's units when it loads one - measured at the machine: the
+-- inch chamfer template's 0.3464 cut depth arrives in a mm job as 8.799. So our
+-- numbers go IN in the template's units and Aspire converts them back, and no mm
+-- template has to be shipped.
+do
+   local L = CO.length_in_template_units
+   NEAR(L(5, "mm", "mm"), 5, 1e-12, "matching mm units pass through")
+   NEAR(L(0.25, "in", "in"), 0.25, 1e-12, "matching inch units pass through")
+   NEAR(L(25.4, "mm", "in"), 1, 1e-12, "a mm job's 25.4 is one inch in an inch template")
+   NEAR(L(1, "in", "mm"), 25.4, 1e-12, "an inch job's 1 is 25.4 in a mm template")
+   -- Zero is the ordinary start depth, which is why length_in_job_units cannot be
+   -- reused here: it treats <= 0 as unusable and returns nil.
+   CHECK(L(0, "mm", "in") == 0, "a zero start depth converts to zero, not nil")
+   CHECK(L(0, "in", "in") == 0, "and stays zero when the units match")
+   for _, bad in ipairs({ -1, "5", true, {} }) do
+      CHECK(L(bad, "mm", "in") == nil, "length " .. tostring(bad) .. " refuses")
+   end
+   CHECK(L(nil, "mm", "in") == nil, "a nil length refuses")
+   CHECK(L(0 / 0, "mm", "in") == nil, "NaN refuses")
+   CHECK(L(5, "furlong", "in") == nil, "an unknown job unit refuses")
+   CHECK(L(5, "mm", "furlong") == nil, "an unknown template unit refuses")
+   CHECK(L(5, nil, "in") == nil, "no job units refuses - it must never guess")
+   CHECK(L(5, "mm", nil) == nil, "no template units refuses")
+end
+
+-- The two composites convert before they write, and refuse rather than fall
+-- through. A silent fall-through here cuts 25.4x too deep, which is why the
+-- missing-units case is a refusal and not a default (the D8 lesson, with worse
+-- consequences).
+do
+   local function slurp(p)
+      local f = assert(io.open(p, "rb")); local b = f:read("*a"); f:close(); return b
+   end
+   local cham = slurp("gadget/EdgeBreaker/" .. CO.CHAMFER_TEMPLATE_NAME)
+   local prof = slurp("gadget/EdgeBreaker/" .. CO.TEMPLATE_NAME)
+
+   -- A 5mm chamfer on a mm job goes into the inch template as 5/25.4.
+   local cmm = CO.patch_chamfer_run(cham, 5, 2.54, 12, 1, "inward", 90, "mm")
+   CHECK(cmm ~= nil, "the chamfer composite accepts a mm job")
+   CHECK(cmm ~= nil and cmm:sub(CO.find_chamfer_depth_offset(cmm),
+                                CO.find_chamfer_depth_offset(cmm) + 7)
+         == CO.encode_double(5 / 25.4), "mm chamfer depth is written in inches")
+   CHECK(cmm ~= nil and cmm:sub(CO.find_chamfer_start_offset(cmm),
+                                CO.find_chamfer_start_offset(cmm) + 7)
+         == CO.encode_double(0.1), "mm start depth is written in inches too")
+   -- An inch job is byte-identical to writing the numbers straight in. The
+   -- no-op path is pinned, not assumed.
+   local cin = CO.patch_chamfer_run(cham, 0.25, 0.1, 12, 1, "inward", 90, "in")
+   CHECK(cin ~= nil and cin:sub(CO.find_chamfer_depth_offset(cin),
+                                CO.find_chamfer_depth_offset(cin) + 7)
+         == CO.encode_double(0.25), "an inch job's depth goes in untouched")
+   local cx, cwhy = CO.patch_chamfer_run(cham, 0.25, 0.1, 12, 1, "inward", 90, nil)
+   CHECK(cx == nil and type(cwhy) == "string",
+         "the chamfer composite refuses a run with no job units")
+   cx, cwhy = CO.patch_chamfer_run(cham, 0.25, 0.1, 12, 1, "inward", 90, "furlong")
+   CHECK(cx == nil and type(cwhy) == "string",
+         "and refuses a job unit it does not recognise")
+
+   -- The same for the profile template.
+   local pmm = CO.patch_template_run(prof, 5, 2.54, 3, 1, nil, "mm")
+   CHECK(pmm ~= nil, "the profile composite accepts a mm job")
+   CHECK(pmm ~= nil and pmm:sub(CO.find_depth_offset(pmm), CO.find_depth_offset(pmm) + 7)
+         == CO.encode_double(5 / 25.4), "mm cut depth is written in inches")
+   CHECK(pmm ~= nil and pmm:sub(CO.find_start_depth_offset(pmm),
+                                CO.find_start_depth_offset(pmm) + 7)
+         == CO.encode_double(0.1), "mm profile start depth is written in inches")
+   -- The pass list is text, and it must carry the CONVERTED number - it is what
+   -- Aspire actually cuts (the session-025 finding).
+   CHECK(pmm ~= nil and pmm:find(string.format("%.6f;", 5 / 25.4):gsub(".", "%0\0"), 1, true) ~= nil,
+         "the pass list carries the converted depth, not the job's")
+   local px, pwhy = CO.patch_template_run(prof, 0.1, 0, 3, 1, nil, nil)
+   CHECK(px == nil and type(pwhy) == "string",
+         "the profile composite refuses a run with no job units")
+end
+
+-- Direction banding for the chamfer engine (2026-08-04 direction-split spec
+-- section 3a). Aspire's chamfer engine does NOT nest - one _chpdInside byte
+-- serves every loop in a toolpath (measured 2026-08-04, session 075) - so a
+-- mixed run needs a band (layer + template load) per direction. Outward is
+-- band 1 whenever present, so a single-direction run lands on NN-1 exactly as
+-- before the split.
+do
+   local b = CO.chamfer_bands({ "outward", "outward" })
+   CHECK(b ~= nil and b.n == 1 and b.dir_of_band[1] == "outward"
+         and b.band_of[1] == 1 and b.band_of[2] == 1,
+         "all-outward is one band, band 1")
+   b = CO.chamfer_bands({ "inward", "inward" })
+   CHECK(b ~= nil and b.n == 1 and b.dir_of_band[1] == "inward"
+         and b.band_of[1] == 1 and b.band_of[2] == 1,
+         "all-inward is one band, band 1 - a forced side never splits")
+   b = CO.chamfer_bands({ "outward", "inward", "outward" })
+   CHECK(b ~= nil and b.n == 2 and b.dir_of_band[1] == "outward"
+         and b.dir_of_band[2] == "inward",
+         "mixed is two bands, outward first")
+   CHECK(b ~= nil and b.band_of[1] == 1 and b.band_of[2] == 2 and b.band_of[3] == 1,
+         "each loop maps to its own direction's band")
+   b = CO.chamfer_bands({ "inward", "outward" })
+   CHECK(b ~= nil and b.n == 2 and b.dir_of_band[1] == "outward"
+         and b.band_of[1] == 2 and b.band_of[2] == 1,
+         "outward is band 1 whatever order the loops came in")
+   b = CO.chamfer_bands({})
+   CHECK(b ~= nil and b.n == 0, "no loops, no bands - empty selections were refused long before this")
+   local x, why = CO.chamfer_bands({ "outward", "auto" })
+   CHECK(x == nil and type(why) == "string",
+         "an unrecognised direction refuses instead of guessing")
+   x, why = CO.chamfer_bands(nil)
+   CHECK(x == nil and type(why) == "string", "nil dirs refuse")
+end
+
+-- The strategy switch (2026-08-04, large-chamfer spec section 3a). ONE place;
+-- the dialog's JS mirrors it (sharp && sharpMaxPercent === null) and main()
+-- consults this. Aspire's engine only when sharp is ticked and not even the 0%
+-- preset can sharpen - below that, everything is exactly v1.13.0.
+do
+   CHECK(CO.chamfer_strategy(1, 0.05, 0.106) == "bands", "small sharp chamfer stays on bands")
+   CHECK(CO.chamfer_strategy(1, 0.106, 0.106) == "bands", "the exact ceiling still sharpens on bands")
+   CHECK(CO.chamfer_strategy(1, 0.107, 0.106) == "aspire", "one thou over switches to Aspire's engine")
+   CHECK(CO.chamfer_strategy(0, 0.5, 0.106) == "bands", "sharp off never switches, at any size")
+   CHECK(CO.chamfer_strategy("1", 0.3, 0.106) == "aspire", "the dialog's string '1' counts as ticked")
+   CHECK(CO.chamfer_strategy("0", 0.3, 0.106) == "bands", "and its '0' as off")
+   CHECK(CO.chamfer_strategy(nil, 0.3, 0.106) == "bands", "no sharp field means off")
+end
+
+-- The side override, dropped on the aspire path (2026-08-06, side-greyed spec
+-- section 3a). Aspire's engine picks each loop's side from the geometry, so a
+-- forced Inside/Outside up there is the step S5 measured. Below the ceiling the
+-- function is IDENTITY, which is what makes the bands path byte-identical.
+do
+   CHECK(CO.effective_side("inside",  "aspire") == "auto", "a forced Inside drops to auto on the aspire path")
+   CHECK(CO.effective_side("outside", "aspire") == "auto", "and so does a forced Outside")
+   CHECK(CO.effective_side("auto",    "aspire") == "auto", "auto is already what that path does")
+   CHECK(CO.effective_side("inside",  "bands") == "inside", "the bands path is untouched: Inside stays Inside")
+   CHECK(CO.effective_side("outside", "bands") == "outside", "and Outside stays Outside")
+   CHECK(CO.effective_side("auto",    "bands") == "auto", "and auto stays auto")
+   CHECK(CO.effective_side("inside",  nil) == "inside", "no strategy is not the aspire path - the side stands")
+   CHECK(CO.effective_side(nil, "aspire") == "auto", "a missing side reads as auto there")
+   CHECK(CO.effective_side(nil, "bands") == nil,
+         "and is passed through untouched everywhere else - resolve_directions already reads it as auto")
+end
+
+-- The depth Aspire's engine gets (spec section 8 C2). W is the setback; the cone's
+-- flank makes the half-angle with the AXIS, so depth = W / tan(half-angle). At 90
+-- degrees the two candidate relations coincide (tan 45 = 1), which is why C2 needs
+-- a 60-degree bit at the machine: if Aspire's form disagrees there, THIS function
+-- is the only line that changes.
+do
+   NEAR(CO.chamfer_cut_depth(0.3464, 90), 0.3464, 1e-9, "90 deg bit: depth equals setback")
+   NEAR(CO.chamfer_cut_depth(0.1155, 60), 0.1155 / math.tan(math.rad(30)), 1e-9,
+        "60 deg bit: steeper wall, deeper cut for the same setback")
+   NEAR(CO.chamfer_cut_depth(0.2, 120), 0.2 / math.tan(math.rad(60)), 1e-9,
+        "obtuse bit: shallower than its setback")
+end
+
+-- Narrow-feature guard: the size inverse (2026-08-04 spec section 4b).
+-- The refusal message has to answer "what size CAN I use?", which means going
+-- from a chamfer width back to the number the operator types - in whatever
+-- mode he is typing in.
+local Ain = CO.half_angle(90)
+NEAR(CO.size_from_w("setback", 0.15, Ain), 0.15, 1e-9, "setback mode: size = W")
+NEAR(CO.size_from_w("face", 0.15, Ain), 0.15 / math.sin(Ain), 1e-9, "face mode: size = W / sin(a)")
+NEAR(CO.size_from_w("leg",  0.15, Ain), 0.15 / math.tan(Ain), 1e-9, "leg mode: size = W / tan(a)")
+
+-- Round-trips exactly in every mode and at bit angles either side of 90, so the
+-- suggested size can never be a different chamfer from the one measured.
+for _, deg in ipairs({ 30, 60, 90, 120 }) do
+   local aa = CO.half_angle(deg)
+   for _, m in ipairs({ "setback", "face", "leg" }) do
+      NEAR(CO.w_from_size(m, CO.size_from_w(m, 0.137, aa), aa), 0.137, 1e-9,
+           "size_from_w round-trips w_from_size: " .. m .. " @" .. deg)
+   end
+end
+
+local ok_bad = pcall(CO.size_from_w, "nonsense", 0.1, Ain)
+CHECK(ok_bad == false, "an unknown size mode raises rather than guessing")
+
+-- The nil-on-degenerate-divisor contract is load-bearing: CO.display_min_dia
+-- guards on it. A second definition of size_from_w anywhere later in the file
+-- would silently overwrite this one and the guard would go unreachable, which
+-- is exactly what happened on 2026-08-04 - and the whole suite still passed.
+CHECK(CO.size_from_w("face", 0.15, 0) == nil,
+      "size_from_w returns nil rather than dividing by ~0 (face)")
+CHECK(CO.size_from_w("leg", 0.15, 0) == nil,
+      "size_from_w returns nil rather than dividing by ~0 (leg)")
+NEAR(CO.size_from_w("setback", 0.15, 0), 0.15, 1e-9,
+     "setback needs no divisor, so a zero angle is still fine")
+
+-- CO.erosion_sign: one signed distance has to serve the whole selection, so
+-- this answers for all of it or refuses to answer (narrow-break guard spec 4b).
+CHECK(CO.erosion_sign({"outward"}, {0}) == -1,
+      "erosion_sign: a lone outward loop shrinks (material inside)")
+CHECK(CO.erosion_sign({"inward"}, {0}) == 1,
+      "erosion_sign: a lone inward loop grows (material outside)")
+CHECK(CO.erosion_sign({"inward", "inward"}, {0, 0}) == 1,
+      "erosion_sign: two pockets side by side still grow")
+CHECK(CO.erosion_sign({"outward", "inward"}, {0, 1}) == -1,
+      "erosion_sign: an outline and its counter is one region, shrinking")
+CHECK(CO.erosion_sign({"outward", "inward", "outward"}, {0, 1, 2}) == -1,
+      "erosion_sign: alternating depths agree, however deep")
+CHECK(CO.erosion_sign({"inward", "inward"}, {0, 1}) == nil,
+      "erosion_sign: forced Inside over a nested selection has no single region")
+CHECK(CO.erosion_sign({"outward", "outward"}, {0, 1}) == nil,
+      "erosion_sign: forced Outside over a nested selection has no single region")
+CHECK(CO.erosion_sign({}, {}) == nil, "erosion_sign: nothing selected, no answer")
+CHECK(CO.erosion_sign({"sideways"}, {0}) == nil,
+      "erosion_sign: an unrecognised direction refuses rather than guessing")
+CHECK(CO.erosion_sign({"outward", "inward"}, {0}) == nil,
+      "erosion_sign: mismatched lengths refuse")
+CHECK(CO.erosion_sign(nil, nil) == nil, "erosion_sign: nil input refuses")
+
+-- CO.bisect_w: the guard's answer is yes/no, but the message promises a size,
+-- so search for it (narrow-break guard spec 4d). Pure - it is handed the probe
+-- - so the whole search is exercised here with a known cutoff and never
+-- touches the SDK.
+do
+   local calls
+   local function cutoff_at(c)
+      return function(w) calls = calls + 1; return w <= c end
+   end
+
+   calls = 0
+   local got = CO.bisect_w(0.2, CO.BISECT_STEPS, cutoff_at(0.147))
+   CHECK(type(got) == "number" and got <= 0.147,
+         "bisect_w: never returns a size above the cutoff (got " .. tostring(got) .. ")")
+   CHECK(type(got) == "number" and got >= 0.146,
+         "bisect_w: lands within a rounding step of the cutoff (got " .. tostring(got) .. ")")
+   CHECK(calls == CO.BISECT_STEPS,
+         "bisect_w: calls the probe exactly steps times (got " .. tostring(calls) .. ")")
+
+   calls = 0
+   CHECK(CO.bisect_w(0.2, CO.BISECT_STEPS, cutoff_at(-1)) == nil,
+         "bisect_w: nothing fits, no size named")
+   CHECK(calls == CO.BISECT_STEPS,
+         "bisect_w: still costs exactly steps probes when nothing fits")
+
+   -- A cutoff below the rounding step rounds down to zero, and zero is not a
+   -- size anyone can type.
+   CHECK(CO.bisect_w(0.2, CO.BISECT_STEPS, cutoff_at(0.0004)) == nil,
+         "bisect_w: a cutoff under the rounding step names nothing")
+
+   -- Everything fits: the answer is the whole range, rounded down.
+   local all = CO.bisect_w(0.2, CO.BISECT_STEPS, cutoff_at(999))
+   CHECK(type(all) == "number" and all <= 0.2 and all >= 0.199,
+         "bisect_w: everything fits, returns the top of the range (got " .. tostring(all) .. ")")
+
+   CHECK(CO.bisect_w(0, CO.BISECT_STEPS, cutoff_at(1)) == nil, "bisect_w: zero range")
+   CHECK(CO.bisect_w(-1, CO.BISECT_STEPS, cutoff_at(1)) == nil, "bisect_w: negative range")
+   CHECK(CO.bisect_w(0.2, 0, cutoff_at(1)) == nil, "bisect_w: no steps, no answer")
+   CHECK(CO.bisect_w(0.2, CO.BISECT_STEPS, nil) == nil, "bisect_w: no probe, no answer")
+end
+
+-- Narrow-break guard, Finding F (final review, 2026-08-04): the refusal prints
+-- a suggested SIZE, not the bisected W directly, and the size has to convert
+-- back to a W the guard would actually accept. CO.fmt_len rounds to 4dp to
+-- NEAREST, and in Face/Leg mode (a non-1 conversion factor) that can round the
+-- printed number UP past the W that passed. This is a measured case, not a
+-- hypothetical: an included angle of 177 (a=CO.half_angle(177)) and a passing
+-- W of 0.146 converts to 0.14605004770367 in face mode, which CO.fmt_len would
+-- print as "0.1461" - and 0.1461 converts back to 0.14604993517893, ABOVE the
+-- 0.146 that passed. Flooring to 4dp first (CO.floor4, same as
+-- CO.display_max_size) prints "0.146", which converts back to 0.14594996944643
+-- - at or below the W that passed, every time.
+do
+   local a177 = CO.half_angle(177)
+   local W = 0.146
+   local raw = CO.size_from_w("face", W, a177)
+   local naive = tonumber(CO.fmt_len(raw))
+   CHECK(CO.w_from_size("face", naive, a177) > W,
+         "sanity: nearest-rounding (the old behaviour) really did round up past W")
+
+   local floored = CO.floor4(raw)
+   CHECK(CO.w_from_size("face", floored, a177) <= W,
+         "floor4'd face-mode suggestion converts back to a W at or below the one that passed")
+
+   -- Sweep, not just the one measured case: no fits/angle combination the
+   -- bisect search can produce may floor-and-convert back above the W that
+   -- passed, in Face mode.
+   for _, deg in ipairs({ 5, 30, 60, 90, 120, 150, 177 }) do
+      local a = CO.half_angle(deg)
+      for milli = 1, 200 do
+         local w = milli / 1000
+         local size = CO.floor4(CO.size_from_w("face", w, a))
+         CHECK(CO.w_from_size("face", size, a) <= w + 1e-9,
+               "face mode never rounds up: deg=" .. deg .. " w=" .. w)
+      end
+   end
+end
+
+-- The ignored-vectors note (S6b, Tim's redline 2026-08-06). It stopped saying
+-- "offsets", because on the aspire path the things it ignored are copies lying
+-- ON the operator's own lines, and "offset" reads as nonsense there. Losing
+-- "vector(s)" for real words means the singular has to be real too -- "ignored
+-- 1 selected vectors" is exactly the kind of line that makes a tool look
+-- unfinished, and one ignored vector is the common case.
+do
+   local one = CO.selection_skip_notes(0, 1)
+   CHECK(one:find("ignored 1 selected vector that", 1, true) ~= nil,
+         "skip notes: one ignored vector reads as singular")
+   CHECK(one:find("vectors", 1, true) == nil,
+         "skip notes: the singular does not say vectors")
+   local many = CO.selection_skip_notes(0, 3)
+   CHECK(many:find("ignored 3 selected vectors that", 1, true) ~= nil,
+         "skip notes: more than one reads as plural")
+   CHECK(CO.selection_skip_notes(0, 0) == "",
+         "skip notes: nothing ignored says nothing")
 end

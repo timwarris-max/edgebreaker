@@ -41,6 +41,7 @@ $ORDER = @(
   "Big chamfers",
   "Start depth",
   "Sharp corners",
+  "Big sharp chamfers",
   "The section view",
   "What a chamfer remembers",
   "More than one chamfer in a job",

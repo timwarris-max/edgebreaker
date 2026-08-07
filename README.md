@@ -159,9 +159,11 @@ cutting edge. If your chamfer is close to that, EdgeBreaker drops the cut
 position lower to make it fit — and says so under the cut position buttons. Too
 big for even that and the box greys out: use a smaller chamfer, or a bigger bit.
 
-- It works on **any** Chamfer side, with one catch: if you've selected shapes
-  that sit inside other shapes — letters with counters, a part with holes — leave
-  Side on **Auto**. Forcing a side can't sharpen those, and it'll tell you so.
+- It works on any Chamfer side up to the point where the bit runs out — past
+  that, big chamfers always cut on the material side and the Side buttons grey
+  out. And if you've selected shapes that sit inside other shapes — letters with
+  counters, a part with holes — leave Side on **Auto** anyway. Forcing a side
+  can't sharpen those, and it'll tell you so.
 - Raised letters are one chamfer now: select the lot, leave Side on **Auto**, tick
   the box. It works out which way each shape goes — outward round the outlines,
   inward into the counters — and the corners come out sharp on both.
@@ -176,6 +178,15 @@ big for even that and the box greys out: use a smaller chamfer, or a bigger bit.
 - The orange line sits a touch over on the material side of your edge on
   purpose: that's the line the machine steers by, not the cut. The cut still
   lands exactly where it always does.
+
+## Big sharp chamfers
+
+Sharp corners used to stop working past what the bit could sharpen in one flat
+pass. Now they don't stop - past that point EdgeBreaker hands the cut to
+Aspire's own chamfer engine, which runs the tip of the bit down the corner line.
+The trade: you give up the cut-position buttons for that chamfer, because the
+cut has to come off the tip. The dialog greys them and says so. Smaller
+chamfers keep working exactly as before, cut position and all.
 
 ## What a chamfer remembers
 
@@ -280,8 +291,8 @@ You should never need to touch this file. If you do re-create it, it must be
 restricted to **`EdgeBreaker - Offset 01`** — the whole name matters, because that
 is the text the gadget finds and rewrites. The **Selector ...** step is not
 optional either: without it the toolpath gets bound to whatever is selected when
-it recalculates, and loops silently drop out. It must also be saved from a job in
-the same units you work in.
+it recalculates, and loops silently drop out. The job's units don't matter —
+inch or metric, the gadget converts.
 
 ## Notes
 
@@ -325,9 +336,20 @@ the same units you work in.
   and names the flute position that fits. It warns, it does not block, and it
   stays quiet when Job Setup has no thickness.
 
+**"Chamfer's too big for this artwork"**
+
+Your chamfer takes a bite out of both sides of every wall, so a thin stroke or
+a tight junction can get cut away completely. EdgeBreaker checks before it cuts
+and stops if that would happen — and tells you the biggest size that fits.
+
+Older versions cut it anyway and said nothing.
+
+One thing it can't see: a thin arm that stays attached. That comes out as a
+sharp ridge rather than a flat, and the check won't catch it.
+
 ## About this repo
 
-This is the released gadget. The seven files in `gadget/EdgeBreaker/` are exactly what
+This is the released gadget. The eight files in `gadget/EdgeBreaker/` are exactly what
 ships inside the `.vgadget`, and `tests/` is the suite that guards the geometry and the
 dialog layouts:
 

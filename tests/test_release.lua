@@ -148,15 +148,30 @@ CHECK(bad_bytes == nil and type(bytes_why) == "string", "unreadable content flag
 local no_bytes, nil_why = CO.validate_template(nil, "in")
 CHECK(no_bytes == nil and nil_why:find("read"), "nil bytes flagged")
 
--- Units are checked against the JOB now, not a filename: patching an inch
--- depth into a template a mm job will read as mm cuts the wrong depth.
-local mismatch, mm_why = CO.validate_template(shippedT, "mm")
-CHECK(mismatch == nil and mm_why:find("inch") and mm_why:find("mm"),
-      "inch template in a mm job is flagged, naming both unit systems")
+-- Units USED to be a refusal here. They are not any more (2026-08-04
+-- metric-jobs spec): Aspire converts a template's stored lengths into the job's
+-- units on load, so patch_template_run writes ours in the template's units and
+-- Aspire converts them back. A mismatch is now a normal, working run.
+CHECK(CO.validate_template(shippedT) == true,
+      "the inch template validates - a mm job is no longer refused here")
 local scopedMM = set_tag_byte(shippedT, "_vcgfInMM", 1)
 CHECK(CO.read_template_units(scopedMM) == "mm", "the derived mm specimen really reads mm")
-CHECK(CO.validate_template(scopedMM, "mm") == true, "mm template validates in a mm job")
-CHECK(CO.validate_template(scopedMM, "in") == nil, "mm template is refused in an inch job")
+CHECK(CO.validate_template(scopedMM) == true, "and an mm template validates too")
+-- The conversion is where units are enforced, and it refuses both directions
+-- rather than writing a number 25.4x wrong.
+CHECK(CO.patch_template_run(scopedMM, 1, 0, 3, 1, nil, "in") ~= nil,
+      "an inch job can still be patched into a mm template")
+CHECK(CO.patch_template_run(scopedMM, 1, 0, 3, 1, nil, nil) == nil,
+      "but not without knowing the job's units")
+-- A template that does not say what units it used is caught HERE, before
+-- anything is drawn, rather than by the patcher mid-run with a technical
+-- sentence. Same contract as validate_chamfer_template.
+local profNoUnits = shippedT:gsub(("_vcgfInMM"):gsub("(.)", "%1\0"),
+                                  ("_vcgfXnMM"):gsub("(.)", "%1\0"), 1)
+CHECK(CO.read_template_units(profNoUnits) == nil, "the derived specimen really has no units tag")
+local nu_ok, nu_why = CO.validate_template(profNoUnits)
+CHECK(nu_ok == nil and type(nu_why) == "string" and nu_why:find("units", 1, true) ~= nil,
+      "a template with no units tag is refused, naming units")
 
 -- v1.6.0: a patchable START depth is REQUIRED, the same way the layer
 -- restriction became required in v1.4.0. Every Aspire profile template
@@ -195,11 +210,14 @@ end
 CHECK(CO.validate_template(shippedT, "in") == true,
       "the shipped template still validates with both sharp fields required")
 
--- An absent units tag must not block an otherwise-good template: silence is
--- not evidence of a mismatch.
+-- REVERSED 2026-08-04 (metric-jobs spec). An absent units tag used to be
+-- harmless - "silence is not evidence of a mismatch" - because the tag was only
+-- ever used to refuse. It is now the input to a CONVERSION, so silence means we
+-- cannot know what units to write in, and writing anyway is a cut 25.4x wrong.
 local orig_units = CO.read_template_units
 CO.read_template_units = function() return nil, "no tag" end
-CHECK(CO.validate_template(shippedT, "mm") == true, "unreadable units tag does not block")
+CHECK(CO.validate_template(shippedT) == nil,
+      "an unreadable units tag now blocks - the conversion needs to name them")
 CO.read_template_units = orig_units
 
 -- layers == nil branch: truncate so the depth check passes but layers fails
@@ -395,7 +413,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.13.0", "version gate: 1.13.0")
+CHECK(CO.VERSION == "1.14.0", "version gate: 1.14.0")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -874,7 +892,7 @@ do
    -- selection the forced side is precisely the direction Aspire will not use.
    CHECK(src:find('local sharp_side = sharp_run and %(%(sharp_dir == "outward"%) and "outside" or "inside"%) or nil') ~= nil,
          "main() maps the gate's direction to the patch side")
-   CHECK(src:find("tool, sharp_side%)") ~= nil,
+   CHECK(src:find("tool, sharp_side,") ~= nil,
          "and reuses that one answer at the template-patch call")
    -- The negative half. `sharp_run and side` is the old line, and it would pass
    -- every positive pin above if somebody put it back alongside them.
@@ -1065,22 +1083,38 @@ do
    local page = f:read("*a"); f:close()
    CHECK(page:find("sharpMaxPercent", 1, true) ~= nil,
          "the page works out the highest cut position that still sharpens")
-   -- Both remedies, because both are real: a smaller chamfer or a bigger bit.
-   -- The README says both too, and a caption naming only one of them reads as a
-   -- different rule from the one the README states.
-   CHECK(page:find("needs a smaller chamfer, or a bigger bit", 1, true) ~= nil,
-         "and says so when no position will do, naming both ways out")
+   -- 2026-08-04 (aspire mode): "no cut position sharpens this" stopped being a
+   -- refusal and became a change of ENGINE, so the caption that named the two
+   -- remedies -- and the greyed, unticked box it sat beside -- are both gone.
+   -- Pinned as an absence because a caption telling the operator to use a
+   -- smaller chamfer, over a run that is about to cut the big one perfectly
+   -- well, is worse than no caption at all.
+   CHECK(page:find("needs a smaller chamfer, or a bigger bit", 1, true) == nil,
+         "the ceiling caption is gone - the ceiling is not a refusal any more")
+   CHECK(page:find('id="SharpCap"', 1, true) == nil,
+         "and so is the span that carried it")
    -- 2026-08-03 (Auto): the SIDE caption is GONE, both spellings of it. The side
    -- no longer gates the box at all -- Auto is the only side that can sharpen a
    -- letter set -- so a caption saying otherwise would tell the operator the
    -- thing in front of them does not work, on the very run it works best for.
-   -- The depth caption is now the only one, which is why the markup default is
-   -- pinned to it: SharpCap is written by applySharpState on every redraw, but
-   -- the markup is what the first paint shows.
    CHECK(page:find("needs Side: Inside or Outside", 1, true) == nil,
          "the side caption is gone from the page, in the markup and at run time")
-   CHECK(page:find('id="SharpCap">needs a smaller chamfer, or a bigger bit</span>', 1, true) ~= nil,
-         "and the markup default is the depth caption, the only one left")
+   -- What replaced it: the CUT POSITION row greys instead, because Aspire's
+   -- chamfer engine has no cut position to pick. The page's own test has to be
+   -- the exact mirror of CO.chamfer_strategy -- ticked AND no preset sharpens --
+   -- so the function is pinned by name, and the caption by its words, which the
+   -- layout gate then renders and measures.
+   CHECK(page:find("function aspireMode()", 1, true) ~= nil,
+         "the page knows when Aspire's own chamfer engine takes the run")
+   CHECK(page:find('id="PresetCap"', 1, true) ~= nil,
+         "and the cut-position row has a caption to explain itself with")
+   CHECK(page:find("big sharp chamfers cut from the tip", 1, true) ~= nil,
+         "which says why the buttons stopped responding")
+   -- The auto-untick apparatus went with the state it managed. A survivor would
+   -- take the tick away on exactly the runs this release exists to allow, and it
+   -- would do it silently -- the box simply clearing itself as the size grows.
+   CHECK(page:find("sharpAutoUnticked", 1, true) == nil,
+         "and nothing unticks the box on the operator's behalf any more")
    -- The checkbox's own label followed the caption. "Sharp inside corners" over
    -- a working Outside run is worse than no label at all. Pinned with its input
    -- and its closing tag, because the same two words also appear in the "How it
@@ -1314,4 +1348,466 @@ console.log(out.join("\n"));
          end
       end
    end
+end
+
+-- The Aspire-chamfer-engine template (2026-08-04, large-chamfer spec section 3c).
+-- A second shipped template, authored by Aspire with the layer restriction baked
+-- in at C0 - we never insert records, so the restriction has to arrive this way.
+do
+   CHECK(CO.CHAMFER_TEMPLATE_NAME == "EdgeBreakerChamfer.ToolpathTemplate",
+         "the chamfer template's name is pinned - sdk code and tests both build on it")
+   CHECK(CO.CHAMFER_DIALOG_ID == "uiChamferDialog",
+         "the chamfer template's type identifier is pinned")
+   local f = io.open("gadget/EdgeBreaker/" .. CO.CHAMFER_TEMPLATE_NAME, "rb")
+   CHECK(f ~= nil, "the chamfer template ships next to the gadget")
+   if f ~= nil then
+      local b = f:read("*a"); f:close()
+      CHECK(#b == 3787, "shipped chamfer template is the C0 file, byte for byte ("
+            .. #b .. " bytes)")
+   end
+   local fx = io.open("tests/fixtures/chamfer-manual.ToolpathTemplate", "rb")
+   CHECK(fx ~= nil, "the manual (no-restriction) chamfer fixture exists")
+   if fx ~= nil then
+      local b = fx:read("*a"); fx:close()
+      CHECK(#b == 3693, "manual fixture is Tim's original save (" .. #b .. " bytes)")
+   end
+end
+
+-- validate_chamfer_template (2026-08-04, large-chamfer spec sections 3e and 5).
+-- A profile template handed to the chamfer path, or the reverse, must refuse
+-- loudly rather than patch into nonsense.
+do
+   local shipped = slurp("gadget/EdgeBreaker/" .. CO.CHAMFER_TEMPLATE_NAME)
+   local manual  = slurp("tests/fixtures/chamfer-manual.ToolpathTemplate")
+   local profile = slurp("gadget/EdgeBreaker/" .. CO.TEMPLATE_NAME)
+
+   CHECK(CO.validate_chamfer_template(shipped, "in") == true,
+         "the shipped chamfer template validates for an inch job")
+   local ok, why = CO.validate_chamfer_template(profile, "in")
+   CHECK(ok == nil and type(why) == "string" and why:find(CO.CHAMFER_TEMPLATE_NAME, 1, true) ~= nil,
+         "a profile template is refused, naming the file the operator must fix")
+   ok, why = CO.validate_chamfer_template(manual, "in")
+   CHECK(ok == nil and type(why) == "string",
+         "a chamfer template with no layer restriction is refused")
+   -- A units mismatch used to be refused here; see the validate_template block
+   -- above for why it is not any more. The template's units must still be
+   -- READABLE, because the conversion has to name them.
+   CHECK(CO.validate_chamfer_template(shipped) == true,
+         "the inch chamfer template validates - a mm job is no longer refused")
+   local nounits = shipped:gsub(("_chpdInMM"):gsub("(.)", "%1\0"),
+                                ("_chpdXnMM"):gsub("(.)", "%1\0"), 1)
+   ok, why = CO.validate_chamfer_template(nounits)
+   CHECK(ok == nil and type(why) == "string",
+         "but a template that does not say what units it used is refused")
+   ok, why = CO.validate_chamfer_template(nil)
+   CHECK(ok == nil and type(why) == "string", "missing bytes are refused")
+   -- The angle is a patch target from the 2026-08-04 sitting on (check D8), so
+   -- a template without one can no longer be aimed at a bit and must refuse.
+   -- Renamed in place rather than deleted, so the file stays the same length and
+   -- only the record this check is about goes missing.
+   local noangle = shipped:gsub(("_chpdAngle\0"):gsub("(.)", "%1\0"),
+                                ("_chpdXngle\0"):gsub("(.)", "%1\0"), 1)
+   CHECK(#noangle == #shipped, "the no-angle fixture is the same length")
+   ok, why = CO.validate_chamfer_template(noangle, "in")
+   CHECK(ok == nil and type(why) == "string",
+         "a chamfer template with no angle record is refused")
+   -- The slope is a patch target from the direction-split sitting on (the S1
+   -- fail): a template whose slope record cannot be found would keep its baked
+   -- Slope Downwards and sink a groove beside every edge instead of breaking
+   -- it. Refused, same as a missing angle.
+   local noslope = shipped:gsub(("_chpdVectorsAtTop"):gsub("(.)", "%1\0"),
+                                ("_chpdXectorsAtTop"):gsub("(.)", "%1\0"), 1)
+   CHECK(#noslope == #shipped, "the no-slope fixture is the same length")
+   ok, why = CO.validate_chamfer_template(noslope, "in")
+   CHECK(ok == nil and type(why) == "string",
+         "a chamfer template with no slope record is refused")
+   -- And the OLD validator still refuses the NEW template.
+   ok, why = CO.validate_template(shipped, "in")
+   CHECK(ok == nil and type(why) == "string",
+         "the profile validator refuses the chamfer template")
+end
+
+-- main() consults the strategy switch, and the aspire path stays out of the
+-- bands machinery (2026-08-04, large-chamfer spec sections 3a, 3d). Scoped to
+-- main()'s body - the function definitions live earlier in the file and would
+-- satisfy an unscoped find (the session-069 pin lesson).
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   local mstart = src:find("function main(script_path)", 1, true)
+   CHECK(mstart ~= nil, "found main() for the strategy pins")
+   local mbody = mstart ~= nil and src:sub(mstart) or ""
+   CHECK(mbody:find("CO%.chamfer_strategy%(") ~= nil,
+         "main() consults chamfer_strategy - the one switch, not its own test")
+   CHECK(mbody:find("CO%.sdk_apply_chamfer_template%(") ~= nil,
+         "the aspire path loads the chamfer template")
+   CHECK(mbody:find("CO%.chamfer_cut_depth%(") ~= nil,
+         "the aspire path derives its depth from the ONE arithmetic function")
+   -- THE ORDER, and it is load-bearing (2026-08-06, side-greyed spec section 3a):
+   -- the strategy has to be known BEFORE resolve_directions folds the side in, or
+   -- the aspire path writes a forced side and cuts the step S5 measured. Pinned
+   -- on the CALL SITES, never on bare function names - the file being searched
+   -- also defines them, and a pin that greps a bare name cannot fail.
+   local i_strat = mbody:find("local strategy = CO.chamfer_strategy(", 1, true)
+   local i_eff   = mbody:find("local eff_side = CO.effective_side(side, strategy)", 1, true)
+   local i_dirs  = mbody:find("local dirs = CO.resolve_directions(loops, eff_side)", 1, true)
+   CHECK(i_strat ~= nil, "main() computes the strategy itself")
+   CHECK(i_eff ~= nil, "main() drops the side override through CO.effective_side")
+   CHECK(i_dirs ~= nil, "resolve_directions is handed the EFFECTIVE side, not the dialog's")
+   CHECK(i_strat ~= nil and i_eff ~= nil and i_dirs ~= nil
+         and i_strat < i_eff and i_eff < i_dirs,
+         "strategy is settled before the side is dropped, and both before dirs")
+   -- Negative: the old call must not come back, and the strategy must be
+   -- assigned in exactly ONE place - two of them could disagree about which
+   -- engine is cutting, which is the whole failure this ordering fixes.
+   CHECK(mbody:find("CO.resolve_directions(loops, side)", 1, true) == nil,
+         "the raw dialog side never reaches resolve_directions again")
+   local _, nstrat = mbody:gsub("local strategy = ", "")
+   CHECK(nstrat == 1, "strategy is assigned exactly once, found " .. nstrat)
+   -- The skip note's number (2026-08-06, Tim's ruling). Pinned by COUNT: the
+   -- closure definition plus BOTH skip sites, because a site quietly reverted
+   -- to a bare `skipped_narrow + 1` would keep every count right and only lose
+   -- the suggestion - exactly the kind of half-revert no behavioural test sees.
+   local _, nsk = mbody:gsub("note_skip%(", "")
+   CHECK(nsk == 3,
+         "note_skip is defined once and called from BOTH skip sites (bands and aspire), found " .. nsk)
+   CHECK(mbody:find("CO.skip_summary(skipped_narrow, strategy, skip_suggest", 1, true) ~= nil,
+         "the skip note is handed the biggest-that-fits, not just the count")
+   -- The bit's angle has to travel with the depth. ReplaceTool does not
+   -- re-derive it (sitting 2026-08-04 check D8), so a call that leaves it out
+   -- cuts every non-90-degree bit at the template's baked-in 45.
+   local ca = mbody:find("CO.sdk_apply_chamfer_template(", 1, true)
+   local ccall = ca ~= nil and mbody:sub(ca, ca + 400) or ""
+   CHECK(ccall:find("angle", 1, true) ~= nil,
+         "the aspire path hands the chamfer template the bit's angle")
+   -- Negative pins: the aspire branch must not reintroduce bands concepts.
+   -- Extract just the aspire branch (fenced by the markers the implementation
+   -- must carry) and check what it never calls.
+   local a0 = mbody:find("-- ASPIRE STRATEGY BEGIN", 1, true)
+   local a1 = mbody:find("-- ASPIRE STRATEGY END", 1, true)
+   CHECK(a0 ~= nil and a1 ~= nil and a1 > a0, "the aspire branch is fenced for these pins")
+   local abody = (a0 ~= nil and a1 ~= nil) and mbody:sub(a0, a1) or ""
+   CHECK(abody:find("sharp_nesting_ok") == nil,
+         "no nesting gate on the aspire path - Aspire owns direction there")
+   CHECK(abody:find("pass_geometry") == nil and abody:find("band_offset_distance") == nil,
+         "no band arithmetic on the aspire path - _chpdStepdown owns the passes")
+   -- The aspire path draws COINCIDENT copies, never offsets. sdk_offset_loop is
+   -- allowed exactly once and only as the too-narrow probe, whose result is
+   -- discarded - so pin the shape of the call rather than banning the name, and
+   -- require the counts to match so a second, drawing use cannot slip in.
+   local function count_of(hay, needle)
+      local n, at = 0, 1
+      while true do
+         local s = hay:find(needle, at, true)
+         if s == nil then return n end
+         n = n + 1; at = s + 1
+      end
+   end
+   CHECK(count_of(abody, "sdk_offset_loop") == count_of(abody, "local probe, perr = CO.sdk_offset_loop("),
+         "every sdk_offset_loop on the aspire path is the discarded viability probe")
+   CHECK(count_of(abody, "sdk_offset_loop") == 1,
+         "and there is exactly one of them")
+   CHECK(abody:find("sdk_draw_group", 1, true) == nil,
+         "the aspire path draws contours it cloned, not offset groups")
+   -- The copy loop's own banding (final-review finding, 2026-08-04): if
+   -- `dirbands.band_of[i]` / `layers[bk]` / `band_drawn[bk]` ever reverted to a
+   -- hardcoded band 1, every other gate stays green and the session-075 defect
+   -- returns silently. Pin the copy loop directly, not just the toolpath loop.
+   CHECK(abody:find("dirbands.band_of[", 1, true) ~= nil,
+         "the copy loop bands each vector by its own direction, not a fixed band 1")
+   CHECK(abody:find("band_drawn[bk]", 1, true) ~= nil,
+         "each copy is filed under its own direction's band, not a hardcoded one")
+   -- Winding normalization (2026-08-04 direction-split sitting, the step
+   -- defect): _chpdInside is stored relative to the loop's travel direction -
+   -- a hand toolpath reversed one original and the same byte cut the opposite
+   -- side - so every copy is laid down counter-clockwise and the side table
+   -- speaks that winding only.
+   CHECK(abody:find("chamfer_copy_reverse", 1, true) ~= nil,
+         "the copy loop consults the one winding rule")
+   CHECK(abody:find("sdk_clone_loop", 1, true) ~= nil,
+         "copies are clones the gadget can reverse")
+   CHECK(src:find("sdk_copy_loop", 1, true) == nil,
+         "the selection-dance copier is deleted - clones own the aspire path")
+   -- The too-narrow guard (2026-08-04 sitting, S3). Without it a chamfer wider
+   -- than half a stroke destroys the shape silently - the one outcome this
+   -- product's silence contract does not allow. The probe and the count both
+   -- have to be here, or the run says nothing about what it skipped.
+   CHECK(abody:find("chamfer_probe_distance", 1, true) ~= nil,
+         "the aspire path probes whether the chamfer fits the shape")
+   -- note_skip counts AND bisects the biggest size that would fit (2026-08-06)
+   -- - a bare `skipped_narrow + 1` here would keep the count and lose the
+   -- number the note now promises.
+   CHECK(abody:find("note_skip(", 1, true) ~= nil,
+         "and counts what it skipped through note_skip, so the report can name a size")
+   -- The pins above read the FIRST fenced region only. The aspire path has two -
+   -- the copies and the toolpath - and the second is the one where the bands
+   -- machinery would be easiest to reintroduce, so sweep every region.
+   local pos, regions = 1, 0
+   while true do
+      local b0 = mbody:find("-- ASPIRE STRATEGY BEGIN", pos, true)
+      if b0 == nil then break end
+      local b1 = mbody:find("-- ASPIRE STRATEGY END", b0, true)
+      CHECK(b1 ~= nil, "every aspire fence is closed")
+      if b1 == nil then break end
+      regions = regions + 1
+      local reg = mbody:sub(b0, b1)
+      -- band_offset_distance is reached only THROUGH chamfer_probe_distance,
+      -- never named here; sdk_offset_loop only as the discarded probe.
+      CHECK(reg:find("sharp_nesting_ok") == nil and reg:find("pass_geometry") == nil
+            and reg:find("band_offset_distance") == nil
+            and count_of(reg, "sdk_offset_loop")
+                == count_of(reg, "local probe, perr = CO.sdk_offset_loop("),
+            "aspire region " .. regions .. " stays out of the bands machinery")
+      pos = b1 + 1
+   end
+   CHECK(regions == 2, "both aspire regions are fenced - the copies and the toolpath")
+
+   -- The direction split (2026-08-04 direction-split spec). The banding is
+   -- consulted in main(), and the second aspire region (the toolpath one)
+   -- takes each load's direction from it - NEVER from the dialog's side field,
+   -- whose derivation line is gone (same shape as v1.13.0's sharp_side rule).
+   CHECK(mbody:find("CO%.chamfer_bands%(") ~= nil,
+         "main() consults chamfer_bands - the one grouping, not its own test")
+   CHECK(mbody:find('if side == "inside" then chamfer_dir') == nil,
+         "the side-field direction derivation is deleted, not just bypassed")
+   local t0 = mbody:find("-- ASPIRE STRATEGY BEGIN", (mbody:find("-- ASPIRE STRATEGY END", 1, true) or 0) + 1, true)
+   local t1 = t0 ~= nil and mbody:find("-- ASPIRE STRATEGY END", t0, true) or nil
+   CHECK(t0 ~= nil and t1 ~= nil, "found the second aspire region for the split pins")
+   local tbody = (t0 ~= nil and t1 ~= nil) and mbody:sub(t0, t1) or ""
+   CHECK(tbody:find("dirbands.dir_of_band[", 1, true) ~= nil,
+         "each template load's direction comes from the banding")
+   CHECK(tbody:find("CO.chamfer_toolpath_name(", 1, true) ~= nil,
+         "and its name from chamfer_toolpath_name")
+
+   -- The trouble report has to describe the run it actually made. On the aspire
+   -- path nothing is offset, so a G, a standoff or the cut-position advisory
+   -- would all be numbers from a run that did not happen (2026-08-04 review).
+   CHECK(mbody:find("Aspire's chamfer toolpath cuts them from the tip down", 1, true) ~= nil,
+         "the aspire report says what actually happened - Aspire cuts from the tip")
+   CHECK(mbody:find([[{ "Chamfer depth", ]], 1, true) ~= nil,
+         "the aspire report labels its depth as the chamfer's, not a plunge")
+   CHECK(mbody:find([[{ "Copied", ]], 1, true) ~= nil,
+         "the aspire report says copied, not offset")
+   CHECK(mbody:find("Failed drawing the copy of vector ", 1, true) ~= nil,
+         "the aspire draw failure talks about the copy, not an offset vector")
+   -- Negative, scoped to the rows block's aspire arm: no bands numbers in it.
+   local r0 = mbody:find("local rows", 1, true)
+   local r1 = r0 ~= nil and mbody:find("if start > 0 then", r0, true) or nil
+   local rblock = (r0 ~= nil and r1 ~= nil) and mbody:sub(r0, r1) or ""
+   local ra0 = rblock:find([[if strategy == "aspire" then]], 1, true)
+   local ra1 = ra0 ~= nil and rblock:find("\n   else", ra0, true) or nil
+   local rasp = (ra0 ~= nil and ra1 ~= nil) and rblock:sub(ra0, ra1) or ""
+   CHECK(rasp ~= "" and rasp:find([[{ "G",]], 1, true) == nil
+         and rasp:find([[{ "Standoff",]], 1, true) == nil,
+         "the aspire report shows no G and no Standoff - nothing was offset there")
+   -- And the bands arm still shows both, so the split did not quietly drop them.
+   CHECK(rblock:find([[{ "G",]], 1, true) ~= nil
+         and rblock:find([[{ "Standoff",]], 1, true) ~= nil,
+         "the bands report still shows G and Standoff")
+end
+
+-- The narrow-break guard's PLACEMENT is the safety property, not its
+-- arithmetic: it has to run before sdk_prepare_layers wipes the offset layers
+-- and before marked toolpaths are deleted, or a refusal has to apologise for a
+-- job it already half-cleared. Nothing offline can see ordering except a source
+-- pin, so pin it.
+--
+-- ANCHOR ON THE CALL SITE, NEVER THE BARE NAME. This file DEFINES these
+-- functions too, so `CO.erosion_sign(dirs, depths)` also matches inside
+-- `function CO.erosion_sign(dirs, depths)` hundreds of lines above main(), and
+-- a pin written that way passes whatever main() does. That is precisely how the
+-- first version of this block was written, and only the mutation check in the
+-- plan's Step 6 caught it.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+
+   local guard = src:find("local esign = CO.erosion_sign(dirs, depths)", 1, true)
+   local wipe  = src:find("pcall(CO.sdk_prepare_layers", 1, true)
+   local del   = src:find("pcall(CO.sdk_delete_marked_toolpaths", 1, true)
+   CHECK(guard ~= nil, "the guard is wired into main()")
+   CHECK(wipe ~= nil and guard ~= nil and guard < wipe,
+         "the guard runs BEFORE the offset layers are wiped")
+   CHECK(del ~= nil and guard ~= nil and guard < del,
+         "the guard runs BEFORE marked toolpaths are deleted")
+
+   -- Same trap, same fix: pin the call, not the definition. `objs` is one
+   -- SHAPE's loops, not the whole selection - see the Finding A block below.
+   -- The fourth argument is the GROW-BACK, and it is the whole opening: shrink
+   -- by w, grow the result back by w, count that. Without it the guard reads a
+   -- shrunken count and refuses lettering at every sharp inside corner.
+   CHECK(src:find("CO.sdk_erode_count(job, objs, esign * w, -esign * w)", 1, true) ~= nil,
+         "main() actually calls the check rather than merely defining it, and it OPENS")
+
+   -- sdk_erode_count clears the selection to do its work. A refusal that did
+   -- not put it back would leave the operator with nothing selected and a
+   -- message telling them to try a smaller size.
+   local refusal = src:find("CO.show_message(gadget_dir, CO.narrow_refusal", 1, true)
+   CHECK(refusal ~= nil, "the refusal goes through show_message like every other message")
+   CHECK(src:find("restore_selection_after_check%(%)%s*CO%.show_message%("
+                  .. "gadget_dir, CO%.narrow_refusal") ~= nil,
+         "the operator's selection is put back immediately before the refusal is shown")
+end
+
+-- FINDING B (final review, 2026-08-04): a bisect that finds NO passing setback
+-- (fits == nil) proves the piece count was already wrong at essentially zero
+-- setback -- overlapping, touching or duplicated vectors, not the chamfer --
+-- so the guard must STAND DOWN rather than refuse with no remedy to name. Only
+-- a passing bisect (fits ~= nil) may refuse.
+--
+-- ANCHOR ON THE CALL SITE, NEVER THE BARE NAME -- same trap as the block
+-- above. `CO.bisect_w` and `CO.floor4` are also DEFINED in this file
+-- (`function CO.bisect_w(hi, steps, probe)` / `function CO.floor4(x)`), so a
+-- pin on either bare name cannot fail. Every anchor below is call-site text.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+
+   local bisect = src:find(
+      "local fits = CO.bisect_w(r.W, CO.BISECT_STEPS, function(w)", 1, true)
+   local gate   = src:find("if fits ~= nil then", 1, true)
+   local refuse = src:find("CO.show_message(gadget_dir, CO.narrow_refusal", 1, true)
+   CHECK(bisect ~= nil, "main() calls the bisect search on a piece-count mismatch")
+   CHECK(gate ~= nil and bisect ~= nil and gate > bisect,
+         "a fits ~= nil check sits between the bisect call and the refusal")
+   CHECK(refuse ~= nil and gate ~= nil and gate < refuse,
+         "the refusal message is gated behind fits ~= nil, not shown unconditionally")
+
+   -- FINDING F, same review: the suggested size is floored to 4dp before it
+   -- reaches the message, so it always converts back to a W at or below the
+   -- one that passed. bisect_w itself only rounds DOWN to 0.001; CO.fmt_len
+   -- rounds to NEAREST at print time, which can push a Face/Leg conversion
+   -- back above the W that actually passed.
+   local sizefrom = src:find(
+      "local suggest = CO.size_from_w(mode, fits, r.a)", 1, true)
+   local floored  = src:find("suggest = CO.floor4(suggest)", 1, true)
+   CHECK(sizefrom ~= nil, "the suggested size is converted from the bisected W")
+   CHECK(floored ~= nil and sizefrom ~= nil and floored > sizefrom,
+         "the suggestion is floored to 4dp before it can reach the message")
+   CHECK(refuse ~= nil and floored ~= nil and floored < refuse,
+         "the flooring happens before the (gated) refusal message is built")
+end
+
+-- FINDING A (final review, 2026-08-04, Tim's call): the guard counts ONCE PER
+-- SHAPE, not once for the selection. One aggregate count can cancel - a thin
+-- bar eaten away is -1, a welded dumbbell pinching in two is +1, and together
+-- they net zero while both shapes are destroyed. The size search would then be
+-- free to land on the cancelling number and RECOMMEND it, which is new harm
+-- rather than a missed catch.
+--
+-- CO.shape_groups is unit-tested in test_geometry.lua; what cannot be tested
+-- offline is that main() actually iterates it, so pin that. ANCHOR ON THE CALL
+-- SITE - `CO.shape_groups(loops)` also matches inside
+-- `function CO.shape_groups(loops)` in this same file.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+
+   -- Scope to main(), so a match anywhere else in the file cannot stand in.
+   local m0 = src:find("\nfunction main(script_path)", 1, true)
+   local mbody = m0 ~= nil and src:sub(m0) or ""
+   CHECK(mbody ~= "", "main() is findable, so the pins below mean something")
+
+   local group = mbody:find("for _, g in ipairs(CO.shape_groups(loops)) do", 1, true)
+   CHECK(group ~= nil, "main() splits the selection into shapes before checking it")
+
+   -- The comparison is per shape: this shape's count against this shape's own
+   -- object list. A pin on `#check_objs` here would be the pre-Finding-A
+   -- aggregate and must NOT come back.
+   --
+   -- DIFFERENT, on the OPENED count (2026-08-05, measured). `~=` on the
+   -- SHRUNKEN count refused 0.3-thick lettering, because eroding the letter K's
+   -- sharp inside notch parts its top face in two. Narrowing that to a count
+   -- that DROPS bought the lettering back at the price of the welded dumbbell,
+   -- whose 0.3 neck pinches through and reads 1 -> 2 - a RISE, and a real
+   -- break. The opening separates them where no threshold could: the K comes
+   -- back joined, the dumbbell stays severed. So the comparison goes back to
+   -- `~=`, and it is only safe because the count it reads is opened. The two
+   -- pins move together and neither means anything alone.
+   local pershape = mbody:find("if c ~= #objs then return false end", 1, true)
+   CHECK(pershape ~= nil, "each shape's count is compared against that shape's own loops")
+   CHECK(mbody:find("if c < #objs then return false end", 1, true) == nil,
+         "the drop-only comparison is gone - a split that survives opening refuses again")
+   CHECK(group ~= nil and pershape ~= nil and group < pershape,
+         "the shapes are built before they are counted")
+
+   -- Negative: the whole-selection comparison is GONE. Both spellings of it -
+   -- the first check and the one inside the bisect probe - counted the entire
+   -- selection at once, which is exactly the cancellation this closes.
+   CHECK(mbody:find("CO.sdk_erode_count(job, check_objs", 1, true) == nil,
+         "nothing in main() still erodes the whole selection as one shape")
+   CHECK(mbody:find("n_after ~= #check_objs", 1, true) == nil,
+         "the aggregate count comparison is gone, not merely bypassed")
+
+   -- Any shape breaking refuses the run: shapes_hold returns false on the first
+   -- mismatch and the refusal hangs off `held == false`.
+   local held = mbody:find("local held, check_err = shapes_hold(r.W)", 1, true)
+   local gate = mbody:find("if held == false then", 1, true)
+   CHECK(held ~= nil, "the first check asks whether every shape holds at the asked size")
+   CHECK(gate ~= nil and held ~= nil and gate > held,
+         "the refusal path is gated on that answer being a definite no")
+
+   -- The size search asks the same per-shape question, so a suggested size is
+   -- one that every shape survives - not one that merely balances the total.
+   local probe = mbody:find("return shapes_hold(w) == true", 1, true)
+   CHECK(probe ~= nil, "the size search reuses the per-shape check")
+   local bisect = mbody:find(
+      "local fits = CO.bisect_w(r.W, CO.BISECT_STEPS, function(w)", 1, true)
+   CHECK(probe ~= nil and bisect ~= nil and probe > bisect,
+         "and it is the bisect's own probe, not a second rule")
+end
+
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+
+   -- Session 081's hidden-layer fix is DELETED, not disabled. P3 measured at
+   -- the machine (session 082) that Aspire cannot Recalculate All Toolpaths
+   -- when the source vectors are on a hidden layer, and Tim's ruling is that
+   -- recalculate-all must keep working -- other people run this gadget. Half a
+   -- dead mechanism surviving in the file is how it comes back.
+   CHECK(src:find("hide_copies", 1, true) == nil,
+         "no hide_copies anywhere: hiding breaks Recalculate All (P3)")
+   CHECK(src:find("sdk_set_layers_visible", 1, true) == nil,
+         "no sdk_set_layers_visible: nothing writes layer visibility any more")
+   CHECK(src:find("layer_is_swept", 1, true) == nil,
+         "no layer_is_swept: the sweep no longer asks about visibility")
+   CHECK(src:find("%.Visible%s*=") == nil,
+         "nothing assigns to layer.Visible")
+
+   -- Anchored on the CALL, not the name: the file defines layer_is_ours too,
+   -- so a bare-name pin would match its own definition and could never fail.
+   CHECK(src:find("local ours = CO.layer_is_ours(layer.Name)", 1, true) ~= nil,
+         "sdk_find_objects_by_fps asks the shared ownership rule")
+
+   -- Anchored on the CALL SITE. main()'s body only, and by exact text: the
+   -- file defines all three of these names, so a bare-name search would match
+   -- its own definitions and could never fail.
+   local mstart = src:find("function main(script_path)", 1, true)
+   CHECK(mstart ~= nil, "found main() for the own-offsets pins")
+   local mbody = mstart ~= nil and src:sub(mstart) or ""
+
+   CHECK(mbody:find("local ok_guard, own_ids, layer_unknown = pcall(CO.sdk_own_layer_ids, job)",
+                    1, true) ~= nil,
+         "main() collects the ids of the layers we own")
+   CHECK(mbody:find("local kept, skipped_own, loop_unknown = CO.partition_loops(raw_loops, own_ids)",
+                    1, true) ~= nil,
+         "and partitions the selection by layer, not by geometry")
+
+   -- Order is load-bearing: the selection scan needs the id set for its group
+   -- inheritance, so the layer pass has to come FIRST.
+   local ids_at = mbody:find("pcall(CO.sdk_own_layer_ids, job)", 1, true)
+   local spans_at = mbody:find("CO.sdk_selection_spans(job, own_ids)", 1, true)
+   CHECK(ids_at ~= nil and spans_at ~= nil and ids_at < spans_at,
+         "the layer ids are collected before the selection is scanned")
+
+   -- The mechanism this replaced must be gone, not merely unused. Falling back
+   -- to it silently would reintroduce the defect.
+   CHECK(src:find("sdk_offset_layer_fingerprints", 1, true) == nil,
+         "no bbox sweep survives: the guard compares layers now")
+
+   -- The branch that makes "no fallback" real. Without it, layer_unknown and
+   -- loop_unknown are merely unused locals and an unreadable id gets CUT.
+   CHECK(mbody:find("if layer_unknown > 0 or loop_unknown > 0 then", 1, true) ~= nil,
+         "main() refuses when anything's layer could not be read")
 end

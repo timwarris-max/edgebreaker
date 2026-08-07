@@ -527,64 +527,94 @@ do
    CHECK(legacy == true, "a slot claimed twice is reported")
 end
 
--- Box-selecting a whole job to build chamfer 3 sweeps in chamfers 1 and 2's
--- orange offsets. partition_loops drops them only if they were fingerprinted,
--- so this scan must cover EVERY chamfer layer -- not just the one being built,
--- or the gadget offsets its own offsets and cuts them.
+-- CO.sdk_own_layer_ids: one pass over the layers, collecting the Id of every
+-- layer the gadget owns. This replaces walking every object on every offset
+-- layer and computing a bounding box for each -- the guard now compares ids,
+-- not geometry, so it never needs to look at an object at all.
+--
+-- Id, NOT RawId. Measured at the machine 2026-08-05: Id is a plain GUID string
+-- and RawId is opaque userdata with no tostring and no == ("Raw" is the raw
+-- HANDLE, not the raw value). The fixtures below use GUID-shaped strings for
+-- that reason -- a fixture keyed by integers would pass while the product
+-- failed live, which is the whole class of mistake this design exists to undo.
 do
-   local function obj(id)
-      return { ClassName = "vcCadContour",
-               GetBoundingBox = function()
-                  -- bbox_fingerprint reads Centre.x/y and XLength/YLength (not
-                  -- Min/Max corners) -- match that shape so these come back
-                  -- readable instead of tripping the unknown-count guard.
-                  return { IsInvalid = false, Centre = { x = id, y = id }, XLength = 1, YLength = 1 }
-               end }
+   local function layer(name, id)
+      return { Name = name, Id = id }
    end
-   local function layer_of(objs)
-      return {
-         GetHeadPosition = function() return #objs > 0 and 1 or nil end,
+   local function job_of(layers)
+      return { LayerManager = {
+         GetHeadPosition = function() return #layers > 0 and 1 or nil end,
          GetNext = function(_, pos)
             local nxt = pos + 1
-            return objs[pos], (nxt <= #objs) and nxt or nil
+            return layers[pos], (nxt <= #layers) and nxt or nil
          end,
-      }
+      } }
    end
-   local layers = {
-      { Name = "Layer 1",                    objs = { obj(90) } },
-      { Name = CO.offset_layer_name(1),      objs = { obj(1) } },
-      { Name = CO.offset_layer_name(2),      objs = { obj(2), obj(3) } },
-      { Name = CO.LEGACY_OFFSET_LAYER,       objs = { obj(4) } },
-   }
-   for _, L in ipairs(layers) do
-      local inner = layer_of(L.objs)
-      L.GetHeadPosition = inner.GetHeadPosition
-      L.GetNext = inner.GetNext
-   end
-   local job = { LayerManager = {
-      GetHeadPosition = function() return 1 end,
-      GetNext = function(_, pos)
-         local nxt = pos + 1
-         return layers[pos], (nxt <= #layers) and nxt or nil
-      end,
-   } }
-   local fps, unknown = CO.sdk_offset_layer_fingerprints(job)
-   CHECK(#fps == 4, "every chamfer layer is fingerprinted, plus the legacy one")
-   CHECK(unknown == 0, "readable bounding boxes are not counted as unknown")
-end
+   -- Shaped like the real thing: "484e94a6-a0a9-4984-8da5-2aeb9e8d9f7a".
+   local function guid(n) return string.format("0000000%d-aaaa-4bbb-8ccc-ddddeeeeffff", n) end
 
-do
-   -- A layer whose name cannot be read might be one of ours. Fail closed:
-   -- count it unknown so main() refuses rather than guessing.
-   local job = { LayerManager = {
-      GetHeadPosition = function() return 1 end,
-      GetNext = function(_, pos)
-         return setmetatable({}, { __index = function() error("no name") end }), nil
-      end,
-   } }
-   local ok, fps, unknown = pcall(CO.sdk_offset_layer_fingerprints, job)
-   CHECK(ok and unknown and unknown > 0,
-         "an unreadable layer name counts as unknown, not as 'not ours'")
+   local job = job_of({
+      layer("Layer 1", guid(0)),
+      layer(CO.offset_layer_name(1, 1), guid(1)),
+      layer(CO.offset_layer_name(2, 1), guid(2)),
+      layer(CO.offset_layer_name(2, 2), guid(3)),
+      layer(CO.OLD_LAYER_PREFIX .. "03", guid(4)),
+      layer(CO.LEGACY_OFFSET_LAYER, guid(5)),
+   })
+   local ids, unknown = CO.sdk_own_layer_ids(job)
+   CHECK(unknown == 0, "own ids: readable layers are not counted as unknown")
+   CHECK(ids[guid(1)] and ids[guid(2)] and ids[guid(3)] and ids[guid(4)] and ids[guid(5)],
+         "own ids: every generation of our layers is collected")
+   CHECK(not ids[guid(0)], "own ids: the operator's own layer is never collected")
+
+   -- Every chamfer's layers, not just the one being built: box-selecting a
+   -- whole job to build chamfer 3 sweeps in chamfers 1 and 2's offsets, and if
+   -- those are not recognised the gadget offsets its own offsets and cuts them.
+   local n = 0
+   for _ in pairs(ids) do n = n + 1 end
+   CHECK(n == 5, "own ids: exactly the five layers of ours, no more")
+
+   -- Fail closed, both ways. A layer whose NAME cannot be read might be ours.
+   local bad_name = job_of({ setmetatable({ Id = guid(9) }, { __index = function(_, k)
+      if k == "Name" then error("no such member") end
+   end }) })
+   local _, un_name = CO.sdk_own_layer_ids(bad_name)
+   CHECK(un_name == 1, "own ids: an unreadable NAME is unknown, never assumed foreign")
+
+   -- A layer that IS ours whose Id cannot be read would leave a copy able to
+   -- ride into the input -- the whole defect. Unknown, so main() refuses.
+   local bad_id = job_of({ setmetatable({ Name = CO.offset_layer_name(1, 1) },
+      { __index = function(_, k)
+         if k == "Id" then error("no such member") end
+      end }) })
+   local ids_bi, un_id = CO.sdk_own_layer_ids(bad_id)
+   CHECK(un_id == 1, "own ids: our layer with an unreadable id is unknown")
+   local m = 0
+   for _ in pairs(ids_bi) do m = m + 1 end
+   CHECK(m == 0, "own ids: and contributes nothing to the set")
+
+   -- An Id that reads but is not a STRING is unknown too. RawId is opaque
+   -- userdata on this SDK, so a wrong-member slip lands here rather than
+   -- keying the set with something that can never match an object's LayerId.
+   local odd_id = job_of({ layer(CO.offset_layer_name(1, 1), 12345) })
+   local ids_odd, un_odd = CO.sdk_own_layer_ids(odd_id)
+   CHECK(un_odd == 1 and next(ids_odd) == nil,
+         "own ids: a non-string id is unknown, not a set key")
+
+   -- A layer that is NOT ours and whose id is unreadable is simply ignored:
+   -- its id was never going into the set, so it cannot cost anything.
+   local bad_foreign = job_of({ setmetatable({ Name = "Layer 1" },
+      { __index = function(_, k)
+         if k == "Id" then error("no such member") end
+      end }) })
+   local _, un_foreign = CO.sdk_own_layer_ids(bad_foreign)
+   CHECK(un_foreign == 0, "own ids: a foreign layer's unreadable id is not our problem")
+
+   -- No layers at all is not an error; it is a job with no chamfers in it.
+   local ids_e, un_e = CO.sdk_own_layer_ids(job_of({}))
+   local e = 0
+   for _ in pairs(ids_e) do e = e + 1 end
+   CHECK(e == 0 and un_e == 0, "own ids: an empty job yields an empty set")
 end
 
 ToolpathManager = SAVED_TPM
@@ -1050,4 +1080,356 @@ do
    NEAR(seen.d, -0.09225, 1e-9, "the signed distance is passed through")
    NEAR(seen.ad, 0.09225, 1e-9, "the magnitude argument is its absolute value")
    CHECK(seen.mode == 1 and seen.keep == true, "the 4-arg Offset form is used")
+end
+
+-- CO.sdk_erode_count: shrink the whole selection by one signed distance and
+-- count what comes back (narrow-break guard spec 4a). Same tri-state contract
+-- as sdk_offset_loop, with one difference that matters: ZERO is an answer, not
+-- a failure - it means the chamfer ate everything.
+do
+   local FAKE_A, FAKE_B = {}, {}
+
+   local function job_with(sel_count)
+      return { Selection = { Count = sel_count, Clear = function() end, Add = function() end } }
+   end
+
+   -- last_offset is the SHRINK; last_back is the GROW-BACK, which only happens
+   -- when a back distance is handed in. The offset result carries its own
+   -- :Offset so the chain can be exercised -- that chaining is the opening.
+   local last_offset, last_back
+   local function install(result, back_result)
+      last_offset, last_back = nil, nil
+      CreateCopyOfSelectedContours = function()
+         if result == "nocopy" then return nil end
+         return {
+            Offset = function(self, dist, absdist, mode, preserve)
+               last_offset = { dist = dist, absdist = absdist, mode = mode, preserve = preserve }
+               if result == "raise" then error("boom") end
+               if type(result) ~= "table" then return result end
+               return {
+                  Count = result.Count,
+                  Offset = function(_, d2, a2, m2, p2)
+                     last_back = { dist = d2, absdist = a2, mode = m2, preserve = p2 }
+                     if back_result == "raise" then error("boom on the way back") end
+                     return back_result
+                  end,
+               }
+            end,
+         }
+      end
+   end
+
+   install({ Count = 2 })
+   local n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == 2 and e == nil, "sdk_erode_count: a readable Count comes straight back")
+   CHECK(last_offset ~= nil and last_offset.dist == -0.2 and last_offset.absdist == 0.2,
+         "sdk_erode_count: signed distance, magnitude as the limit")
+   CHECK(last_offset ~= nil and last_offset.mode == 1 and last_offset.preserve == true,
+         "sdk_erode_count: same four-argument Offset the rest of the file uses")
+
+   install({ Count = 0 })
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == 0 and e == nil, "sdk_erode_count: zero is an ANSWER - everything vanished")
+
+   install(nil)
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == 0 and e == nil, "sdk_erode_count: a nil group reads as zero, same meaning")
+
+   install({ Count = "lots" })
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == nil and type(e) == "string",
+         "sdk_erode_count: an unreadable Count is a failure, never zero")
+
+   install("nocopy")
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == nil and type(e) == "string", "sdk_erode_count: no copy is a failure")
+   -- N9, measured at the machine (session 088): a GROUPED selection lands on
+   -- exactly this branch, and it named no remedy -- a dead end, while the two
+   -- branches either side of it already said "ungroup and retry". Pinned the
+   -- same way sdk_offset_loop's is, because the words ARE the fix here.
+   CHECK(e:find("ungroup", 1, true) ~= nil,
+         "sdk_erode_count: no copy tells the user how to fix it (ungroup and retry)")
+
+   install("raise")
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == nil and type(e) == "string", "sdk_erode_count: a thrown error is caught and named")
+
+   -- The selection has to hold everything handed in, or the count compares a
+   -- number of loops against an offset of some other set of loops.
+   install({ Count = 2 })
+   n, e = CO.sdk_erode_count(job_with(1), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == nil and type(e) == "string",
+         "sdk_erode_count: a short selection is a failure, not a result")
+
+   -- THE OPENING (2026-08-05, measured on the word EDGEBREAKER and on a welded
+   -- dumbbell). Shrink by W, then grow the RESULT back by W, and count THAT.
+   -- What survives is the material a disc of width W can reach, so a sharp
+   -- inside corner that merely washed out comes back joined while a neck too
+   -- thin to hold the disc stays severed. The grow-back distance is optional:
+   -- without it this is the plain shrink it always was.
+   install({ Count = 5 }, { Count = 1 })
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2, 0.2)
+   CHECK(n == 1 and e == nil,
+         "sdk_erode_count: the OPENED count is the answer, not the shrunken one")
+   CHECK(last_back ~= nil and last_back.dist == 0.2 and last_back.absdist == 0.2,
+         "sdk_erode_count: the grow-back runs at the distance it is handed")
+   CHECK(last_back ~= nil and last_back.mode == 1 and last_back.preserve == true,
+         "sdk_erode_count: the grow-back uses the same four-argument Offset form")
+
+   install({ Count = 5 }, { Count = 1 })
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2)
+   CHECK(n == 5 and e == nil and last_back == nil,
+         "sdk_erode_count: no grow-back distance, no second offset - the old contract stands")
+
+   install({ Count = 5 }, nil)
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2, 0.2)
+   CHECK(n == 0 and e == nil,
+         "sdk_erode_count: nothing survives the round trip - zero is still an ANSWER")
+
+   install(nil, { Count = 3 })
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2, 0.2)
+   CHECK(n == 0 and e == nil and last_back == nil,
+         "sdk_erode_count: a region eaten away is never grown back")
+
+   install({ Count = 5 }, "raise")
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2, 0.2)
+   CHECK(n == nil and type(e) == "string",
+         "sdk_erode_count: a throw on the way back is caught and named")
+
+   install({ Count = 5 }, { Count = "lots" })
+   n, e = CO.sdk_erode_count(job_with(2), { FAKE_A, FAKE_B }, -0.2, 0.2)
+   CHECK(n == nil and type(e) == "string",
+         "sdk_erode_count: an unreadable opened Count is a failure, never zero")
+
+   CreateCopyOfSelectedContours = SAVED_CREATE_COPY
+end
+
+-- CO.sdk_selection_spans tags every loop with the layer it came from, so the
+-- own-offsets guard can drop the gadget's own output by MEMBERSHIP instead of
+-- by geometry. A coincident copy and its original have the same bounding box
+-- and always will -- Aspire's chamfer engine has to cut the operator's own
+-- edge -- so the layer is the only thing that separates them.
+do
+   -- A square, as four line spans: enough for contour_spans to produce a loop.
+   local function square_contour()
+      local function pt(x, y) return { x = x, y = y } end
+      local corners = { pt(0, 0), pt(1, 0), pt(1, 1), pt(0, 1) }
+      local spans = {}
+      for i = 1, 4 do
+         local s, e = corners[i], corners[i % 4 + 1]
+         spans[i] = { Type = 1, StartPoint2D = s, EndPoint2D = e }
+      end
+      return { IsEmpty = false, IsOpen = false,
+               GetHeadPosition = function() return 1 end,
+               GetNext = function(_, pos)
+                  local nxt = pos + 1
+                  return spans[pos], (nxt <= #spans) and nxt or nil
+               end }
+   end
+   -- GUID-shaped, because that is what Aspire returns. USER is the operator's
+   -- layer, OURS one of the gadget's, THIRD a second, unrelated ordinary
+   -- layer -- used to prove a plain group does NOT stamp its own id onto a
+   -- child that sits on a different layer (see the "ordinary group" check
+   -- below; USER and OURS alone can't distinguish real inheritance from a
+   -- same-value coincidence).
+   local USER = "484e94a6-a0a9-4984-8da5-2aeb9e8d9f7a"
+   local OURS = "17f31c3e-499d-4e70-98fd-98df4a7eea99"
+   local THIRD = "9c6e2b1a-0f3d-4a12-b6e5-2d7c8a1f4e33"
+
+   local function contour_obj(layerid)
+      return { ClassName = "vcCadContour", LayerId = layerid,
+               GetContour = square_contour,
+               GetBoundingBox = function()
+                  return { IsInvalid = false, Centre = { x = 0.5, y = 0.5 },
+                           XLength = 1, YLength = 1 }
+               end }
+   end
+   local function group_obj(layerid, children)
+      return { ClassName = "vcCadObjectGroup", LayerId = layerid,
+               GetBoundingBox = function()
+                  return { IsInvalid = false, Centre = { x = 0.5, y = 0.5 },
+                           XLength = 1, YLength = 1 }
+               end,
+               GetHeadPosition = function() return #children > 0 and 1 or nil end,
+               GetNext = function(_, pos)
+                  local nxt = pos + 1
+                  return children[pos], (nxt <= #children) and nxt or nil
+               end }
+   end
+   local function job_of(objs)
+      return { Selection = {
+         GetHeadPosition = function() return #objs > 0 and 1 or nil end,
+         GetNext = function(_, pos)
+            local nxt = pos + 1
+            return objs[pos], (nxt <= #objs) and nxt or nil
+         end,
+      } }
+   end
+
+   local loops = CO.sdk_selection_spans(job_of({ contour_obj(USER) }), {})
+   CHECK(#loops == 1 and loops[1].layer_id == USER,
+         "selection spans: a loop carries the layer it is on")
+
+   -- An object whose LayerId throws (an unregistered member on some other
+   -- Aspire build) leaves the field nil, which partition_loops counts as
+   -- unknown and main() refuses on. Never silently kept or dropped.
+   local mystery = setmetatable(
+      { ClassName = "vcCadContour", GetContour = square_contour,
+        GetBoundingBox = function()
+           return { IsInvalid = false, Centre = { x = 0.5, y = 0.5 },
+                    XLength = 1, YLength = 1 }
+        end },
+      { __index = function(_, k)
+         if k == "LayerId" then error("no such member") end
+      end })
+   local m_loops = CO.sdk_selection_spans(job_of({ mystery }), {})
+   CHECK(#m_loops == 1 and m_loops[1].layer_id == nil,
+         "selection spans: an unreadable layer id stays nil, for the caller to refuse")
+
+   -- Groups. Whether a child reports its own layer or its parent's is a probe
+   -- question (Q7) with two survivable answers, so the recursion carries the
+   -- enclosing group's layer down: a child of a group that sits on OUR layer
+   -- is ours whatever the child itself reports.
+   local child_says_own = contour_obj(USER)
+   local g_loops = CO.sdk_selection_spans(
+      job_of({ group_obj(OURS, { child_says_own }) }), { [OURS] = true })
+   CHECK(#g_loops == 1 and g_loops[1].layer_id == OURS,
+         "selection spans: a child of a group on OUR layer inherits the group's id")
+
+   -- The group sits on a DIFFERENT layer (THIRD) from its child (USER), and
+   -- own_ids is empty, so the group is not ours. Only a fixture shaped this
+   -- way can catch a regression that stamps a group's id onto its children
+   -- unconditionally -- USER == USER on both sides would pass either way.
+   local plain_group = CO.sdk_selection_spans(
+      job_of({ group_obj(THIRD, { contour_obj(USER) }) }), {})
+   CHECK(#plain_group == 1 and plain_group[1].layer_id == USER,
+         "selection spans: a child of an ordinary group keeps its own id")
+end
+
+-- ============================================================
+-- The preview decoy (live defect, 2026-08-06). Rebuilding a big-chamfer slot
+-- from memory failed with "remembered shapes could not be read back", while
+-- another chamfer in the same job recalled fine.
+--
+-- Cause, measured with LayerVisProbe round 6: Aspire keeps one preview object
+-- per toolpath on a SYSTEM layer, 'Toolpath Previews'. On the aspire path the
+-- drawn copy is COINCIDENT with the operator's vector, so that toolpath's
+-- preview carries the operator's own bounding box exactly -- and Aspire lists
+-- the system layer FIRST. The search takes the first match and stops, so it
+-- picked a vcCadToolpathPreview, which yields no contour, and the real vector
+-- was never reached. The bands path never collided because its offsets are
+-- displaced, so its previews sit at a different size.
+--
+-- Two rules, and the second is why this is not a one-line patch: the operator's
+-- shapes are never on a system layer, AND nothing that could not have been
+-- INPUT may hold a fingerprint. A decoy does not merely miss -- it SHADOWS,
+-- permanently, because first match wins.
+do
+   local function obj(cls, cx, cy, xlen, ylen)
+      return {
+         ClassName = cls,
+         GetBoundingBox = function()
+            return { IsInvalid = false, Centre = { x = cx, y = cy },
+                     XLength = xlen, YLength = ylen }
+         end,
+      }
+   end
+   local function layer_of(name, system, objs)
+      return {
+         Name = name, IsSystemLayer = system, objs = objs,
+         GetHeadPosition = function(self) return #self.objs > 0 and 1 or nil end,
+         GetNext = function(self, pos)
+            local nxt = pos + 1
+            return self.objs[pos], (nxt <= #self.objs) and nxt or nil
+         end,
+      }
+   end
+   local function job_of(layers)
+      return { LayerManager = {
+         GetHeadPosition = function() return #layers > 0 and 1 or nil end,
+         GetNext = function(_, pos)
+            local nxt = pos + 1
+            return layers[pos], (nxt <= #layers) and nxt or nil
+         end,
+      } }
+   end
+
+   local WANT = { cx = 0, cy = 0.126645, xlen = 8.272385, ylen = 8.146709 }
+   local star = obj("vcCadContour", 0, 0.126645, 8.272385, 8.146709)
+   local preview = obj("vcCadToolpathPreview", 0, 0.126645, 8.272385, 8.146709)
+
+   -- The job as measured: previews first, the operator's layer second.
+   local res = CO.sdk_find_objects_by_fps(
+      job_of({ layer_of("Toolpath Previews", true, { preview }),
+               layer_of("Layer 1", false, { star }) }), { WANT }, 1e-6)
+   CHECK(res.found == 1, "find by fps: the remembered shape is still found")
+   CHECK(res.objs[1] == star,
+         "find by fps: a toolpath preview sharing the bbox does not shadow the vector")
+
+   -- The class rule on its own, with no system layer involved: an unreadable
+   -- object on an ordinary layer must not hold the fingerprint either.
+   local res2 = CO.sdk_find_objects_by_fps(
+      job_of({ layer_of("Layer 1", false, { preview, star }) }), { WANT }, 1e-6)
+   CHECK(res2.objs[1] == star,
+         "find by fps: an object that could never be input never holds a fingerprint")
+
+   -- A GROUP still matches: a remembered shape can live inside one, and the
+   -- selection reader recurses into it. Excluding groups would break that.
+   local grp = obj("vcCadObjectGroup", 0, 0.126645, 8.272385, 8.146709)
+   grp.GetHeadPosition = function() return nil end
+   local res3 = CO.sdk_find_objects_by_fps(
+      job_of({ layer_of("Layer 1", false, { grp }) }), { WANT }, 1e-6)
+   CHECK(res3.objs[1] == grp, "find by fps: a group can still hold a fingerprint")
+
+   -- The system-layer rule ON ITS OWN. The class rule already keeps a preview
+   -- out, so the measured job cannot tell the two apart -- and a rule no test
+   -- can fail is this project's oldest recurring defect. This fixture puts a
+   -- READABLE contour on a system layer, which is not something Aspire has been
+   -- seen doing: it pins the invariant we are choosing, that a system layer is
+   -- Aspire's and is never searched, whatever happens to be sitting on it.
+   local sys_contour = obj("vcCadContour", 0, 0.126645, 8.272385, 8.146709)
+   local res_sys = CO.sdk_find_objects_by_fps(
+      job_of({ layer_of("Toolpath Previews", true, { sys_contour }),
+               layer_of("Layer 1", false, { star }) }), { WANT }, 1e-6)
+   CHECK(res_sys.objs[1] == star, "find by fps: a system layer is never searched")
+
+   -- A copy GROUPED onto the operator's layer (S6c, measured 2026-08-06).
+   -- Skipping our LAYERS only reaches what those layers' walks reach, and this
+   -- copy is reached through Layer 1 -- while still reporting our layer as its
+   -- own, because a group's child reports its own layer, not its parent's. It
+   -- shares the original's bounding box exactly, so without the object-level
+   -- test whichever is enumerated first wins. Here the copy is enumerated
+   -- first, deliberately: in the live job the operator's vector happened to
+   -- come first, which is ordering luck, not a rule.
+   local OURS_ID, USER_ID = "ours-guid", "user-guid"
+   local copy = obj("vcCadContour", 0, 0.126645, 8.272385, 8.146709)
+   copy.LayerId = OURS_ID
+   local orig = obj("vcCadContour", 0, 0.126645, 8.272385, 8.146709)
+   orig.LayerId = USER_ID
+   local user_layer = layer_of("Layer 1", false, { copy, orig })
+   user_layer.Id = USER_ID
+   local our_layer = layer_of(CO.offset_layer_name(1, 1), false, {})
+   our_layer.Id = OURS_ID
+   local res_grp = CO.sdk_find_objects_by_fps(
+      job_of({ user_layer, our_layer }), { WANT }, 1e-6)
+   CHECK(res_grp.objs[1] == orig,
+         "find by fps: a copy grouped onto the operator's layer is still ours")
+
+   -- Unreadable ids must not start dropping the operator's own shapes: an empty
+   -- id set has to leave the search exactly as it was.
+   local plain = obj("vcCadContour", 0, 0.126645, 8.272385, 8.146709)
+   local no_ids = layer_of("Layer 1", false, { plain })
+   local res_noid = CO.sdk_find_objects_by_fps(
+      job_of({ no_ids }), { WANT }, 1e-6)
+   CHECK(res_noid.objs[1] == plain,
+         "find by fps: no readable layer ids leaves the search untouched")
+
+   -- Fail closed on an unreadable IsSystemLayer: the class rule still has to
+   -- keep the preview out, or an SDK that does not register it puts the defect
+   -- straight back.
+   local odd = layer_of("Toolpath Previews", nil, { preview })
+   local res4 = CO.sdk_find_objects_by_fps(
+      job_of({ odd, layer_of("Layer 1", false, { star }) }), { WANT }, 1e-6)
+   CHECK(res4.objs[1] == star,
+         "find by fps: the class rule holds even if IsSystemLayer cannot be read")
 end
