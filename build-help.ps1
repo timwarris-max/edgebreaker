@@ -36,6 +36,8 @@ $LUA    = Join-Path $root "gadget\EdgeBreaker\EdgeBreaker.lua"
 # must match the README's "##" headings exactly.
 $ORDER = @(
   "How it decides what to build",
+  "Which edges get chamfered",
+  "The layer it draws on",
   "Notes",
   "Where on the flute you cut",
   "Big chamfers",
@@ -43,6 +45,7 @@ $ORDER = @(
   "Sharp corners",
   "Big sharp chamfers",
   "The section view",
+  "What the chamfer leaves",
   "What a chamfer remembers",
   "More than one chamfer in a job",
   "Bits come from your tool database",

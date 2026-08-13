@@ -13,12 +13,31 @@
    real slack -- run it after ANY change here, and keep the window size in
    EdgeBreaker.lua in step with WIN_W/WIN_H in that script.
 
+   v1.15 -- the instrument dialog. Spec:
+   specs/2026-08-10-edgebreaker-instrument-ui-design.md. The section drawing is
+   now the control surface; the numbers follow it.
+
+   NO FLEXBOX AND NO `gap` anywhere in this file. The design handoff is built
+   on both and neither can be relied on here -- the columns that this layout
+   replaced were `inline-block` for exactly that reason. Everything below is
+   absolute positioning, inline-block and float.
+
    Form controls do NOT scale with font-size; enlarge them with IE's `zoom`.
    Buttons live in a pinned #Bar so a short window is awkward, never unusable.
 
-   The two columns are inline-block, not absolutely positioned as in the
-   mockup: absolute children contribute nothing to their parent's height, and
-   the layout gate measures exactly that. Same picture, still measurable.
+   The handoff is drawn at 980px wide. This dialog is 1798, so every number
+   here is the handoff's scaled by about 1.83.
+
+   The drawing's canvas is NOT scaled that way, and the reason is worth keeping.
+   It was widened to 1500 x 380 on the theory that a 1798 x 950 window is a much
+   wider shape than the handoff's own -- true at the DESIGN size, where the
+   canvas is fitted on height and its width is slack. But the operator DRAGS
+   this window, and a dragged-wide window (2853 x 1629, measured 2026-08-11)
+   flips the binding axis to WIDTH: the canvas then renders at paneW/1500 and
+   500 of those 1500 units are the dead band between the section and the part
+   view. The canvas is 950 x 380 for that reason and the part view sits at
+   ISO_X 660. Neutral at the design size, ~26% bigger on a dragged window.
+   Do not widen it back to "fill" a wide window -- filling it is what shrank it.
 
    Every effect used here was live-checked in Aspire's Trident on 2026-07-26
    (plan Task 2): linear-gradient, border-radius and box-shadow all render, so
@@ -27,424 +46,467 @@ html, body { height: 100%; }
 /* Everything lives in #Fit, which is scaled to the window Lua opened (see the
    fitToWindow() note below). #Hdr/#Scroll/#Bar are absolute and resolve against it. */
 #Fit { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-body { font-family: Segoe UI, Arial, sans-serif; font-size: 27px; margin: 0;
-       padding: 0; background: #edf0f3; overflow: hidden; }
+body { font-family: Segoe UI, Arial, sans-serif; font-size: 21px; margin: 0;
+       padding: 0; background: #f4f2ef; color: #1f1d1a; overflow: hidden; }
 #Fit * { box-sizing: border-box; }
+.mono { font-family: Consolas, "Courier New", monospace; }
+
+/* ---------------------------------------------------------------- title bar */
+/* Every pixel this bar does not use goes to the drawing, which is the control
+   surface and was the thing the operator called too small (2026-08-11). The
+   gate holds header ink to 74px of its box, and 12px of padding leaves it at
+   70 -- reduce the padding further and the badge crowds the border. */
 #Hdr { position: absolute; top: 0; left: 0; right: 0; height: 88px;
-       background: #23303c; background: linear-gradient(#2a3642, #1d2731);
-       border-bottom: 4px solid #f76707; padding: 14px 32px; color: #fff;
-       font-size: 32px; letter-spacing: .5px; }
-#Hdr .ver { color: #8fa0b0; font-size: 23px; margin-left: 14px; }
-#BitBadge { float: right; background: #2f3d4a; border: 1px solid #4a5a6a;
-            border-radius: 8px; padding: 8px 18px; font-size: 24px; color: #dfe7ee; }
-#BitBadge b { color: #ffb35c; font-weight: 600; }
-/* The picker sits in the dark title bar, where the eye files it as window
-   furniture and misses it. Filled in the accent orange it is the loudest thing
-   in the header, which is what the control that picks the cutter should be. */
-#ToolChooseButton { float: right; font-size: 26px; font-weight: 600; padding: 9px 24px;
-                    margin-left: 14px; background: #f76707; color: #fff;
-                    border: 1px solid #d95a04; }
-#BitBadgeGeom { margin-left: 10px; color: #b9c6d2; }
+       background: #211f1c; border-bottom: 4px solid #e07b20; padding: 12px 26px;
+       color: #fff; white-space: nowrap; }
+#Mark { display: inline-block; vertical-align: middle; width: 32px; height: 32px; }
+#Lock { display: inline-block; vertical-align: middle; margin-left: 16px; }
+#Lock .kick { font: 400 15px/1 Consolas, monospace; letter-spacing: .26em; color: #8b867e; }
+#Lock .word { font: 800 23px/1.2 Consolas, monospace; letter-spacing: .2em; }
+#Lock .w1 { color: #fff; } #Lock .w2 { color: #e07b20; }
+#Hdr .ver { display: inline-block; vertical-align: middle; margin-left: 16px;
+            font: 400 17px/1 Consolas, monospace; letter-spacing: .14em; color: #8b867e; }
+#Tag { display: inline-block; vertical-align: middle; margin-left: 16px; padding: 6px 16px;
+       border-left: 4px solid #e07b20; background: #2b2825;
+       font: 600 18px/1.4 Consolas, monospace; color: #e0d9cf; }
+/* The bit and the picker sit at the right, where the handoff puts them. The
+   picker is filled in the accent orange because it is the loudest thing that
+   should be loud: the control that chooses the cutter. */
+#ToolChooseButton { float: right; height: 44px; padding: 0 20px; margin-left: 0;
+                    font: 700 17px Consolas, monospace; letter-spacing: .1em;
+                    background: #e07b20; color: #fff; border: 1px solid #a9631a; }
+/* The badge is CAPPED. Vectric library names carry the manufacturer, the part
+   number and a description, and an uncapped badge grows leftward until it
+   collides with the picker button (measured 2026-08-12: a 68-character name
+   overlapped it by 97px and pushed the header's ink to 113px of its 74px box).
+   620px is 338 mockup px x 1.835.
+   The ellipsis is on the NAME, not on the badge: the geometry readout is the
+   short, fixed-width half and the half the operator cannot reconstruct from
+   memory, so the name is what gives way. */
+#BitBadge { float: right; height: 44px; padding: 10px 18px; background: #fff;
+            border: 1px solid #c6c1b9; border-right: none;
+            font: 600 20px/22px Consolas, monospace; color: #1f1d1a;
+            max-width: 620px; overflow: hidden; white-space: nowrap; }
+#BitBadge b { color: #1f1d1a; font-weight: 600;
+              display: inline-block; vertical-align: bottom; max-width: 360px;
+              overflow: hidden; text-overflow: ellipsis; }
+#BitBadgeGeom { margin-left: 12px; color: #77726a; }
 /* The empty-state word is its OWN span, never #BitBadgeName. Aspire owns that
    one -- it writes the picker's buddy label -- and a placeholder parked there
    would only be erased if Aspire's write lands. Miss it and the badge reads
    "Bit No bit yet 60 deg / 0.5 in", contradicting itself. Kept apart, the two
    can never both be visible. */
-#BitBadgeNone { color: #ffb35c; font-weight: 600; }
-#Scroll { position: absolute; top: 88px; left: 0; right: 0; bottom: 96px;
-          overflow: auto; padding: 18px 32px; }
-#Bar { position: absolute; left: 0; right: 0; bottom: 0; height: 96px;
-       background: #f7f9fa; border-top: 1px solid #d0d5da; padding: 20px 32px; }
-#Bar input[type=button] { font-size: 25px; padding: 10px 34px; margin-left: 16px;
-                          border-radius: 8px; float: right; }
-#Summary { float: left; font-size: 25px; color: #556; padding-top: 12px; }
-#Summary b { color: #223; }
+#BitBadgeNone { color: #a8352b; font-weight: 700; }
+#ToolLab { float: right; margin: 12px 14px 0 0; font: 700 17px Consolas, monospace;
+           letter-spacing: .18em; color: #8b867e; }
+#SelState { float: right; margin: 12px 26px 0 0; font-size: 21px; color: #a8a49c; }
+#SelState .dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+                 background: #e07b20; margin-right: 12px; }
+
+/* ---------------------------------------------------------------- banners */
+/* The banners and the drawing. The control strip is NOT in here -- it is
+   furniture, pinned above the footer the way #Hdr is pinned above everything,
+   so the only thing that has to fit this box is content that can vary: three
+   banners at once, and a drawing that takes what is left. */
+#Scroll { position: absolute; top: 88px; left: 0; right: 340px; bottom: 234px;
+          overflow: hidden; }
+.bn { padding: 11px 26px; border-bottom: 1px solid; border-left: 6px solid;
+      position: relative; }
+.bn .h { display: inline-block; font: 700 20px/1 Consolas, monospace;
+         letter-spacing: .14em; text-transform: uppercase; vertical-align: middle; }
+.bn .n { display: inline-block; margin-left: 22px; font-size: 21px; line-height: 1.35;
+         vertical-align: middle; }
+/* Four banner states, per the handoff's table. Green ready, amber a fact about
+   the cut, blue Aspire's own engine doing it, red a refusal. */
+.b-ok   { background: #e8f3ea; border-bottom-color: #c3ddc8; border-left-color: #2e7d4f; }
+.b-ok   .h { color: #215c3a; } .b-ok .n { color: #416b51; }
+.b-amb  { background: #fdf5e6; border-bottom-color: #e8d4a8; border-left-color: #b57612; }
+.b-amb  .h { color: #6b5316; } .b-amb .n { color: #8a6c26; }
+.b-blu  { background: #eaf3f8; border-bottom-color: #c2dbe8; border-left-color: #1b6f9c; }
+.b-blu  .h { color: #1a4a63; } .b-blu .n { color: #3f6b82; }
+.b-red  { background: #f9eae8; border-bottom-color: #e6c4bf; border-left-color: #a8352b; }
+.b-red  .h { color: #7a2620; } .b-red .n { color: #96473f; }
+/* The identity banner keeps the four names the state machine already writes
+   (setBanner), so nothing below has to learn new class names. */
+.b-add     { background: #e8f3ea; border-bottom-color: #c3ddc8; border-left-color: #2e7d4f; }
+.b-add     .h { color: #215c3a; } .b-add .n, .b-add .sub { color: #416b51; }
+.b-rebuild { background: #eaf3f8; border-bottom-color: #c2dbe8; border-left-color: #1b6f9c; }
+.b-rebuild .h { color: #1a4a63; } .b-rebuild .n, .b-rebuild .sub { color: #3f6b82; }
+.b-teach   { background: #fdf5e6; border-bottom-color: #e8d4a8; border-left-color: #b57612; }
+.b-teach   .h { color: #6b5316; } .b-teach .n, .b-teach .sub { color: #8a6c26; }
+.b-replace { background: #f9eae8; border-bottom-color: #e6c4bf; border-left-color: #a8352b; }
+.b-replace .h { color: #7a2620; } .b-replace .n, .b-replace .sub { color: #96473f; }
+#Banner { padding: 11px 26px; border-bottom: 1px solid; border-left: 6px solid; }
+#Banner .ico { display: none; }   /* the coloured rail says the same thing */
+#BannerHead { display: inline-block; font: 700 20px/1 Consolas, monospace;
+              letter-spacing: .14em; text-transform: uppercase; vertical-align: middle; }
+#Banner .sub { display: inline-block; margin-left: 22px; font-size: 21px;
+               line-height: 1.35; vertical-align: middle; }
+/* The chamfer picker lives in the identity banner, so "Adding Chamfer 3" and
+   the control that changes it are one sentence. It FLOATS rather than being
+   absolutely positioned so only the FIRST line has to keep clear: an absolute
+   box reserved its width on every line, so any headline that wrapped had its
+   continuation squeezed into half a banner. */
+#ChangeWrap { float: right; font: 700 16px Consolas, monospace; letter-spacing: .16em;
+              text-transform: uppercase; color: inherit; opacity: .75; padding-top: 6px; }
+#ChamferSelect { font: 600 20px Consolas, monospace; max-width: 420px; margin-left: 12px;
+                 height: 40px; padding: 2px 8px; background: #fff; border: 1px solid #9b968e;
+                 border-radius: 3px; color: #1f1d1a; text-transform: none;
+                 letter-spacing: normal; }
+#HiddenNoteRow { padding: 12px 26px; background: #f9eae8; border-bottom: 1px solid #e6c4bf;
+                 border-left: 6px solid #a8352b; color: #7a2620; font-size: 20px; }
+
+/* ---------------------------------------------------------------- drawing */
+#Scene { position: relative; background: #fff; border-bottom: 1px solid #e6e2db;
+         overflow: hidden; height: 400px; }
+/* The <svg> carries PIXEL width and height and overflow="hidden", never a
+   percentage -- Trident paints SVG text correctly but measures it in unscaled
+   viewBox units and does not clip it, so a label near an edge leaks into the
+   ancestor's scroll size and the dialog opens with BOTH scrollbars (measured
+   live 2026-07-27). Chrome clips by default and can never see this, so the
+   layout gate enforces it as a source check instead. fitScene() rewrites both
+   attributes in pixels once it knows how much room the banners left. */
+
+/* ---------------------------------------------------------------- strip */
+/* Tall enough for the worst cell: SIZE carries the box, the steppers, the
+   size-is-a control AND its caption.
+   v1.15 (2026-08-11): the operator called the drawing too small, and the
+   drawing can only grow by taking height from something else -- widening it
+   does nothing, because it is letterboxed on HEIGHT. This strip was 210px of
+   a 950px window for four small controls, so it gives 60 of them up: the
+   size-is-a control moved onto the size box's own line, SHARP CORNERS moved
+   onto SIDE's line, and the labels and captions came down a size. Nothing was
+   removed -- every word and every control the operator had is still here.
+   The height below is measured, not guessed: see tests/check-strip.js. */
+#Strip { position: absolute; left: 0; right: 340px; bottom: 86px; height: 148px;
+         background: #fbfaf8; border-top: 1px solid #e6e2db; white-space: nowrap; }
+/* The rail. CO-02 asks for the scene and the strip wrapped in a left column
+   with the rail beside both; this is that, without flexbox (Trident, :20-23).
+   It deliberately stops short of #Hdr and #Bar, which stay full width.
+   340px, not the change order's 246 x 1.835 = 450: Tim, 2026-08-12, "the
+   chamfer preview is what is more important". */
+#Rail { position: absolute; top: 88px; right: 0; bottom: 86px; width: 340px;
+        background: #f7f5f2; border-left: 1px solid #e6e2db; overflow: hidden; }
+/* The rail's section heading. Its own class rather than .lab because the strip's
+   cells are 22px-padded blocks and these are not.
+   #SideLabel is written by applyAspireState as "rlab" / "rlab off" -- it used to
+   be "lab" / "lab off" when it sat in the strip. */
+.rlab { font: 700 17px/1 Consolas, monospace; letter-spacing: .18em; color: #77726a;
+        padding: 20px 20px 0; }
+.rlab.off { color: #9aa0a6; }
+/* The stacked side list. Every rule here is written against #SideGroup rather
+   than a class of the row's own: syncOne() rewrites each label's className on
+   every sync, so a class on the row would not survive the first redraw. */
+#SideGroup { display: block; border: none; border-radius: 0; overflow: visible;
+             padding: 12px 20px 0; }
+#SideGroup label { display: block; width: auto; margin: 0 0 8px 0; padding: 12px 12px;
+                   border: 1px solid #ddd8d0; border-radius: 5px; background: #fff;
+                   cursor: pointer; white-space: normal; }
+#SideGroup label.on { border-color: #e07b20; background: #fdf0e2; }
+#SideGroup label b { display: inline-block; vertical-align: top; min-width: 56px;
+                     font: 700 17px/1.35 Consolas, monospace; letter-spacing: .1em;
+                     color: #57534c; }
+#SideGroup label.on b { color: #c26510; }
+#SideGroup label i { display: inline-block; vertical-align: top; width: 200px;
+                     font: 400 17px/1.35 "Segoe UI", Arial, sans-serif; font-style: normal;
+                     color: #8b867e; }
+#SideGroup label.on i { color: #6b6259; }
+/* Off-canvas rather than display:none, the same way .segwrap input and #SharpBox
+   already do it here: a hidden-but-present radio is still the real state. */
+#SideGroup input { position: absolute; left: -9999px; }
+/* Greyed, but the chosen row must still be readable AS the chosen row: the
+   control is out of the operator's hands here, and a list where nothing looks
+   picked says the side is unknown rather than decided. Same reasoning as the
+   old .segwrap.off label.on rule this replaces. */
+#SideGroup.off label { background: #f6f5f3; border-color: #e6e2db; cursor: default; }
+#SideGroup.off label.on { background: #eceae6; border-color: #c6c1b9; }
+#SideGroup.off label b, #SideGroup.off label i { color: #a8a49c; }
+#SideGroup.off label.on b { color: #6f6a63; }
+#SideGroup.off label.on i { color: #8b867e; }
+#Rail #SideCap { padding: 0 20px; }
+#Spec { display: block; margin: 10px 20px 0; }
+/* Inline, not a block of its own: "size is a SETBACK" now reads along the same
+   line as the box it qualifies, which is where the two rows of height went. */
+/* The width is PINNED. Left to shrink-to-fit, an inline-block takes its widest
+   line -- the caption, not the buttons -- so the whole row was 413px wide, did
+   not fit beside the size box, and dropped onto a line of its own, which is
+   exactly the row this change exists to remove. */
+#ModeRow { display: inline-block; vertical-align: top; margin-left: 18px; width: 252px; }
+#ModeRow .sub2 { display: inline-block; vertical-align: middle; margin: 0 10px 0 0; }
+.cell { display: inline-block; vertical-align: top; height: 100%; padding: 12px 22px;
+        border-right: 1px solid #e6e2db; white-space: normal; }
+/* Not four quarters any more. SIZE carries a box, two steppers AND the
+   setback/face/leg control on one line, so it needs the room; START DEPTH is
+   one box and needs the least. Measured, not guessed -- 7px short and a row
+   wraps, which costs the drawing back everything this saved. */
+/* Three cells, not four: SIDE and SHARP CORNERS are in the rail now, and the
+   strip itself is 340px narrower, so the three that remain take the whole of
+   what is left. #CellPos is the last one and carries the border-right:none and
+   the closing tint #CellSide used to, or the strip ends in a stray divider. */
+#CellSize { width: 51%; } #CellStart { width: 21%; }
+#CellPos { width: 28%; background: #f7f5f2; border-right: none; }
+.lab { font: 700 16px/1 Consolas, monospace; letter-spacing: .18em; color: #77726a;
+       margin-bottom: 8px; }
+.sub2 { font: 400 15px/1.3 Consolas, monospace; color: #8b867e; margin-top: 8px; }
+input[type=text] { height: 44px; width: 160px; border: 1px solid #9b968e; border-radius: 3px;
+                   font: 700 27px Consolas, monospace; text-align: right; padding: 0 10px; }
+#Size { color: #c26510; } #StartDepth { color: #3d3a35; }
+.sfx { font: 400 20px Consolas, monospace; color: #77726a; margin-left: 8px; }
+.step { width: 44px; height: 37px; border: 1px solid #c6c1b9; background: #fff;
+        font: 700 24px Consolas, monospace; color: #57534c; cursor: pointer;
+        border-radius: 3px; margin-left: 6px; vertical-align: top; }
+#PosVal { font: 700 31px/1 Consolas, monospace; color: #c26510; }
+#PosVal.off { color: #9aa0a6; }
+/* Segmented controls. The radios and the checkbox are still here, still named,
+   still the thing every existing handler reads -- they are only moved out of
+   sight, and the label wears a class the script keeps in step. Replacing them
+   with plain divs would have meant rewriting five working functions. */
+.segwrap { display: inline-block; border: 1px solid #c6c1b9; border-radius: 5px;
+           overflow: hidden; }
+.segwrap label { display: inline-block; width: auto; margin: 0; padding: 11px 15px;
+                 font: 700 16px/1 Consolas, monospace; letter-spacing: .1em;
+                 background: #fff; color: #57534c; cursor: pointer;
+                 border-right: 1px solid #e6e2db; }
+.segwrap label:last-child { border-right: none; }
+.segwrap label.on { background: #e07b20; color: #fff; }
+.segwrap.off label { color: #9aa0a6; cursor: default; background: #f6f5f3; }
+.segwrap.off label.on { background: #d8d4cd; color: #fff; }
+.segwrap input { position: absolute; left: -9999px; }
+/* Sharp corners lives in the rail now, under the side list: the two are one
+   question -- which edge the cut lands on, and what its corners do -- and the
+   change orders put them in one column together.
+   The label is a .rlab like the side list's, floated so the toggle sits on its
+   line rather than under it. */
+#SharpSec { padding: 22px 20px 0; }
+#SharpSec .rlab { display: inline-block; padding: 0; vertical-align: middle; }
+#SharpRow { float: right; margin: 0; }
+#SharpNote { clear: both; padding-top: 10px;
+             font: 400 17px/1.4 "Segoe UI", Arial, sans-serif; color: #8b867e; }
+#SharpNote.off { color: #b9b5ad; }
+#SharpTog { display: inline-block; vertical-align: middle; margin-left: 14px; width: 62px;
+            height: 33px; border-radius: 17px; background: #c6c1b9; position: relative;
+            cursor: pointer; }
+#SharpTog.on { background: #e07b20; }
+#SharpTog i { position: absolute; top: 4px; left: 4px; width: 25px; height: 25px;
+              border-radius: 50%; background: #fff; }
+#SharpTog.on i { left: 33px; }
+#SharpBox { position: absolute; left: -9999px; }
+#SideCap, #PresetCap, .modecap { display: block; font: 400 15px/1.3 Consolas, monospace;
+                                 color: #8b867e; margin-top: 8px; }
+/* The six cut-position buttons are gone -- the blue dot on the bit replaced
+   them. The container stays, out of sight, because selectPreset() and
+   applyAspireState() still write to it and a missing node is a thrown error
+   in the middle of a redraw. It is removed once the new wiring has had a live
+   run (plan Task 4). */
+#Presets { display: none; }
+#ChartWrap, #SecWrap { display: none; }
+
+/* ---------------------------------------------------------------- footer */
+#Bar { position: absolute; left: 0; right: 0; bottom: 0; height: 86px;
+       background: #eceae6; border-top: 1px solid #d3cfc8; padding: 17px 26px; }
+#Bar input[type=button] { height: 52px; padding: 0 34px; margin-left: 16px;
+                          font: 700 19px Consolas, monospace; letter-spacing: .08em;
+                          border-radius: 3px; float: right; }
+#ButtonCancel { background: #fff; background: linear-gradient(#fff, #f2efea);
+                border: 1px solid #c6c1b9; color: #3d3a35; }
+#Summary { float: left; font: 400 19px Consolas, monospace; color: #77726a;
+           padding-top: 13px; }
+#Summary b { color: #3d3a35; }
 /* Help is the only control in this bar that does not finish the run, so it sits
    at the far LEFT -- nobody reaching for OK can catch it on the way. Two ids so
    it outweighs the `#Bar input[type=button]` float-right rule above; one id
    would lose on specificity and the button would land beside Cancel. */
-#Bar #ButtonHelp { float: left; margin-left: 0; margin-right: 28px; font-weight: 600; }
+#Bar #ButtonHelp { float: left; margin-left: 0; margin-right: 28px;
+                   background: #fff; background: linear-gradient(#fff, #f2efea);
+                   border: 1px solid #c6c1b9; color: #57534c; }
 /* Shown only when Help could not open, in the summary's place: the bar is one
    line tall, and of the two lines the failure is the one worth reading. */
-#HelpNote { float: left; font-size: 25px; color: #b00000; padding-top: 12px;
+#HelpNote { float: left; font-size: 19px; color: #a8352b; padding-top: 13px;
             display: none; }
 /* The OK button takes the colour of what it is about to do. Trident draws a
    coloured input as a flat block, which is the intent anyway. */
-#ButtonOK.k-add     { background: #2f9e4f; color: #fff; border: 1px solid #268040; font-weight: 600; }
-#ButtonOK.k-rebuild { background: #1e6db3; color: #fff; border: 1px solid #175a95; font-weight: 600; }
-#ButtonOK.k-teach   { background: #b8860b; color: #fff; border: 1px solid #96700a; font-weight: 600; }
-#ButtonOK.k-replace { background: #c92a2a; color: #fff; border: 1px solid #a61e1e; font-weight: 600; }
+#ButtonOK           { background: #e07b20; color: #fff; border: 1px solid #a9631a; }
+#ButtonOK.k-add     { background: #2f9e4f; color: #fff; border: 1px solid #268040; }
+#ButtonOK.k-rebuild { background: #1e6db3; color: #fff; border: 1px solid #175a95; }
+#ButtonOK.k-teach   { background: #b8860b; color: #fff; border: 1px solid #96700a; }
+#ButtonOK.k-replace { background: #c92a2a; color: #fff; border: 1px solid #a61e1e; }
+#ButtonOK.off       { background: #d8d4cd; color: #8b867e; border: 1px solid #c6c1b9; }
 
-/* 880 + 24 + 770 = 1674 inside a 1734px content box, and #Scroll is nowrap so
-   the pair CANNOT drop into a stack whatever the arithmetic says.
-   Both belts are needed. The original 900+32+790=1722 left 12px of slack, which
-   passed this repo's gate (headless Chrome renders at zoom 1.0 exactly) and
-   failed live on 2026-07-27: fitToWindow() scales #Fit by `zoom` to Aspire's
-   real client width, Trident rounds each scaled child on its own, and a dozen
-   pixels vanish. The columns stacked, the stack overflowed the window, and the
-   flute chart was cut off mid-row.
-   Children reset white-space, or the nowrap would run every paragraph off the
-   edge. Left is the wider of the two because its rows are label + three radios
-   on one line; the right column only has to hold six cut-position buttons. */
-#Scroll { white-space: nowrap; }
-#ColL, #ColR { white-space: normal; }
-#ColL { display: inline-block; vertical-align: top; width: 880px; margin-right: 24px; }
-#ColR { display: inline-block; vertical-align: top; width: 770px; }
-.card { background: #fff; border: 1px solid #d7dce1; border-radius: 12px;
-        padding: 22px 28px; margin-bottom: 18px; box-shadow: 0 2px 6px rgba(20,30,40,.07); }
-.cardh { font-size: 21px; font-weight: 600; color: #5d6875; text-transform: uppercase;
-         letter-spacing: 2px; margin-bottom: 16px; border-left: 5px solid #f76707;
-         padding-left: 12px; }
-.row { font-size: 27px; color: #222; margin-bottom: 16px; }
-.row:last-child { margin-bottom: 0; }
-label { display: inline-block; width: 230px; }
-input[type=text] { width: 200px; font-size: 24px; padding: 6px 10px;
-                   border: 1px solid #a8b0b9; border-radius: 8px; }
-input[type=radio] { zoom: 2.5; }
-#ModeGroup label, #SideGroup label { width: auto; margin-right: 26px; font-weight: normal;
-                                     font-size: 26px; }
-/* width:auto overrides the generic `label{width:230px}` rule (same reason
-   #ModeGroup/#SideGroup label do): without it SharpWrap's own text wraps
-   INSIDE the 230px box, doubling its own height, which is what actually blew
-   the row's budget (measured: check-dialog-layout.js) -- not the row running
-   out of width, which it does too (the row's own label + three radios leave
-   ~100px trailing, nowhere near the checkbox's real width, so it wraps to a
-   second line regardless). */
-#SharpWrap { width: auto; font-weight: normal; margin-left: 18px; font-size: 22px; }
-#SharpWrap.off { color: #9aa0a6; }
-/* Greyed on the aspire path, where Aspire's engine picks each loop's side from
-   the geometry and a forced side has no correct behaviour (side-greyed spec 3c).
-   The GROUP and its label grey, never the whole #SideRow -- #SharpWrap shares
-   the row and is the control that causes this state, so greying it would trap
-   the operator above the ceiling with no way back. */
-#SideGroup.off label, #SideLabel.off { color: #9aa0a6; }
-/* Trims .row's default 16px bottom margin to 2px, and forces line-height:1
-   (default "normal" adds leading on top of the checkbox/caption line that
-   this row doesn't have room for) -- the row is now two lines instead of
-   one, and the tightest real layout (start depth + a wrapped depth warning)
-   overflowed the gate without both trims. */
-#SideRow { margin-bottom: 2px; line-height: 1; }
-
-/* Banner: the whole point of v1.5.0 -- it says what OK will do before it does
-   it. Four states, coloured per spec 2. */
-#Banner { border-radius: 12px; padding: 18px 24px 18px 96px; margin-bottom: 18px;
-          font-size: 28px; position: relative; min-height: 96px; }
-#Banner .ico { position: absolute; left: 22px; top: 20px; width: 54px; height: 54px;
-               border-radius: 50%; text-align: center; font-size: 34px; line-height: 54px;
-               color: #fff; }
-/* The Change control sits in the banner's top-right corner, and the headline
-   must never run under it -- it is unreadable exactly when it matters most.
-   It FLOATS rather than being absolutely positioned so only the FIRST line has
-   to keep clear: an absolute box reserved its width on every line, so any
-   headline that wrapped had its continuation squeezed into half a banner and
-   broke in silly places ("Adding Chamfer 3 - 5" / "shapes selected"). Floated,
-   line one shortens and the rest reclaim the full width. It is first in the
-   markup because a float only pushes content that FOLLOWS it. */
-#BannerHead { display: block; }
-#Banner .sub { font-size: 22px; margin-top: 5px; }
-/* This control decides whether OK adds a chamfer or replaces one, so it gets
-   weight to match. 26px in a grey box still read as part of the banner's own
-   sentence -- it was bigger but not more NOTICEABLE. It now borrows the accent
-   orange from "Choose bit ...", which is the other "what am I working on"
-   control, so the two look like a pair. Same place, same control, still
-   floated, so it costs no height.
-   The label stays BESIDE the field, not above it. Stacking them read better but
-   made the float taller than the banner's own text, and a float that outgrows
-   its box grows the box: two gate cases went over. Beside, it is still free. */
-#ChangeWrap { float: right; margin: 0 0 2px 20px; font-size: 20px; font-weight: 700;
-              color: #b34700; text-transform: uppercase; letter-spacing: 1px; }
-#ChamferSelect { font-size: 28px; max-width: 340px; margin-left: 8px; padding: 2px 8px;
-                 background: #fff; border: 3px solid #f76707; border-radius: 6px;
-                 font-weight: 600; color: #1c2530; text-transform: none;
-                 letter-spacing: normal; }
-.b-add     { background: #e4f5e9; border: 1px solid #57b970; color: #175c2a; }
-.b-add     .ico { background: #2f9e4f; }
-.b-add     .sub { color: #38724a; }
-.b-rebuild { background: #e5f0fb; border: 1px solid #6aa3d8; color: #0f4576; }
-.b-rebuild .ico { background: #1e6db3; }
-.b-rebuild .sub { color: #38678f; }
-.b-teach   { background: #fff7e0; border: 1px solid #d9ad3c; color: #6b4e05; }
-.b-teach   .ico { background: #b8860b; }
-.b-teach   .sub { color: #8a6a17; }
-.b-replace { background: #fdeaea; border: 1px solid #e07575; color: #871b1b; }
-.b-replace .ico { background: #c92a2a; }
-.b-replace .sub { color: #9d4242; }
-
-/* Cut position: one button per preset, each carrying its own depth readout so
-   the choice is made on numbers rather than on a percentage alone.
-   Six of them have to fit the right column's 712px of content width, so the
-   arithmetic is 6 x (108 + 8) = 696 and every one of those margins counts --
-   a trailing margin can wrap the last button onto its own line. */
-.seg { display: inline-block; width: 108px; text-align: center; padding: 10px 0 8px 0;
-       margin-right: 8px; border: 1px solid #b6bec6; border-radius: 10px;
-       background: #fbfcfd; cursor: pointer; }
-.seg .p { display: block; font-size: 27px; color: #223; }
-.seg .d { display: block; font-size: 20px; color: #778; margin-top: 2px; }
-.seg.sel { background: #f76707; border-color: #d95a04; box-shadow: 0 2px 5px rgba(217,90,4,.35); }
-.seg.sel .p { color: #fff; font-weight: 700; }
-.seg.sel .d { color: #ffe1c7; }
-/* Aspire mode (2026-08-04): a chamfer past the sharpening ceiling is cut by
-   Aspire's own chamfer engine, whose tip rides the mitre from the top of the
-   chamfer to the bottom. There is no cut position to pick, so the row greys.
-   GREYED, not hidden: six buttons vanishing and reappearing as the size crosses
-   a threshold is a bigger surprise than a row that stops responding with a
-   caption beside it saying why.
-   Colour only -- no padding, border WIDTH or margin moves -- so the row keeps
-   the 6 x (108 + 8) = 696 arithmetic above, greyed or not. The children carry
-   their own colours (.seg .p, .seg.sel .p), so greying the parent alone would
-   leave the lit button's white-on-nothing text invisible; the #Presets id gives
-   these the specificity to win. */
-#Presets.off .seg { border-color: #c9ced4; background: #f6f7f9; cursor: default; }
-#Presets.off .seg .p, #Presets.off .seg .d { color: #9aa0a6; }
-#Presets.off .seg.sel { background: #f6f7f9; box-shadow: none; }
-#Presets.off .seg.sel .p { color: #9aa0a6; }
-
-.modecap { font-size: 22px; color: #667; display: block; margin-top: 6px; }
-#ChartWrap { border: 1px solid #e2e6ea; border-radius: 8px; background: #fff; margin-top: 4px; }
-/* The flute chart greys with the row it belongs to (2026-08-04). It is a chart
-   OF cut positions, so in aspire mode every number on it -- six depths, six
-   standoffs, the contact band -- describes a run that is not going to happen,
-   and it is the loudest thing in the column. Same .off idiom as #Presets above:
-   a class on the container, colours only on the children, so nothing moves.
-   The SVG ink is set as presentation attributes by redraw(); CSS beats a
-   presentation attribute, so these win without redraw() knowing about them.
-   #SelTxt is the exception and the point of the whole treatment: that one line
-   is rewritten in aspire mode to say what the run WILL do, so it stays dark
-   while the reference around it fades. */
-#ChartWrap.off #Chart line   { stroke: #c9ced4; }
-#ChartWrap.off #Chart circle { fill: #c9ced4; }
-#ChartWrap.off #Chart text   { fill: #9aa0a6; }
-#ChartWrap.off #SelTxt       { fill: #333; }
-#SecWrap { border: 1px solid #e2e6ea; border-radius: 8px; background: #fff; margin-top: 6px; }
-#BlockMsg { color: #b00000; font-size: 26px; padding: 24px; display: none; }
+/* The "How it decides" panel and its link were here. They were a SECOND help
+   system -- ninety lines of hand-written cheat sheet covering the same ground as
+   EdgeBreaker-Help.htm, which the HELP button opens and which is generated from
+   README.md. Being outside the generator's reach it drifted, and was caught
+   drifting: it still read "nothing existing is touched", the phrase deleted from
+   the banner for saying nothing. The rail now carries two of its sections at the
+   point of use anyway. Tim, 2026-08-12: "What is that adding?" */
+#BlockMsg { position: absolute; left: 0; right: 0; top: 0; bottom: 0; z-index: 3;
+            background: #fff; color: #a8352b; font-size: 26px; padding: 40px;
+            display: none; }
 /* Waiting for the operator is not a problem, so it must not look like one.
    Red is reserved for the one message here that IS a fault: a chamfer too big
    to cut safely. Before a bit or a size is entered nothing is wrong yet. */
 #BlockMsg.wait { color: #5a6672; }
-#DepthWarn { color: #b00000; font-size: 24px; margin: 10px 0 4px 0; }
-/* Amber, not red: this is a fact about the cut, not a warning about it. */
-#PassNote { color: #7a5200; font-size: 24px; margin: 8px 0 4px 0; }
-#HiddenNoteRow { font-size: 22px; color: #b00000; margin-bottom: 12px; }
-#HelpLink { color: #0066cc; cursor: pointer; text-decoration: underline; font-size: 25px; }
-#HelpBody { display: none; border: 1px solid #e0d6a8; background: #fffbe6;
-            border-radius: 8px; padding: 20px; font-size: 22px; margin-top: 10px; }
-#HelpBody li { margin-bottom: 6px; }
 </style>
 </head>
 <body>
 <div id="Fit">
- <div id="Hdr">EdgeBreaker<span class="ver">v1.14.1</span>
+ <div id="Hdr">
+   <!-- overflow="hidden" on EVERY svg on this page, decoration included:
+        Trident does not clip SVG and measures it in unscaled viewBox units, so
+        an unclipped one leaks into the ancestor's scroll size and the dialog
+        opens with both scrollbars. The layout gate enforces it as a source
+        check because Chrome clips by default and can never see it. -->
+   <svg id="Mark" viewBox="0 0 22 22" overflow="hidden">
+     <path d="M2 2 H14 L20 8 V20 H2 Z" fill="none" stroke="#e07b20" stroke-width="2.6" stroke-linejoin="round"></path>
+     <path d="M14 2 L20 8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"></path>
+   </svg>
+   <span id="Lock">
+     <span class="kick">TIM'S</span><br>
+     <span class="word w1">EDGE</span><span class="word w2">BREAKER</span>
+   </span>
+   <span class="ver">v1.15.0</span>
+   <span id="Tag">Predictable chamfers, every time</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
-          value="Choose bit ..." class="ToolPicker">
+          value="SELECT..." class="ToolPicker">
    <span id="BitBadge"><span id="BitBadgeNone">No bit yet</span><span id="BitBadgePre">Bit </span><b id="BitBadgeName"></b><span id="BitBadgeGeom"></span></span>
+   <span id="ToolLab">TOOL</span>
+   <span id="SelState"><span class="dot"></span><span id="SelStateTxt">&nbsp;</span></span>
  </div>
  <div id="Scroll">
-  <div id="ColL">
     <div id="Banner" class="b-add">
       <span class="ico" id="BannerIcon">+</span>
-      <span id="ChangeWrap">Change:
+      <span id="ChangeWrap">Editing
         <select id="ChamferSelect" name="ChamferSelect"></select>
       </span>
       <span id="BannerHead">&nbsp;</span>
-      <div class="sub" id="BannerSub">&nbsp;</div>
+      <span class="sub" id="BannerSub">&nbsp;</span>
     </div>
     <div id="HiddenNoteRow" style="display:none"></div>
-    <div class="card">
-      <div class="cardh">Chamfer</div>
-      <div class="row" id="ModeRow" style="display:none">
-        <label>Size is a:</label>
-        <span id="ModeGroup">
-          <label><input type="radio" name="ModeRadio" value="setback"> Setback</label>
-          <label><input type="radio" name="ModeRadio" value="face"> Face</label>
-          <label><input type="radio" name="ModeRadio" value="leg"> Leg</label>
-        </span>
-        <span class="modecap" id="ModeCaption"></span>
-      </div>
-      <div class="row"><label id="SizeLabel">Chamfer size (in):</label>
-        <input type="text" id="Size" name="Size" value="0.020"></div>
-      <div class="row"><label id="StartLabel">Start depth (in):</label>
-        <input type="text" id="StartDepth" name="StartDepth" value="0"></div>
-      <div class="row" id="SideRow">
-        <label id="SideLabel">Chamfer side:</label>
-        <span id="SideGroup">
-          <label><input type="radio" name="SideRadio" value="auto" checked> Auto</label>
-          <label><input type="radio" name="SideRadio" value="outside"> Outside</label>
-          <label><input type="radio" name="SideRadio" value="inside"> Inside</label>
-        </span>
-        <label id="SharpWrap"><input type="checkbox" id="SharpBox"> Sharp corners</label>
-        <!-- Only ever shown with the radios greyed beside it (applyAspireState),
-             same pattern as #PresetCap. It wears .modecap, so it is display:block
-             and drops onto its own line rather than fighting the row for width.
+    <div class="bn b-ok" id="ModeBn"><span class="h" id="ModeH">&nbsp;</span><span class="n" id="ModeN">&nbsp;</span></div>
+    <div class="bn b-red" id="WarnBn" style="display:none"><span class="h" id="WarnH">&nbsp;</span><span class="n" id="WarnN">&nbsp;</span></div>
 
-             Its WORDS are written by applyAspireState, because the row greys for
-             two different reasons and this line is the only thing that says
-             which (2026-08-07, side-on-flat-selections spec 5c). The nested
-             sentence is the markup default so a page whose script never ran
-             still says something true of the commonest case. -->
-        <span class="modecap" id="SideCap" style="display:none">one shape inside another &#8212; Aspire picks the side itself</span>
-      </div>
-      <!-- Named for what it holds, not "Help": the button in the bar is now the
-           Help, and two controls called Help on one dialog would mean two
-           different things. This one is the banner cheat-sheet, and it is also
-           the only help that still works if the browser will not open. -->
-      <div class="row"><span id="HelpLink">How it decides &#9656;</span>
-        <div id="HelpBody">
-          <b>The selection decides.</b> EdgeBreaker looks at what you have selected and
-          opens ready to do the obvious thing &mdash; the banner at the top says which,
-          and you can always change it with the <b>Change</b> dropdown.
-          <ul>
-            <li><b>Green &mdash; adding.</b> You selected shapes no chamfer uses. A new
-                chamfer is created; nothing existing is touched.</li>
-            <li><b>Blue &mdash; rebuilding.</b> You selected shapes an existing chamfer was
-                built from, so that chamfer is rebuilt with its own size, side and cut
-                position already loaded. Selecting <i>some</i> of them is enough.</li>
-            <li><b>Blue with nothing selected.</b> The chamfer is rebuilt from the shapes it
-                remembers. Click a chamfer's toolpath in the Toolpaths list first to say
-                which one; otherwise it is the newest.</li>
-            <li><b>Amber &mdash; teaching.</b> That chamfer doesn't know which shapes it was
-                built from (it was made before v1.5.0, or its shapes have been moved or
-                edited). Your selection becomes its shapes.</li>
-            <li><b>Red &mdash; replacing.</b> You picked a chamfer while holding different
-                shapes. Its offsets and toolpath are removed and rebuilt on the new ones.
-                This cannot be undone.</li>
-          </ul>
-          <b>How it remembers:</b> each chamfer stores its shapes and settings on its own
-          toolpath, so it travels inside the job file. <b>Save the job</b> to keep it. Delete
-          a chamfer's toolpath and it is forgotten &mdash; which is also how you free its
-          number.<br><br>
-          <b>Chamfers made before v1.5.0</b> are adopted: they keep their number and their
-          size, but not their shapes, so the first rebuild is an amber one. That rebuild also
-          renames their layer and toolpath to the EdgeBreaker names.<br><br>
-          <b>Adding a bit:</b> there is nothing to add here. Bits come from your own tool
-          database, so any V-bit you have defined is offered when you press <b>Choose bit</b>,
-          and its angle, diameter, feeds, speeds and tool number are used exactly as the
-          database has them.
-          <ul>
-            <li>If <b>Select</b> is greyed out with a bit highlighted, that bit has no feeds
-                and speeds for the machine named at the top of that dialog. Press <b>Copy</b>
-                under &ldquo;Copy Settings From&rdquo;, then <b>Apply</b>.</li>
-            <li>To change a chamfer's feeds and speeds, edit the bit in the tool database
-                &mdash; not this gadget.</li>
-          </ul>
-          <b>Chamfer side:</b> <b>Auto</b> offsets part outlines outward and holes inward
-          &mdash; right when you select an outline together with its holes. It cannot
-          recognize a pocket edge or a hole selected on its own: pick <b>Inside</b> for those.
-          <b>Outside</b> forces every selected vector to chamfer on its outer side.<br><br>
-          <b>Sharp corners:</b> the bit rises
-          into each corner so the two edges meet in a point instead of a round. Past what
-          the bit can sharpen in one flat pass, EdgeBreaker hands the cut to Aspire's own
-          chamfer engine &mdash; you lose the cut-position buttons for that chamfer, and if
-          your shapes sit inside each other it picks the side itself.<br><br>
-          <b>Chamfering a pocket?</b> Set Side to <b>Inside</b>. A pocket and a raised shape
-          look the same from here &mdash; one closed line either way &mdash; so Auto assumes
-          the material is inside your line.<br><br>
-          The corner
-          moves cut nearer the tip than your chosen position &mdash; that's the only way in.
-          On an outside chamfer the guide line is drawn inside the shape, so anything
-          narrower than two chamfers gets skipped. If you've selected shapes that sit inside
-          other shapes &mdash; letters with counters &mdash; leave Side on <b>Auto</b>:
-          forcing a side can't sharpen those.<br><br>
-          <b>Start depth:</b> how far <b>below the top of the stock</b> the edge sits &mdash;
-          a pocket floor, a second level, a skimmed top. Leave it at <b>0</b> for an edge at
-          the top, which is the usual case. It does not change the chamfer itself, only how
-          far down the whole cut happens, so the machine reaches <b>start + depth</b> into the
-          material. Each chamfer remembers its own start depth, and a <b>new</b> chamfer always
-          opens at 0 &mdash; yesterday's pocket can never carry a quarter inch into today's
-          job.<br><br>
-          <b>Cut position:</b> which part of the flute does the cutting. <b>0%</b> is as near
-          the tip as is safe, <b>100%</b> as near the shoulder. Every position cuts the same
-          chamfer &mdash; all that changes is how deep the bit goes and which part of it wears.
-          The depth under each button is what the toolpath will use.<br><br>
-          <b>Depth vs stock:</b> a shallow-angle bit has to plunge a long way to reach a small
-          chamfer, so the cut can end up deeper than the material. If it does, a red line
-          under the positions says so and names one that fits. It counts the start depth too,
-          so what it measures is the total reach. Cutting nearer the tip is
-          shallower, but if the tip isn't perfectly sharp, its flat widens the chamfer
-          slightly &mdash; cut a touch shallower to compensate. The warning never stops you;
-          it is based on the material thickness in Job Setup, and stays quiet if that is not
-          set.<br><br>
-          <b>Features too narrow to chamfer:</b> a chamfer needs room on both sides of the
-          edge. Where there isn't any &mdash; a thin neck, a small counter inside a letter
-          &mdash; that vector is <i>skipped</i> rather than approximated, and the summary at
-          the end says how many. The skipped ones are the vectors with no orange offset beside
-          them.<br><br>
-          Each chamfer owns a layer per pass, <b>EdgeBreaker Offset 01-1</b>,
-          <b>01-2</b>, &hellip; and a toolpath tagged <b>[EdgeBreaker 01]</b>,
-          <b>02</b>, &hellip;. A run clears and
-          rebuilds only its own number. Gadget deletions cannot be undone &mdash; never keep
-          your own work on one of those layers. To keep a chamfer toolpath for good, rename it
-          so the tag is gone and the gadget will leave it alone forever.
-        </div>
-      </div>
+    <div id="Scene">
+      <svg id="SceneSvg" viewBox="0 0 950 380" width="1750" height="400"
+           overflow="hidden" style="display:block">
+        <!-- Everything drawn goes in here, so a redraw can empty this group
+             without taking the <defs> the scene builder puts beside it. -->
+        <g id="SceneG"></g>
+      </svg>
+      <div id="BlockMsg"></div>
     </div>
-  </div><div id="ColR">
-    <div class="card">
-      <div class="cardh">Cut position on flute</div>
-      <div class="row" id="Presets">
-        <div class="seg" data-pct="0"><span class="p">0%</span><span class="d">&nbsp;</span></div><div
-             class="seg" data-pct="20"><span class="p">20%</span><span class="d">&nbsp;</span></div><div
-             class="seg" data-pct="40"><span class="p">40%</span><span class="d">&nbsp;</span></div><div
-             class="seg" data-pct="60"><span class="p">60%</span><span class="d">&nbsp;</span></div><div
-             class="seg sel" data-pct="80"><span class="p">80%</span><span class="d">&nbsp;</span></div><div
-             class="seg" data-pct="100"><span class="p">100%</span><span class="d">&nbsp;</span></div>
-        <!-- Only ever shown with the row greyed above it (applyAspireState). It
-             wears .modecap, so it is display:block and drops onto its own line;
-             the newline before it is therefore free and cannot disturb the
-             no-whitespace chaining of the six buttons. -->
-        <span class="modecap" id="PresetCap" style="display:none">big sharp chamfers cut from the tip</span>
-      </div>
-      <div id="DepthWarn" style="display:none"></div>
-      <div id="PassNote" style="display:none"></div>
-      <div id="ChartWrap">
-        <div id="BlockMsg"></div>
-        <!-- overflow="hidden" is LOAD-BEARING, not tidiness. Trident paints SVG
-             text correctly but measures it in unscaled viewBox units and does
-             not clip it to the viewport, so a label near an edge leaks into the
-             ancestor's scroll size and the dialog opens with BOTH scrollbars.
-             Measured live 2026-07-27: #Scroll 2520x785 against a 1781x749 client
-             box; hiding this element's 30 children collapsed it to 1798x766, and
-             revealing them one at a time named the two culprits - "0% · tip
-             margin" (all 739px of the width) and the "selected 100% · ..." line
-             at y=296 (the 36px of height). The attribute cleared both. Chrome
-             clips SVG by default, so the layout gate can never see this - the
-             rule is enforced in the gate's source check instead.
-             Width in PIXELS for the same reason of not trusting Trident's SVG
-             sizing: 710 = #ColR 770, less the card's 2px border + 56px padding,
-             less ChartWrap's 2px border. Keep this in step with those boxes. -->
-        <svg id="Chart" viewBox="0 0 1000 300" width="710" height="240" overflow="hidden" style="display:block"></svg>
-      </div>
-      <!-- v1.7.0: the run receipt's section view, reflowed wide-and-short to
-           fit the right column's measured 137px of headroom. Same drawing,
-           same letters (W, D, G, S), but LIVE: it redraws as the numbers are
-           typed, which is when it is worth something.
-           overflow="hidden" for the same Trident reason as the chart above.
-           1000x148 at 710x105 is a uniform 0.71 scale -- keep the two in step
-           or the drawing letterboxes and the constants stop meaning pixels. -->
-      <div id="SecWrap">
-        <svg id="Sec" viewBox="0 0 1000 148" width="710" height="105" overflow="hidden" style="display:block">
-          <defs>
-            <pattern id="hatch" width="14" height="14" patternTransform="rotate(45)"
-                     patternUnits="userSpaceOnUse">
-              <line x1="0" y1="0" x2="0" y2="14" stroke="#c8cfd6" stroke-width="3"/>
-            </pattern>
-          </defs>
-          <!-- Everything drawn goes in here, so redrawing can empty this group
-               without taking the <defs> above (and the hatch) with it. -->
-          <g id="SecG"></g>
-        </svg>
-      </div>
-    </div>
-  </div>
  </div>
 
+    <div id="Strip">
+      <div class="cell" id="CellSize">
+        <div class="lab">SIZE</div>
+        <input type="text" id="Size" name="Size" value="0.020"><span class="sfx" id="SizeUnit">in</span><input
+          type="button" class="step" id="SizeDown" value="&#8722;"><input
+          type="button" class="step" id="SizeUp" value="+">
+        <!-- The words "size is a" used to sit here. They cost 102px on a line
+             that had 33 to give, and the caption below now opens with the mode
+             name instead, which says the same thing in the space already
+             spent. -->
+        <span id="ModeRow">
+          <span class="segwrap" id="ModeGroup">
+            <label id="ModeL0"><input type="radio" name="ModeRadio" value="setback">SETBACK</label><label
+                   id="ModeL1"><input type="radio" name="ModeRadio" value="face">FACE</label><label
+                   id="ModeL2"><input type="radio" name="ModeRadio" value="leg">LEG</label>
+          </span>
+          <span class="modecap" id="ModeCaption"></span>
+        </span>
+      </div>
+
+      <div class="cell" id="CellStart">
+        <div class="lab">START DEPTH</div>
+        <input type="text" id="StartDepth" name="StartDepth" value="0"><span class="sfx" id="StartUnit">in</span>
+        <div class="sub2">how far below the surface the chamfered edge sits</div>
+      </div>
+
+      <div class="cell" id="CellPos">
+        <div class="lab">POSITION</div>
+        <span id="PosVal">&mdash;</span><span class="sfx">of flute</span>
+        <div class="sub2">drag the blue dot to set the cut</div>
+        <span class="modecap" id="PresetCap" style="display:none">big sharp chamfers cut from the tip</span>
+        <!-- The six preset buttons are gone; the blue dot replaced them. The
+             container stays because selectPreset() and applyAspireState() still
+             write to it. Removed once the new wiring has had a live run. -->
+        <div id="Presets">
+          <div class="seg" data-pct="0"><span class="p">0%</span><span class="d">&nbsp;</span></div><div
+               class="seg" data-pct="20"><span class="p">20%</span><span class="d">&nbsp;</span></div><div
+               class="seg" data-pct="40"><span class="p">40%</span><span class="d">&nbsp;</span></div><div
+               class="seg" data-pct="60"><span class="p">60%</span><span class="d">&nbsp;</span></div><div
+               class="seg sel" data-pct="80"><span class="p">80%</span><span class="d">&nbsp;</span></div><div
+               class="seg" data-pct="100"><span class="p">100%</span><span class="d">&nbsp;</span></div>
+        </div>
+        <div id="DepthWarn" style="display:none"></div>
+        <div id="PassNote" style="display:none"></div>
+      </div>
+
+    </div>
+
+    <div id="Rail">
+      <!-- CO-01 s1. The three sides are a STACKED LIST, not three buttons: the
+           key and its explanation sit together, so nothing has to be read
+           across the dialog and no hover help is needed.
+
+           The container keeps the id SideGroup and the class segwrap on
+           purpose. The side control is wired in four independent places --
+           initSideRadios, applySideDefault, the greying line in
+           applyAspireState, and the generic syncOne/bindSegment pair -- and all
+           four find it by that id. Renaming it would mean chasing four call
+           sites to change nothing the operator can see.
+
+           The rows are styled by POSITION (#SideGroup label), never by a class
+           of their own: syncOne rewrites each label's className on every sync,
+           so a class-based style would be wiped the first time anything
+           redrew. -->
+      <!-- The picture is the readout and the list under it is the control, so
+           the picture goes first. No second OUT | IN | AUTO switcher beside it:
+           the list IS the switcher, and a second one is exactly the duplication
+           this restructure removes. -->
+      <div class="rlab">WHAT THIS CHAMFERS</div>
+      <!-- PIXEL width, never a percentage. Trident measures SVG in unscaled
+           viewBox units and does not clip it, and a percentage-width <svg>
+           opens the dialog with both scrollbars. The layout gate enforces it as
+           a source check, because Chrome clips by default and can never see it.
+           300 = the rail's 340 less its 20px margins. -->
+      <svg id="Spec" width="300" height="228" overflow="hidden"><g id="SpecG"></g></svg>
+
+      <div class="rlab" id="SideLabel">WHICH EDGES</div>
+      <div class="segwrap" id="SideGroup">
+        <label id="EdgeOut"><input type="radio" name="SideRadio" value="outside"><b>OUT</b><i>outside edges &#8212; the outline of the part</i></label><label
+               id="EdgeIn"><input type="radio" name="SideRadio" value="inside"><b>IN</b><i>inside edges &#8212; pockets, holes, cutouts</i></label><label
+               id="EdgeAuto"><input type="radio" name="SideRadio" value="auto" checked><b>AUTO</b><i>let EdgeBreaker decide &#8212; best for text and complex art</i></label>
+      </div>
+      <!-- Only ever shown with the list greyed above it (applyAspireState). Its
+           WORDS are written by applyAspireState, because the list greys for two
+           different reasons and this line is the only thing that says which
+           (2026-08-07, side-on-flat-selections spec 5c). -->
+      <span class="modecap" id="SideCap" style="display:none">one shape inside another &#8212; Aspire picks the side itself</span>
+
+      <div id="SharpSec">
+        <div class="rlab" id="SharpLab">SHARP CORNERS</div>
+        <div id="SharpRow">
+          <span id="SharpTog"><i></i></span>
+          <label id="SharpWrap"><input type="checkbox" id="SharpBox"></label>
+        </div>
+        <!-- Written from the VALUE on every redraw, never from the click. A note
+             set only in the click handler was a real bug (mockup, 2026-08-12):
+             open a chamfer that already had sharp corners off and the toggle
+             showed off, the block drew rounded corners, and the note still read
+             "Inside corners run to a point." -->
+        <div id="SharpNote">Inside corners run to a point.</div>
+      </div>
+    </div>
+
   <div id="Bar">
-    <input id="ButtonOK" name="ButtonOK" type="button" value="OK" class="k-add">
-    <input id="ButtonCancel" name="ButtonCancel" type="button" value="Cancel">
+    <input id="ButtonOK" name="ButtonOK" type="button" value="CALCULATE" class="k-add">
+    <input id="ButtonCancel" name="ButtonCancel" type="button" value="CANCEL">
     <!-- id only, NO name: a named field is something Aspire may try to bind to
          Lua, and this button has nothing to do with Lua. It opens the help page
          from the page itself (see openHelp below) because HTML_Dialog is modal
          and Lua gets no control back until OK or Cancel. -->
-    <input id="ButtonHelp" type="button" value="Help">
+    <input id="ButtonHelp" type="button" value="HELP">
     <span id="Summary">&nbsp;</span>
     <span id="HelpNote"></span>
   </div>
@@ -463,6 +525,19 @@ input[type=radio] { zoom: 2.5; }
        a character the operator sees and nothing has to be HTML-escaped. -->
   <span id="BitGeom" style="display:none"></span>
   <input type="hidden" id="Thickness" name="Thickness" value="">
+  <!-- The operator's real outlines, for the top view (live-top-view spec 5).
+       Empty means "no picture available" for any of the reasons in spec 8a, and
+       the page falls back to the isometric block. Empty is a NORMAL state, not
+       an error: a recall run has nothing selected to draw. -->
+  <input type="hidden" id="Outlines" name="Outlines" value="">
+  <input type="hidden" id="OutlineBox" name="OutlineBox" value="">
+  <!-- A REBUILD has nothing selected, and the two fields above are empty -- but
+       the gadget still knows which shapes it will cut, so it sends them here:
+       one payload per chamfer, keyed by slot, because the Change dropdown
+       switches chamfer without going back to Lua. Used only when Outlines is
+       empty; a selection is always what the run cuts and always wins. -->
+  <input type="hidden" id="OutlinesBySlot" name="OutlinesBySlot" value="">
+  <input type="hidden" id="OutlineBoxBySlot" name="OutlineBoxBySlot" value="">
   <!-- v1.5.0: what the selection MEANS. Chamfers carries one eight-field record
        per chamfer (slot|label|relation|size|mode|side|percent|sharp); Kind is the
        state the dialog opens in; BannerFacts the counts it quotes. -->
@@ -579,6 +654,12 @@ function fitToWindow() {
   fit.style.zoom = z;
   fit.style.width  = Math.floor(w / z) + "px";
   fit.style.height = Math.floor(h / z) + "px";
+  // The header's width in DESIGN units is w/z, and that is not a constant: a
+  // tall, narrow window gives less than DESIGN_W. Below 1620 the four floats
+  // and the tagline stop fitting on one line, and the tagline is the only one
+  // of the five that says nothing the operator needs, so it is the one to go.
+  var tag = document.getElementById("Tag");
+  if (tag) tag.style.display = (fit.offsetWidth < 1620) ? "none" : "";
 }
 // The operator can drag this window -- confirmed in Aspire 2026-07-31, after
 // eleven versions of assuming otherwise because window.resizeTo() is blocked.
@@ -887,7 +968,13 @@ function setBanner(state) {
   if (state === "add") {
     cls = "b-add"; mark = "+";
     h = "<b>Adding Chamfer " + slot + "</b> — " + shapesPhrase(FACTS.sel) + " selected";
-    s = "Nothing existing is touched." + excludedPhrase() + " " + othersPhrase(slot);
+    // Tim, 2026-08-12: the old lead sentence -- "Nothing existing is touched."
+    // -- said nothing on a first chamfer, because there IS nothing existing,
+    // and said the same thing twice whenever othersPhrase fired, because that
+    // already reads "Chamfers 1 and 2 stay as they are." The line now carries
+    // only news: what is being left out, and which chamfers stay put. When
+    // there is neither, it is blank.
+    s = excludedPhrase() + " " + othersPhrase(slot);
     okLabel = "OK — add Chamfer " + slot;
   } else if (state === "rebuild") {
     cls = "b-rebuild"; mark = "↻";
@@ -897,18 +984,26 @@ function setBanner(state) {
   } else if (state === "recall") {
     cls = "b-rebuild"; mark = "↻";
     h = "<b>Rebuilding Chamfer " + slot + "</b> — nothing selected";
-    s = "It rebuilds using the " + shapesPhrase(FACTS.mem) + " it remembers. " + othersPhrase(slot);
+    // Tim, 2026-08-13: it read "It rebuilds using the 1 shape it remembers." --
+    // the gadget talking about itself in the third person, and about its own
+    // memory as though that were the operator's problem. What the operator needs
+    // is which shapes get cut, so the line says that and nothing else.
+    s = "Uses the same " + shapesPhrase(FACTS.mem) + " as last time. " + othersPhrase(slot);
     okLabel = "OK — rebuild Chamfer " + slot;
   } else if (state === "teach") {
     cls = "b-teach"; mark = "?";
+    // Tim, 2026-08-13: both headlines said "I don't know which shapes it was
+    // built from". The gadget does not have a first person, and what it knows or
+    // has been taught is not the operator's problem -- the fact is that the
+    // shapes are not on record, and the answer is to select them.
     if (FACTS.sel === 0) {
-      h = "<b>Chamfer " + slot + "</b> — I don't know which shapes it was built from";
-      s = "Nothing is selected, so there is nothing to rebuild it from. Cancel, select its " +
+      h = "<b>Chamfer " + slot + "</b> — its shapes aren't known";
+      s = "Nothing is selected, so there's nothing to rebuild from. Cancel, select the " +
           "shapes, and run again.";
     } else {
-      h = "<b>Rebuilding Chamfer " + slot + "</b> — I don't know which shapes it was built from";
-      s = "Your " + shapesPhrase(FACTS.sel) + " replace" + (FACTS.sel === 1 ? "s" : "") +
-          " them, and this run teaches it. " + othersPhrase(slot);
+      h = "<b>Rebuilding Chamfer " + slot + "</b> — its shapes aren't known";
+      s = "Your " + shapesPhrase(FACTS.sel) + (FACTS.sel === 1 ? " becomes" : " become") +
+          " Chamfer " + slot + "'s from now on. " + othersPhrase(slot);
     }
     okLabel = "OK — rebuild Chamfer " + slot;
   } else {
@@ -922,7 +1017,12 @@ function setBanner(state) {
   b.className = cls;
   icon.innerHTML = mark;
   head.innerHTML = h;
-  sub.innerHTML = s;
+  // A blank sub-line would collapse the banner and make everything below it
+  // jump between states, so it keeps its height with the same &nbsp; the markup
+  // seeds. The trim also swallows the leading space excludedPhrase() leaves
+  // behind when it returns nothing.
+  s = s.replace(/^\s+|\s+$/g, "");
+  sub.innerHTML = (s === "") ? "&nbsp;" : s;
   ok.value = okLabel;
   ok.className = "k-" + (state === "recall" ? "rebuild" : state);
   el("KindOut").value = state;
@@ -954,6 +1054,10 @@ function initChamfers() {
     el("Slot").value = sel.options[sel.selectedIndex].value;
     seedFrom(rec);
     setBanner(stateFor(rec));
+    // Each chamfer remembers its OWN shapes, so the picture has to be re-read
+    // here. Without this a rebuild keeps drawing the first chamfer's part after
+    // the operator has picked a different one -- a confident, wrong picture.
+    parseOutlines();
     redraw();
   };
 }
@@ -983,6 +1087,7 @@ function seedFrom(rec) {
 // Respect defaults Lua seeded into the Mode/Percent hidden fields before
 // ShowDialog() (same convention as CutterName in Inlay Doctor's SetupDialog).
 function initFromDefaults() {
+  parseOutlines();
   var mv = el("Mode").value;
   if (mv) currentMode = mv;
   var pv = parseFloat(el("Percent").value);
@@ -1036,31 +1141,34 @@ function initBit() {
 
 function updateModeVisibility() {
   var modeRow = el("ModeRow");
-  var sizeLabel = el("SizeLabel");
+  // v1.15: the strip labels the boxes SIZE and START DEPTH and puts the unit in
+  // its own span beside each, so the label no longer carries it. Which EDGE the
+  // size measures moved to the segmented control below the box.
+  var sizeLabel = el("SizeUnit");
   var cap = el("ModeCaption");
   // The start depth is a plain length whatever the bit angle is, so unlike the
-  // size label it says the same thing in both branches -- only the unit moves.
-  var startLabel = el("StartLabel");
-  if (startLabel) startLabel.innerHTML = "Start depth (" + UNIT + "):";
+  // size it says the same thing in both branches -- only the unit moves.
+  var startLabel = el("StartUnit");
+  if (startLabel) startLabel.innerHTML = UNIT;
   // No bit yet: which edge of the corner you are dimensioning is a question
   // about the bit's angle, so it cannot be asked until there is a bit. Unlike
   // the 90 deg branch below this must NOT force currentMode -- nothing has
   // been decided here, only deferred until a bit arrives.
   if (!haveBit) {
     modeRow.style.display = "none";
-    sizeLabel.innerHTML = "Chamfer size (" + UNIT + "):";
+    sizeLabel.innerHTML = UNIT;
     cap.innerHTML = "";
     return;
   }
   if (currentAngle === 90) {
     modeRow.style.display = "none";
-    sizeLabel.innerHTML = "Chamfer size (" + UNIT + "):";
+    sizeLabel.innerHTML = UNIT;
     currentMode = "setback"; // setback == leg at 90 deg; either mode is equivalent
     el("Mode").value = currentMode;
     cap.innerHTML = "";
   } else {
     modeRow.style.display = "";
-    sizeLabel.innerHTML = "Size (" + UNIT + "):";
+    sizeLabel.innerHTML = UNIT;
     var radios = document.getElementsByName("ModeRadio");
     for (var i = 0; i < radios.length; i++) radios[i].checked = (radios[i].value === currentMode);
     setModeCaption();
@@ -1073,9 +1181,11 @@ function setModeCaption() {
   // Describes the edge, not the conversion. The arithmetic these used to state
   // (W = size, size*sin, size*tan) is in wFromSize() where it belongs; what the
   // operator needs here is which edge of the corner they are dimensioning.
-  if (currentMode === "setback") cap.innerHTML = "across the top face &mdash; how far in from the edge";
-  else if (currentMode === "face") cap.innerHTML = "along the slanted bevel face";
-  else if (currentMode === "leg") cap.innerHTML = "down the side face &mdash; how far below the top";
+  // Each opens with the mode's own name: the control beside the box lost its
+  // "size is a" lead-in to make room, so this line carries it instead.
+  if (currentMode === "setback") cap.innerHTML = "setback &mdash; across the top face, in from the edge";
+  else if (currentMode === "face") cap.innerHTML = "face &mdash; along the slanted bevel face";
+  else if (currentMode === "leg") cap.innerHTML = "leg &mdash; down the side face, below the top";
 }
 
 function initModeRadios() {
@@ -1195,7 +1305,10 @@ function applyAspireState() {
   var on = aspireMode();
   el("Presets").className = on ? "row off" : "row";
   el("PresetCap").style.display = on ? "" : "none";
-  el("ChartWrap").className = on ? "off" : "";
+  // v1.15: the flute chart is gone -- the gauge is drawn on the bit itself, and
+  // renderScene() simply leaves it off in aspire mode rather than greying a
+  // picture of a choice that no longer exists.
+  el("PosVal").className = on ? "off" : "";
   // The SIDE row greys on a NARROWER condition than the rest (2026-08-07,
   // side-on-flat-selections spec 5b). The cut position really is gone at any
   // size up here -- Aspire's engine runs its tip down the mitre and there is no
@@ -1210,8 +1323,11 @@ function applyAspireState() {
   // as a step on a pocket wall that came out clean the moment the toolpath was
   // switched to Outside by hand.
   var sideOff = on && !currentFlat;
-  el("SideGroup").className = sideOff ? "off" : "";
-  el("SideLabel").className = sideOff ? "off" : "";
+  // "segwrap" is the segmented control's own class and must survive the greying
+  // -- writing "off" alone strips it and the three buttons fall apart into
+  // three unstyled words.
+  el("SideGroup").className = sideOff ? "segwrap off" : "segwrap";
+  el("SideLabel").className = sideOff ? "rlab off" : "rlab";
   el("SideCap").style.display = sideOff ? "" : "none";
   // WHY it greyed, in the operator's terms (2026-08-07, spec 5c and 10f). Two
   // causes, and one sentence used to serve both: a recall run was told its
@@ -1304,322 +1420,1189 @@ function svgText(x, y, size, fill, str, anchor) {
   return t;
 }
 
-// The cut, in section. Ported from ReceiptDialog.htm (v1.5.0/v1.6.0) and
-// reflowed for a wide, short frame. The stock is deliberately NOT drawn to the
-// job's real thickness: a 0.02 in chamfer to scale in 0.75 in stock is 3% of
-// the picture and says nothing, and that is the common case. The hatched block
-// means "the material"; the depth-vs-stock question belongs to #DepthWarn above.
-var XE = 380, YT = 44, YB = 132, XL = 20;   // stock corner / block
-function drawSection(W, D, G, ang, S, refD, refG, dia, minD, passes) {
-  var svg = el("SecG");
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
+var SCENE_MONO = 'Consolas, monospace';
+// ---------------------------------------------------------------------------
+// The scene: the section drawing, the part view, and the two handles.
+//
+// This replaced drawSection()/drawModeInset() in v1.15. The rule the whole
+// design rests on (spec section "The rule that governs everything else"): THE
+// DRAWING DISPLAYS, IT NEVER DECIDES. Every quantity below arrives already
+// solved by solveBand()/passCount()/displayMaxSize(); the only arithmetic here
+// is how large to draw it.
+//
+// The design handoff carries its own model and it DISAGREES with ours -- it
+// slides the cut position along the raw flute, where EdgeBreaker measures
+// across the safe band (TIP_MARGIN..SHOULDER_MARGIN). Ours wins. The one thing
+// borrowed from the handoff is the auto-scale block marked below, which decides
+// how many drawing units an inch is worth so the picture always fits.
+//
+// Geometry, verified against solve() rather than assumed:
+//   solve()      g = standoff, d = (W + g) / tan(a)
+//   the drawing  tip sits g to the RIGHT of the wall and d BELOW the start line
+//   so           S (tip offset along the axis, drawing units) = g * u / tan(a)
+//   and          Ay = 150 + St + Wd + S  is exactly (start + d) * u below the top
+// ---------------------------------------------------------------------------
+var SCENE = { orange: null, blue: null, u: 1, tanH: 1, live: false };
+var VBW = 950, VBH = 380;           // the drawing's own coordinate box
+// Slack under the drawing. 40, not 16: the layout gate measures the lowest
+// child plus a 16px allowance and then demands 24px of slack on top, which is
+// the margin that stopped a zoomed Trident layout collapsing on 2026-07-27.
+// A drawing that sizes itself to its container has to hold that back itself.
+var SCENE_GUTTER = 40;
+var SEC_TOP = 150, SEC_RIGHT = 330, SEC_LEFT = 130, SEC_BOT = 330;
+var ISO_X = 740, ISO_Y = 68;
 
-  if (isNaN(S) || S < 0) S = 0;
-  if (isNaN(W) || isNaN(D) || isNaN(G) || isNaN(ang) || isNaN(refD) ||
-      isNaN(dia) || isNaN(minD) || W <= 0 || D <= 0 || ang <= 0 || dia <= 0) {
-    svg.appendChild(svgText(500, 86, 24, "#8a94a0", "(section view unavailable)", "middle"));
-    return false;
+// v1.16: the isometric block LEFT this drawing. It lives in the rail now, where
+// it has a column to itself and nothing to compete with, and the section
+// drawing's right-hand column is the live top view alone.
+//
+// The block still draws HERE in one case: when the operator's own outlines never
+// arrived (nothing selected, the point budget blown, a parse failure), the top
+// view cannot draw and the column would otherwise be blank. That is the only
+// caller left in the section drawing, and it gets the full size and the captions
+// -- alone in the column, its captions are the only thing naming the mode.
+//
+// The mini variant and its five constants are gone with it. Two shrunken
+// drawings sharing one narrow column is exactly the crowding CO-02 objects to,
+// and the rail solves it by giving the picture a column of its own.
+// The top view's pane, in canvas units. It has its own origin now rather than
+// being derived from the isometric block's, because the two are no longer the
+// same size: the block is a fixed-size drawing and the pane is as big as the
+// canvas can spare.
+//
+// 2026-08-13 (Tim: "still too small to really be practical"). The pane was
+// 200 x 130 sitting at 644,76 -- the box the isometric block used to fill.
+// Moving the total-depth dimension out of the gap (see drawSection) freed the
+// band it stood in, and this pane takes it: 358 x 296 at 562,64.
+// 1.8x wider and 2.3x taller, so the part inside draws about twice as big on
+// screen at every window size, since the canvas itself is unchanged.
+//
+// 562 is NOT a round number and must not be rounded down. Measured across twelve
+// bit and cut-position combinations, the furthest-right thing in the section
+// reaches x 548 -- the blue percentage beside the handle, on a 90 deg bit at
+// 100%. 540 was tried first, on a reading taken from a shallow bit alone, and it
+// put the cut-position caption inside the pane; check-topview.js caught it on two
+// cases (2026-08-13). Whatever is furthest right is the constraint on this
+// number, and today that is the percentage readout, not the caption.
+//
+// The height is what the right-hand half of the canvas has spare: below the pane
+// there is only the chamfer-size dimension and the standoff, both of them left of
+// x 340. Above it, the bit caption.
+//
+// Do not widen the CANVAS to get more -- it is letterboxed, and on a dragged-wide
+// window width is the binding axis, so a wider canvas shrinks the whole drawing.
+var TV_X = 562, TV_Y = 64, TV_W = 358, TV_H = 296;
+
+function sceneAdd(parent, tag, attrs, text) {
+  var e = svgEl(tag, attrs);
+  if (text !== undefined && text !== null) e.textContent = text;
+  parent.appendChild(e);
+  return e;
+}
+
+// The <svg> carries pixel width and height, never a percentage -- Trident does
+// not clip SVG and measures its text in unscaled viewBox units, which opens the
+// dialog with both scrollbars. The layout gate enforces it as a source check.
+function fitScene() {
+  var box = el("Scene"), svg = el("SceneSvg"), scroll = el("Scroll"), strip = el("Strip");
+  if (!box || !svg) return;
+  // The drawing takes whatever the banners leave. The banners come and go --
+  // three of them at once when a cut is both multi-pass and too deep -- so this
+  // cannot be a constant, and a constant tall enough for the worst case leaves
+  // a band of dead grey in the common one.
+  // SCENE_GUTTER of slack below the drawing, and it is not decoration: Trident
+  // rounds every child of a zoomed page on its own and a dozen pixels go
+  // missing, which is how the old two-column layout stacked and overflowed
+  // live on 2026-07-27. The layout gate holds the same 16px back before it
+  // calls a layout fitted.
+  if (scroll) {
+    var room = scroll.clientHeight - box.offsetTop - SCENE_GUTTER;
+    if (room > 160) box.style.height = room + "px";
   }
-  var a = (ang / 2) * Math.PI / 180;
-  // The frame has to hold the whole reach, not just the cut, or a recessed
-  // chamfer's tip is drawn below the bottom of the picture.
-  //
-  // v1.7.0: scale from the DEEPEST preset (refD/refG), never from the selected
-  // one. Scaling to the selection made depth the limiting term in every real
-  // case, so k came out as exactly 70/(D+S) and the tip was drawn at exactly 70
-  // units deep NO MATTER WHICH PRESET WAS PICKED -- the one quantity the preset
-  // actually changes was the one it could never show. Worse, W was then drawn
-  // at 110*W/(D+S) and so SHRANK as the preset rose, even though the chamfer is
-  // identical at every preset. Stepping 20% -> 100% read as "the bit backs away
-  // from the edge and the chamfer gets smaller"; the truth is "the bit plunges
-  // nearly twice as deep and the chamfer does not change at all" (found live
-  // 2026-07-27, by the operator, on the five presets side by side).
-  //
-  // Keying on the deepest preset makes W and the stock fixed across presets, so
-  // the only thing that moves is the bit -- down and out along the bevel line,
-  // which is exactly what choosing a higher cut position does. The deepest
-  // preset still fills the frame exactly as before, so this can only ever draw
-  // SMALLER than the old code: the worst case for layout is unchanged.
-  //
-  // The bit is drawn as the WHOLE flute, tip to shoulder (see below), so the
-  // air above the stock has to hold however much of it is not buried. That is
-  // largest at the SHALLOWEST preset (minD), and like refD it must not depend
-  // on the selection, or k would start moving per preset again and undo the
-  // paragraph above. `flute` is the cone's depth at full diameter.
-  var flute = (dia / 2) / Math.tan(a);
-  var above = Math.max(flute - minD - S, 1e-9);   // reach above the stock's top
-  var k = Math.min(70 / (refD + S), 130 / Math.max(refG, 1e-9), 110 / W,
-                   (YT - 2) / above);
-  var w = W * k, g = G * k, d = D * k, sy = S * k;
-  var v = w / Math.tan(a);                  // vertical drop of the bevel face
-  var YS = YT + sy;                         // the surface the edge sits on
-  var tipX = XE + g, tipY = YS + d;
+  var w = box.clientWidth || box.offsetWidth, h = box.clientHeight || box.offsetHeight;
+  if (!w || !h) return;
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+}
 
-  // Stock, with the chamfered corner already taken off it. With a start depth
-  // the block keeps its full height on the left and steps down to the recessed
-  // surface, so the picture says "the top of the stock is up here, the edge is
-  // down there". At S = 0 this is the flat-topped block.
-  var XSTEP = XL + 110;
-  var block = (S > 0)
-    ? XL + "," + YT + " " + XSTEP + "," + YT + " " + XSTEP + "," + YS + " " +
-      (XE - w) + "," + YS + " " + XE + "," + (YS + v) + " " + XE + "," + YB +
-      " " + XL + "," + YB
-    : XL + "," + YT + " " + (XE - w) + "," + YT + " " + XE + "," + (YT + v) +
-      " " + XE + "," + YB + " " + XL + "," + YB;
-  svg.appendChild(svgEl("polygon", { points: block, fill: "#e9edf1" }));
-  svg.appendChild(svgEl("polygon", { points: block, fill: "url(#hatch)" }));
-  if (S > 0) {
-    svg.appendChild(svgEl("line", { x1: XL, y1: YT, x2: XSTEP, y2: YT,
-                                    stroke: "#5d6875", "stroke-width": 3 }));
-    svg.appendChild(svgEl("line", { x1: XSTEP, y1: YT, x2: XSTEP, y2: YS,
-                                    stroke: "#5d6875", "stroke-width": 3 }));
+// DOUBLE BUFFERED. The scene used to be emptied in place and then refilled,
+// which means the half-built picture is on screen while it is being built. In
+// Chrome that is invisible; in Trident it is the flicker Tim reported while
+// dragging a handle on 2026-08-12, because a drag rebuilds the whole drawing on
+// every mouse move and the emptied state gets painted.
+//
+// So: build into a group that is not in the document yet, then put it in with
+// ONE replaceChild. The partial state is never on screen and there is no frame
+// where the drawing is missing.
+//
+// The swap happens even when renderSceneInto returns false, and that is
+// deliberate -- it preserves exactly what the in-place version did, which is to
+// leave the scene empty or part-built on a refusal rather than showing the
+// previous cut's picture. A stale picture is the worse failure: it is confident
+// and wrong.
+//
+// Safe here for two reasons worth writing down, because both would break it:
+// nothing in the build looks its own nodes up by id (getElementById cannot see
+// a detached tree), and SCENE.orange/yellow/blue hold COORDINATES, not element
+// references, so the hit-test does not care that the nodes were replaced.
+// drawRailSpec is NOT double buffered for the first of those reasons -- it ends
+// in a getBBox(), which reads zero on a detached group.
+function renderScene(p) {
+  var host = el("SceneSvg"), old = el("SceneG");
+  if (!host || !old) return false;
+  var fresh = svgEl("g", { id: "SceneG" });
+  var ok = renderSceneInto(fresh, p);
+  host.replaceChild(fresh, old);
+  return ok;
+}
+
+// p: { W, g, d, ang, dia, start, passes, aspire, percent, locked, unit }
+function renderSceneInto(g, p) {
+  SCENE.live = false;
+
+  var a = halfAngle(p.ang), tanH = Math.tan(a);
+  var rad = p.dia / 2, fluteIn = rad / tanH;
+  if (!(p.W > 0) || !(rad > 0) || !(tanH > 0)) return false;
+
+  // ---- the handoff's auto-scale, and the only thing borrowed from it -------
+  var u = Math.min(154 / Math.max(p.W, 0.02),
+                   222 / (p.d + p.start + 0.9 * fluteIn),
+                   104 / rad,
+                   140 * tanH / rad);
+  if (!isFinite(u) || u <= 0) return false;
+  SCENE.u = u; SCENE.tanH = tanH;
+
+  var W = Math.max(6, Math.round(p.W * u));   // chamfer width, drawing units
+  var Wd = W / tanH;                          // its vertical drop
+  var St = Math.round(p.start * u);           // start depth
+  var S = Math.round(p.g * u / tanH);         // tip offset along the axis
+  var cR = rad * u, Lf = cR / tanH;
+  var Ax = SEC_RIGHT + S * tanH, Ay = SEC_TOP + St + Wd + S, iRim = Ay - Lf;
+  // The start-depth handle's column. Declared up here because three separate
+  // blocks below line up on it: the dimension's number, the handle itself, and
+  // the handle's label. 244 unless the chamfer has grown far enough left to
+  // reach it, in which case it keeps 26 units clear of the face's top end.
+  var yx = Math.min(244, SEC_RIGHT - W - 26);
+
+  // ---- patterns -----------------------------------------------------------
+  var defs = sceneAdd(g, "defs", {});
+  var grid = sceneAdd(defs, "pattern",
+    { id: "ebGrid", width: 28, height: 28, patternUnits: "userSpaceOnUse" });
+  sceneAdd(grid, "path", { d: "M28 0H0V28", fill: "none", stroke: "#f2efeb", "stroke-width": 1 });
+  var hat = sceneAdd(defs, "pattern",
+    { id: "ebHatch", width: 9, height: 9, patternUnits: "userSpaceOnUse",
+      patternTransform: "rotate(45)" });
+  sceneAdd(hat, "line", { x1: 0, y1: 0, x2: 0, y2: 9, stroke: "#cfc7b8", "stroke-width": 1.6 });
+  sceneAdd(g, "rect", { x: 0, y: 0, width: VBW, height: VBH, fill: "url(#ebGrid)" });
+
+  // ---- the part view ------------------------------------------------------
+  // The real part when we have it, the generic block when we do not
+  // (live-top-view spec 8a). The fallback is silent to the operator and
+  // printed for the gate.
+  //
+  // The block draws here ONLY when the top view could not. It is the rail's
+  // picture now; this is the blank-column fallback.
+  if (!drawTopView(g, p.W, el("Side").value))
+    drawPartView(g, { scale: 1.3, origin: [ISO_X, ISO_Y], captions: true });
+
+  // ---- the material -------------------------------------------------------
+  var stepX = 214;
+  var prof = (St < 2)
+    ? SEC_LEFT + "," + SEC_TOP + " " + (SEC_RIGHT - W) + "," + SEC_TOP + " " +
+      SEC_RIGHT + "," + (SEC_TOP + Wd) + " " + SEC_RIGHT + "," + SEC_BOT + " " +
+      SEC_LEFT + "," + SEC_BOT
+    : [SEC_LEFT + "," + SEC_TOP, stepX + "," + SEC_TOP, stepX + "," + (SEC_TOP + St),
+       (SEC_RIGHT - W) + "," + (SEC_TOP + St), SEC_RIGHT + "," + (SEC_TOP + St + Wd),
+       SEC_RIGHT + "," + SEC_BOT, SEC_LEFT + "," + SEC_BOT].join(" ");
+  var profEdge = (St < 2)
+    ? SEC_LEFT + "," + SEC_BOT + " " + SEC_LEFT + "," + SEC_TOP + " " + (SEC_RIGHT - W) + "," + SEC_TOP
+    : [SEC_LEFT + "," + SEC_BOT, SEC_LEFT + "," + SEC_TOP, stepX + "," + SEC_TOP,
+       stepX + "," + (SEC_TOP + St), (SEC_RIGHT - W) + "," + (SEC_TOP + St)].join(" ");
+  sceneAdd(g, "polygon", { points: prof, fill: "#e7e1d6" });
+  sceneAdd(g, "polygon", { points: prof, fill: "url(#ebHatch)", "fill-opacity": 0.85 });
+  sceneAdd(g, "polyline", { points: profEdge, fill: "none", stroke: "#6f6a63", "stroke-width": 2 });
+  sceneAdd(g, "polyline", { points: SEC_RIGHT + "," + (SEC_TOP + St + Wd) + " " + SEC_RIGHT + "," + SEC_BOT,
+                            fill: "none", stroke: "#6f6a63", "stroke-width": 2 });
+  sceneAdd(g, "text", { x: SEC_LEFT + 12, y: SEC_BOT - 14, "font-family": SCENE_MONO,
+                        "font-size": 10, fill: "#8b867e" }, "MATERIAL");
+  sceneAdd(g, "polygon", { points: (SEC_RIGHT - W) + "," + (SEC_TOP + St) + " " +
+                                   SEC_RIGHT + "," + (SEC_TOP + St + Wd) + " " +
+                                   SEC_RIGHT + "," + (SEC_TOP + St), fill: "#fdf0e2" });
+
+  // start depth, dimensioned only when there is room to read it
+  if (St >= 4) {
+    sceneAdd(g, "line", { x1: stepX, y1: SEC_TOP, x2: stepX, y2: SEC_TOP + St,
+                          stroke: "#57534c", "stroke-width": 1.2 });
+    sceneAdd(g, "line", { x1: stepX - 6, y1: SEC_TOP, x2: stepX + 6, y2: SEC_TOP,
+                          stroke: "#57534c", "stroke-width": 1 });
+    sceneAdd(g, "line", { x1: stepX - 6, y1: SEC_TOP + St, x2: stepX + 6, y2: SEC_TOP + St,
+                          stroke: "#57534c", "stroke-width": 1 });
+    // The number goes ABOVE THE TOP FACE, stacked over the handle's own label
+    // and right-aligned to the same edge. It used to sit to the left of the step
+    // ON the hatched material, and had done since the feature shipped -- no gate
+    // case set a start depth, so this whole band was never measured (three cases
+    // added to tests\check-drawing-labels.js, 2026-08-12).
+    //
+    // The notch the start depth opens up looks like the obvious home for it and
+    // is not one: the label gate measures against each shape's BOUNDING BOX, and
+    // the material polygon's box covers the notch even though the polygon does
+    // not. Above the top face is genuinely clear at every start depth.
+    // The REAL start depth, not St converted back. St is a ROUNDED pixel count,
+    // so quoting it back reads 0.149 beside a box the operator typed 0.15 into
+    // (2026-08-12). Same rule as the setback dimension below, and the same
+    // reason: a drawing that disagrees with its own control is what this design
+    // exists to stop. Same f4 as that dimension, so the two numbers match in
+    // style as well as in truth.
+    sceneAdd(g, "text", { x: yx - 10, y: 130, "text-anchor": "end",
+                          "font-family": SCENE_MONO, "font-size": 10, "font-weight": 700,
+                          fill: "#3d3a35" }, f4(p.start));
+    // The "start depth" caption that used to sit under this number is gone: the
+    // yellow handle's own label says it, in the handle's colour, and saying it
+    // twice in one corner of the drawing is what CO-01 is removing.
   }
-  svg.appendChild(svgEl("line", { x1: (S > 0) ? XSTEP : XL, y1: YS, x2: XE - w, y2: YS,
-                                  stroke: "#5d6875", "stroke-width": 3 }));
-  svg.appendChild(svgEl("line", { x1: XE, y1: YS + v, x2: XE, y2: YB,
-                                  stroke: "#5d6875", "stroke-width": 3 }));
-  // In the full-height shelf when there is a step: the band left below the
-  // recessed surface is thin and vanishes entirely as the start depth grows.
-  svg.appendChild(svgText((S > 0) ? (XL + XSTEP) / 2 : 150, YT + 44, 22, "#8a94a0",
-                          "STOCK", "middle"));
 
-  // The bit: the WHOLE flute, tip to shoulder, at the real half-angle.
-  //
-  // It used to be drawn only as far as 12 units above the recessed surface --
-  // i.e. its length was the cut depth plus a sliver. That made the top of the
-  // cutter land ON the material's top face at EVERY preset, which reads as the
-  // shoulder permanently in contact (operator, live 2026-07-27). The truth is
-  // that only the orange bevel touches; everything above it is cone standing in
-  // open air, and how much of the flute is buried is precisely what the cut
-  // position changes. Drawing the real flute says that without a caption: at
-  // 20% the bit stands well clear of the stock, at 100% it is buried nearly to
-  // the shoulder. k already reserves the head room this needs (see above), so
-  // the shoulder cannot be pushed out of the frame.
-  var up = flute * k, dx = up * Math.tan(a), shoulderY = tipY - up;
-  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: tipX - dx, y2: shoulderY,
-                                  stroke: "#4c6ef5", "stroke-width": 4 }));
-  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: tipX + dx, y2: shoulderY,
-                                  stroke: "#4c6ef5", "stroke-width": 4 }));
-  // The shoulder itself. Without it the flanks just stop, and "how close is
-  // this cut to the shoulder limit" -- the question the presets are really
-  // asking -- has nothing to be measured against.
-  svg.appendChild(svgEl("line", { x1: tipX - dx, y1: shoulderY, x2: tipX + dx, y2: shoulderY,
-                                  stroke: "#4c6ef5", "stroke-width": 3 }));
-  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: tipX, y2: shoulderY,
-                                  stroke: "#9aa5b0", "stroke-width": 1.5,
-                                  "stroke-dasharray": "6,5" }));
-  // The chamfer itself -- the one orange line, drawn AFTER the flanks: the
-  // flank is what cuts the facet, so the two lie on top of each other and
-  // whichever goes last is the one you see.
-  svg.appendChild(svgEl("line", { x1: XE - w, y1: YS, x2: XE, y2: YS + v,
-                                  stroke: "#f76707", "stroke-width": 6 }));
-  // Angle arc, labelled OUTSIDE the right flank rather than above the tip: on
-  // a shallow bit the V is only a few units wide and the label lands inside it.
-  // The arc has to be sized to the V it annotates, not fixed. Once presets
-  // stopped renormalising the scale, a low preset draws a genuinely small bit,
-  // and a fixed 46-unit radius then arced clean over the tip and through the W
-  // label above it. Capping it at about half the drawn flank keeps it inside
-  // the V at every preset and angle.
-  var ar = Math.min(46, 0.55 * (tipY - (YS - 12)));
-  var ax = ar * Math.sin(a), ay = ar * Math.cos(a);
-  svg.appendChild(svgEl("path", {
-    d: "M " + (tipX - ax) + " " + (tipY - ay) + " A " + ar + " " + ar + " 0 0 1 " +
-       (tipX + ax) + " " + (tipY - ay),
-    fill: "none", stroke: "#667", "stroke-width": 1.5 }));
-  // The label rides with the tip, and once the section stopped renormalising
-  // per preset (above) a low preset genuinely draws the tip close to the
-  // surface -- impossible before, when every preset was forced to the same
-  // depth. On a shallow bit that lifted this label into the W label's line and
-  // the two ran together (rendered 60 deg / 0.5 dia / S 0.1 at 20%). Floor it
-  // below the surface so it clears W by construction, not by luck: W's text
-  // sits above YS - 12, so a baseline at YS + 14 leaves a gap no bit angle or
-  // preset can close.
-  var angY = Math.max(tipY - ay + 7, YS + 14);
-  svg.appendChild(svgText(tipX + ax + 16, angY, 22, "#667", fnum(ang) + "°"));
+  // ---- the cutter ---------------------------------------------------------
+  sceneAdd(g, "polygon", { points: [(Ax - cR) + ",20", (Ax + cR) + ",20",
+                                    (Ax + cR) + "," + iRim, Ax + "," + Ay,
+                                    (Ax - cR) + "," + iRim].join(" "),
+                           fill: "#e2e9ef", "fill-opacity": 0.8, stroke: "#7d9ab2",
+                           "stroke-width": 1.3, "stroke-linejoin": "round" });
+  sceneAdd(g, "line", { x1: Ax - cR, y1: iRim, x2: Ax + cR, y2: iRim,
+                        stroke: "#b9cad6", "stroke-width": 1, "stroke-dasharray": "4 4" });
 
-  // Dimensions. W above the top face, D on a column clear of both the tip and
-  // the angle label, G on the green line from the bottom of the bevel to the tip.
-  // No tick line for W any more. It marked the bevel's horizontal extent 12
-  // units above the surface, which sat directly under the old centred label;
-  // with the label moved (below) and the flute drawn full length, that tick
-  // became a stray dash floating INSIDE the cutter, connected to nothing. The
-  // orange facet is the thing being dimensioned and the label now sits against
-  // it, so the tick has no work left to do.
-  // The label sits just INSIDE the top face, right-aligned beside the bevel,
-  // rather than centred above it: the air above the bevel now belongs to the
-  // flute (see the bit, above), and a full-length flank runs straight through
-  // where this text used to be. Inside the stock is the only region the cutter
-  // can never reach. A plain white plate goes behind it because the hatching
-  // runs underneath -- Trident has no paint-order, so a stroked text halo is
-  // not available; the plate is sized from the string, which only has to be
-  // generous, not exact.
-  var wtxt = "W " + fnum(W) + " " + UNIT;
-  var wx = XE - w - 10, wy = YS + 28;
-  svg.appendChild(svgEl("rect", { x: wx - (wtxt.length * 12 + 8), y: wy - 20,
-                                  width: wtxt.length * 12 + 8, height: 27,
-                                  fill: "#fff", opacity: 0.92 }));
-  svg.appendChild(svgText(wx, wy, 24, "#334", wtxt, "end"));
-  var DX = Math.max(tipX + 110, 620);
-  svg.appendChild(svgEl("line", { x1: DX, y1: YS, x2: DX, y2: tipY,
-                                  stroke: "#334", "stroke-width": 2, "stroke-dasharray": "4,4" }));
-  svg.appendChild(svgEl("line", { x1: tipX, y1: tipY, x2: DX, y2: tipY,
-                                  stroke: "#cdd3d9", "stroke-width": 1.5 }));
-  svg.appendChild(svgText(DX + 12, (YS + tipY) / 2 + 8, 24, "#334",
-                          "D " + fnum(D) + " " + UNIT));
-  // The start depth, measured in the air the step cut away: same letter-plus-
-  // number language as W, D and G, so the drawing needs no legend.
-  if (S > 0) {
-    var SX = XSTEP + 40;
-    svg.appendChild(svgEl("line", { x1: SX, y1: YT, x2: SX, y2: YS,
-                                    stroke: "#334", "stroke-width": 2, "stroke-dasharray": "4,4" }));
-    svg.appendChild(svgEl("line", { x1: XSTEP, y1: YT, x2: SX + 8, y2: YT,
-                                    stroke: "#cdd3d9", "stroke-width": 1.5 }));
-    svg.appendChild(svgEl("line", { x1: XSTEP, y1: YS, x2: SX + 8, y2: YS,
-                                    stroke: "#cdd3d9", "stroke-width": 1.5 }));
-    svg.appendChild(svgText(SX + 14, (YT + YS) / 2 + 8, 24, "#334",
-                            "S " + fnum(S) + " " + UNIT));
-  }
-  svg.appendChild(svgEl("line", { x1: XE, y1: YS + v, x2: tipX, y2: tipY,
-                                  stroke: "#2f9e4f", "stroke-width": 3, "stroke-dasharray": "3,3" }));
-  svg.appendChild(svgText(tipX + 10, tipY + 26, 22, "#2f9e4f", "G " + fnum(G) + " " + UNIT));
-  // The earlier passes, ghosted. The pass count is the one genuinely new fact
-  // this feature creates: a drawing showing a single pass would be quietly
-  // misleading, and N equal-weight outlines would make the picture about the
-  // tool rather than about the chamfer.
-  //
-  // Only the WASTE-side flank of each upper pass is drawn. Its part-side flank
-  // lies exactly along the chamfer face -- every pass's does, that is the whole
-  // geometry -- so drawing it would just re-ink the orange line.
-  //
-  // Bounded by construction, which is why this cannot overflow: the flank
-  // reaches the surface at XE + k*(2q + W), and q <= -bandW for every upper
-  // pass, so the endpoint stays inside XE +/- w, and w <= 110 already.
-  // DASHED, and that is not decoration. Drawn solid at 0.35 the flanks are thin
-  // diagonals of about the weight and angle of the stock hatching, sitting in
-  // the air the chamfer has just REMOVED -- so at six and eight passes the waste
-  // triangle fills with parallel lines and reads as solid material, the exact
-  // opposite of the truth. Found by rendering it and looking, not by the gate,
-  // which cannot fail on ink that fits. Dashed and a shade stronger, they read
-  // as tool positions against the solid hatch.
-  if (passes > 1) {
-    // The seams are evenly spaced along the face, one band apart, so the whole
-    // face length divided by the pass count IS the gap between rings. At eight
-    // passes that gap closes to about the ring's own width and the chain of
-    // rings reads as a dashed orange line rather than as marks on a face, so
-    // the ring shrinks to keep them apart. Capped at 3.5, so the counts an
-    // operator actually cuts are drawn exactly as before.
-    var seamGap = Math.sqrt(w * w + v * v) / passes;
-    var sr = Math.min(3.5, seamGap / 4);
-    for (var pk = 1; pk < passes; pk++) {
-      var pg = passGeometry(pk, passes, W, G, a);
-      var px = XE + pg.offset * k, py = YS + pg.depth * k;
-      svg.appendChild(svgEl("line", {
-        x1: px, y1: py, x2: px + (py - YS) * Math.tan(a), y2: YS,
-        stroke: "#4c6ef5", "stroke-width": 2, opacity: 0.5,
-        "stroke-dasharray": "6,5" }));
-      // The seam: where this pass's tip sits ON the finished face. There are
-      // passes-1 of them, never passes -- the final pass's tip is out in the
-      // waste, clear of the face, and leaves no mark.
-      svg.appendChild(svgEl("circle", {
-        cx: px, cy: py, r: sr, fill: "#fff", stroke: "#f76707",
-        "stroke-width": sr >= 3 ? 2 : 1.5 }));
+  // The flute gauge. Absent in aspire mode: the tip rides the mitre, there is
+  // no position to pick, and a gauge beside a control that does nothing is the
+  // contradiction the greying elsewhere exists to remove.
+  if (!p.aspire) {
+    sceneAdd(g, "line", { x1: Ax, y1: iRim, x2: Ax, y2: Ay, stroke: "#7d9ab2", "stroke-width": 1.6 });
+    var ticks = [[1, "100"], [0.8, ""], [0.6, "60"], [0.4, ""], [0.2, "20"], [0, "0"]];
+    for (var r = 0; r < ticks.length; r++) {
+      var fr = ticks[r][0], lbl = ticks[r][1], ty = Ay - Lf * fr;
+      sceneAdd(g, "line", { x1: Ax - (lbl ? 6 : 4), y1: ty, x2: Ax + (lbl ? 6 : 4), y2: ty,
+                            stroke: "#7d9ab2", "stroke-width": lbl ? 1.2 : 1 });
+      if (lbl) sceneAdd(g, "text", { x: Ax + Math.max(12, (Ay - ty) * tanH + 10), y: ty + 3.5,
+                                     "font-family": SCENE_MONO, "font-size": 9.5,
+                                     fill: "#5a748a" }, lbl);
     }
   }
+
+  // ---- the chamfer face ---------------------------------------------------
+  sceneAdd(g, "line", { x1: SEC_RIGHT - W, y1: SEC_TOP + St, x2: SEC_RIGHT, y2: SEC_TOP + St + Wd,
+                        stroke: "#e07b20", "stroke-width": 3 });
+  if (p.aspire)
+    sceneAdd(g, "line", { x1: SEC_RIGHT - W, y1: SEC_TOP + St, x2: Ax - cR, y2: iRim,
+                          stroke: "#a8352b", "stroke-width": 3, "stroke-dasharray": "5 4" });
+  // Where the passes meet. The seams the operator may see and sand out.
+  for (var k = 1; p.passes > 1 && k < p.passes; k++) {
+    var q = k / p.passes, px = SEC_RIGHT - W + W * q, py = SEC_TOP + St + Wd * q;
+    sceneAdd(g, "line", { x1: px - 6, y1: py + 6, x2: px + 6, y2: py - 6,
+                          stroke: "#b57612", "stroke-width": 1.6 });
+  }
+
+  // ---- the blue handle ----------------------------------------------------
+  var blueY = Ay - S;
+  if (!p.aspire) {
+    sceneAdd(g, "polygon", { points: Ax + "," + (blueY - 15) + " " + (Ax - 4) + "," + (blueY - 8) +
+                                     " " + (Ax + 4) + "," + (blueY - 8), fill: "#2b6c93" });
+    sceneAdd(g, "polygon", { points: Ax + "," + (blueY + 15) + " " + (Ax - 4) + "," + (blueY + 8) +
+                                     " " + (Ax + 4) + "," + (blueY + 8), fill: "#2b6c93" });
+    sceneAdd(g, "circle", { cx: Ax, cy: blueY, r: 7, fill: "#3a86b3", stroke: "#20597c",
+                            "stroke-width": 1.4 });
+    sceneAdd(g, "text", { x: Ax + cR + 10, y: blueY + 4, "font-family": SCENE_MONO,
+                          "font-size": 12, "font-weight": 700, fill: "#2b6c93" }, p.percent + "%");
+    SCENE.blue = { x: Ax, y: blueY };
+  } else {
+    sceneAdd(g, "text", { x: Ax + cR + 10, y: Ay - 10, "font-family": SCENE_MONO,
+                          "font-size": 12, "font-weight": 700, fill: "#1b6f9c" }, "tip");
+    SCENE.blue = null;
+  }
+
+  // ---- the chamfer dimension and the orange handle ------------------------
+  sceneAdd(g, "line", { x1: SEC_RIGHT - W, y1: 336, x2: SEC_RIGHT - W, y2: 358,
+                        stroke: "#e8b98a", "stroke-width": 1 });
+  sceneAdd(g, "line", { x1: SEC_RIGHT, y1: 336, x2: SEC_RIGHT, y2: 358,
+                        stroke: "#e8b98a", "stroke-width": 1 });
+  sceneAdd(g, "line", { x1: SEC_RIGHT - W, y1: 350, x2: SEC_RIGHT, y2: 350,
+                        stroke: "#e07b20", "stroke-width": 1.4 });
+  // The REAL setback, not the drawing's rounded width. Converting the drawn
+  // pixel count back would quote the picture at the operator -- 0.0577 beside a
+  // box reading 0.058 -- and a drawing that disagrees with its own control is
+  // the thing this design is supposed to stop. The start-depth number above
+  // follows the same rule, since 2026-08-12.
+  // The id is what tests\check-scene.js anchors on. Colour and weight are not
+  // enough to find it by -- the legend heading wears both.
+  sceneAdd(g, "text", { id: "SceneSizeDim", x: SEC_RIGHT - W - 12, y: 349, "text-anchor": "end",
+                        "font-family": SCENE_MONO, "font-size": 12, "font-weight": 700,
+                        fill: "#c26510" }, f4(p.W));
+  // CO-01 s2: the dimension's caption NAMES THE HANDLE that changes it, in the
+  // handle's own colour. It used to read "chamfer", which the number above it
+  // already said.
+  //
+  // Beside the dot itself there is nowhere for this to go: the dot rides the
+  // material's own right edge, so every position within reading distance is on
+  // the hatch -- and a white halo to sit a label on the hatch punches a notch
+  // out of the workpiece and reads as a break in it. The dimension is directly
+  // below the dot, in the clear, and is the number the dot moves. TIM STILL
+  // OWES A RULING ON THIS ONE.
+  sceneAdd(g, "text", { id: "LblSize", x: SEC_RIGHT - W - 12, y: 363, "text-anchor": "end",
+                        "font-family": SCENE_MONO, "font-size": 11, "font-weight": 700,
+                        fill: "#c26510" }, "↕ CHAMFER SIZE");
+
+  // CO-01: the orange dot rides the chamfer face's LOWER end, not its upper one.
+  // Same handle, same value, opposite end of the same line -- and the point of
+  // the move is the direction of travel. At the upper end (SEC_RIGHT - W) the
+  // dot walks LEFT as the chamfer grows, which is why it used to drag
+  // horizontally; at the lower end it walks DOWN, so both handles drag on the
+  // same axis and start depth can have one of its own.
+  var ox = SEC_RIGHT, oy = SEC_TOP + St + Wd;
+  sceneAdd(g, "polygon", { points: ox + "," + (oy - 12) + " " + (ox - 4) + "," + (oy - 5) + " " +
+                                   (ox + 4) + "," + (oy - 5), fill: "#c26510" });
+  sceneAdd(g, "polygon", { points: ox + "," + (oy + 12) + " " + (ox - 4) + "," + (oy + 5) + " " +
+                                   (ox + 4) + "," + (oy + 5), fill: "#c26510" });
+  sceneAdd(g, "circle", { cx: ox, cy: oy, r: 7, fill: "#e07b20", stroke: "#a9631a",
+                          "stroke-width": 1.4 });
+  SCENE.orange = { x: ox, y: oy };
+
+  // The start-depth handle. Its own control now: one handle, one quantity, one
+  // axis. It sits on the surface line, left of the chamfer, at the same x as
+  // its label so the two travel together.
+  var yy = SEC_TOP + St;
+  sceneAdd(g, "polygon", { points: yx + "," + (yy - 12) + " " + (yx - 4) + "," + (yy - 5) + " " +
+                                   (yx + 4) + "," + (yy - 5), fill: "#8a6c26" });
+  sceneAdd(g, "polygon", { points: yx + "," + (yy + 12) + " " + (yx - 4) + "," + (yy + 5) + " " +
+                                   (yx + 4) + "," + (yy + 5), fill: "#8a6c26" });
+  sceneAdd(g, "rect", { x: yx - 7, y: yy - 7, width: 14, height: 14, rx: 2,
+                        fill: "#d9b23c", stroke: "#8a6c26", "stroke-width": 1.4 });
+  SCENE.yellow = { x: yx, y: yy };
+
+  // ---- total depth D ------------------------------------------------------
+  // D moved to the LEFT of the material, 2026-08-13 (Tim). It used to stand in
+  // the gap between the section and the top view, following the bit rightward,
+  // and measurement said it was the rightmost thing in the whole section --
+  // 630 canvas units at a 1/4" 90 deg bit, against 488 for everything else. That
+  // gap is the only width the top view can be given, and D was sitting in it.
+  //
+  // Left of the part is where a drafter would put it anyway: the band from 0 to
+  // SEC_LEFT is empty at every state, D no longer chases the bit, and the cut
+  // position label beside the blue dot stops being blocked by it.
+  //
+  // Two extension lines carry the top face and the tip depth out to the
+  // dimension, which is what makes a dimension outside the part readable.
+  var Dx = 40, Dnarrow = (Ay - SEC_TOP) < 34;
+  sceneAdd(g, "line", { x1: Dx, y1: SEC_TOP, x2: SEC_LEFT, y2: SEC_TOP,
+                        stroke: "#a8a49c", "stroke-width": 1 });
+  sceneAdd(g, "line", { x1: Dx, y1: Ay, x2: SEC_LEFT, y2: Ay,
+                        stroke: "#a8a49c", "stroke-width": 1 });
+  sceneAdd(g, "line", { x1: Dx, y1: SEC_TOP, x2: Dx, y2: Ay, stroke: "#57534c", "stroke-width": 1.2 });
+  sceneAdd(g, "polygon", { points: Dnarrow
+      ? (Dx + "," + SEC_TOP + " " + (Dx - 5) + "," + (SEC_TOP - 12) + " " + (Dx + 5) + "," + (SEC_TOP - 12))
+      : (Dx + "," + (SEC_TOP + 2) + " " + (Dx - 5) + "," + (SEC_TOP + 14) + " " + (Dx + 5) + "," + (SEC_TOP + 14)),
+    fill: "#57534c" });
+  sceneAdd(g, "polygon", { points: Dnarrow
+      ? (Dx + "," + Ay + " " + (Dx - 5) + "," + (Ay + 12) + " " + (Dx + 5) + "," + (Ay + 12))
+      : (Dx + "," + (Ay - 2) + " " + (Dx - 5) + "," + (Ay - 14) + " " + (Dx + 5) + "," + (Ay - 14)),
+    fill: "#57534c" });
+  // It said "D", 2026-08-13 (Tim): "it could be confused with the depth of the
+  // chamfer or the size of the chamfer, which it isn't". It is neither. It is how
+  // far the tip ends up below the surface -- the start depth plus the plunge --
+  // and it is also NOT the report's "Plunge D" row, which is the plunge alone.
+  // One letter shared between two different quantities is the whole confusion, so
+  // the letter is gone: the words say what is measured, and the caption names the
+  // two ends of the measurement so it cannot be read as anything else.
+  var Dmid = (SEC_TOP + Ay) / 2;
+  sceneAdd(g, "text", { x: Dx + 12, y: Dmid - 8, "font-family": SCENE_MONO,
+                        "font-size": 10, "font-weight": 700, fill: "#3d3a35" }, "TOTAL DEPTH");
+  sceneAdd(g, "text", { x: Dx + 12, y: Dmid + 6, "font-family": SCENE_MONO,
+                        "font-size": 11, fill: "#3d3a35" }, f4(p.start + p.d));
+  sceneAdd(g, "text", { x: Dx + 12, y: Dmid + 19, "font-family": SCENE_MONO,
+                        "font-size": 9, fill: "#77726a" }, "surface to tip");
+
+  // ---- the standoff, which is what the position really changes ------------
+  // Not in aspire mode: the tip rides the mitre, so the standoff is zero by
+  // construction and dimensioning it would put "0.0000" on the drawing as
+  // though it were a choice somebody made.
+  var gy = Math.min(Ay + 20, 342);
+  if (!p.aspire) {
+  sceneAdd(g, "line", { x1: SEC_RIGHT, y1: SEC_TOP + St + Wd + 4, x2: SEC_RIGHT, y2: gy + 8,
+                        stroke: "#a8a49c", "stroke-width": 1 });
+  sceneAdd(g, "line", { x1: Ax, y1: Ay + 4, x2: Ax, y2: gy + 8, stroke: "#a8a49c", "stroke-width": 1 });
+  sceneAdd(g, "line", { x1: SEC_RIGHT, y1: gy, x2: Math.max(Ax, SEC_RIGHT + 1), y2: gy,
+                        stroke: "#8b867e", "stroke-width": 1.2 });
+  if (Ax - SEC_RIGHT >= 30) {
+    sceneAdd(g, "polygon", { points: (SEC_RIGHT + 2) + "," + gy + " " + (SEC_RIGHT + 12) + "," + (gy - 4) +
+                                     " " + (SEC_RIGHT + 12) + "," + (gy + 4), fill: "#8b867e" });
+    sceneAdd(g, "polygon", { points: (Ax - 2) + "," + gy + " " + (Ax - 12) + "," + (gy - 4) + " " +
+                                     (Ax - 12) + "," + (gy + 4), fill: "#8b867e" });
+  }
+  sceneAdd(g, "text", { x: SEC_RIGHT, y: gy + 18, "font-family": SCENE_MONO, "font-size": 11,
+                        "font-weight": 700, fill: "#3d3a35" }, f4(p.g));
+  sceneAdd(g, "text", { x: SEC_RIGHT, y: gy + 32, "font-family": SCENE_MONO, "font-size": 10,
+                        fill: "#8b867e" }, "standoff");
+  }
+
+  // ---- the handles name themselves ----------------------------------------
+  // CO-01 s2. The legend that used to sit top-left is gone: five lines in a
+  // corner, describing dots at the other end of the drawing, which the operator
+  // had to read across and then map onto a colour. Each handle carries its own
+  // name in its own colour instead, and no hover is needed.
+  //
+  // START DEPTH sits ABOVE the surface line at a FIXED height, not at 140 + St
+  // beside its own handle. Three things are already crowded into the band the
+  // handle travels through -- the step, the start-depth dimension and its
+  // caption -- and at 140 + St the label lands on the dimension's own number
+  // (seen at 0.06 in, 2026-08-12). y 142 is above the top face for every start
+  // depth, left of the bit's furthest reach at 0%, and directly above the
+  // handle's own column.
+  sceneAdd(g, "text", { id: "LblStart", x: yx - 10, y: 142, "text-anchor": "end",
+                        "font-family": SCENE_MONO, "font-size": 11, "font-weight": 700,
+                        fill: "#8a6c26" }, "↕ START DEPTH");
+  // Shortened from "↕ POSITION ON CUTTER" (Tim, 2026-08-13). At its old length it
+  // was the furthest-right thing in the whole section -- x 554 on a 90 deg bit --
+  // and so it, rather than the drawing, decided how much width the top view could
+  // have. "ON CUTTER" was doing no work: the label sits on the cutter, pointing at
+  // the blue dot that rides it, and the strip below says "of flute" by the number.
+  //
+  // It stays to the RIGHT of the bit at Ax + 26 and is NOT centred under the tip.
+  // Centring was tried first and puts its left half on the standoff dimension,
+  // whose line ends at Ax at very nearly this same y -- which is why it was put
+  // out here in the first place. Absent in aspire mode, along with the dot itself.
+  if (!p.aspire) {
+    sceneAdd(g, "text", { id: "LblPos", x: Ax + 26, y: Ay + 18, "font-family": SCENE_MONO,
+                          "font-size": 11, "font-weight": 700, fill: "#2b6c93" },
+             "↕ POSITION");
+  }
+  // Top right, clear of everything: at a large chamfer the width dimension
+  // reaches most of the way across the bottom-left and the two collided.
+  sceneAdd(g, "text", { x: VBW - 40, y: 30, "text-anchor": "end", "font-family": SCENE_MONO,
+                        "font-size": 11, fill: "#a8a49c" },
+    p.ang + " deg bit, " + fnum(p.dia) + " " + p.unit + " diameter");
+
+  SCENE.live = true;
+  fitScene();
   return true;
 }
 
-// The corner detail: which edge does the size mean?
-//
-// It cannot be answered on the real geometry. The frame above is scaled to the
-// whole flute reach and the chamfer is ~3% of it, so on the operator's 15 deg
-// bit at 0.03 in the orange facet is drawn about 2.5 units wide by 19 tall --
-// smaller than the 22-24 unit text -- and all three edges live inside that
-// sliver. It is WORSE on exactly the bits that offer the choice, because a
-// narrow bit means a deep reach. A feature too small to dimension in place gets
-// a detail at its own scale; that is what this is.
-//
-// Schematic, not a scale model (Tim's ruling 2026-07-27): a true-shape inset at
-// 15 deg is a 1:7.6 sliver whose top edge has nowhere to put a label -- the
-// exact problem it exists to solve. Nothing is hidden by that, because the true
-// angle, the true proportions and every real number are on the drawing beside
-// it. The two straight edges are drawn ~1.6:1 rather than at 45 deg: at 45 they
-// are equal, which is true only of a 90 deg bit, and that is the one case where
-// this never appears. WHICH of them is the longer one flips at 90 -- setback =
-// leg * tan(half angle) -- so an acute bit has the longer leg (1.73x at 60 deg)
-// and an obtuse one the longer setback (1.73x at 120 deg, and 120 and 140 deg
-// marking bits are real). Past 90 the box's width and height swap: the ratio
-// stays a schematic 1.6 either way, but the picture always leans the way the
-// bit does. Drawn the other way it would state the opposite of the truth while
-// the words stayed right, which is worse than drawing nothing.
-//
-// x 800..990 is empty in every case. DX, the D dimension column, is
-// Math.max(tipX + 110, 620); g = G*k <= 130 because k <= 130/refG and
-// G <= refG, so tipX = 380 + g <= 510 and DX is PINNED at 620 for every bit,
-// size, preset and start depth. The D label therefore always starts at x=632
-// and runs about 12.85 units a character (measured with getBBox at the real
-// font, not the 12 a character this comment used to assume). D is printed to
-// four decimals, so under 1000 units it is at most 13 characters -- the longest
-// reachable one is "D 391.6544 mm", a 5 deg bit at 38 dia in mm at 100%, and it
-// ends at 799.1. The inset's own leftmost ink is a little over 840 -- its two
-// labels are centred, so the widest of them reaches left of the 858 material
-// edge -- which leaves 40-odd units of gap, not the 24 the old estimate
-// implied. Provable, not just measured: reaching 840 would take 16 characters,
-// i.e. a six-figure D, and D is capped at 0.9*r/tan(a) -- under 400 units for
-// any real V-bit.
-var IX = 898, IY = 20, IW = 36, IH = 58;
-function drawModeInset(mode, size, angle, sizeText) {
-  var svg = el("SecG");
-  // Obtuse bits have the proportions the other way round (see above), so the
-  // box's width and height swap over 90 deg. IX and IY do not move: the inset
-  // is pinned to the top right of the frame, and only its far corner travels.
-  var w = (angle > 90) ? IH : IW, h = (angle > 90) ? IW : IH;
-  var XC = IX + w, YL = IY + h;      // the original sharp corner is (XC, IY)
-  var L = IX - 40, BOT = YL + 16;    // how far the material runs left and down
+// ---- the live top view (live-top-view spec 3) ---------------------------
+// Parsed ONCE at load, not per redraw: the outlines never change while the
+// dialog is open, only the chamfer size does.
+var TOPVIEW = { loops: [], box: null, ok: false, why: "not parsed" };
 
-  // The material with its corner already broken -- same language as the block
-  // in drawSection, same hatch from the shared <defs>, so the two read as the
-  // same stuff at two scales.
-  var mat = L + "," + IY + " " + IX + "," + IY + " " + XC + "," + YL + " " +
-            XC + "," + BOT + " " + L + "," + BOT;
-  svg.appendChild(svgEl("polygon", { points: mat, fill: "#e9edf1" }));
-  svg.appendChild(svgEl("polygon", { points: mat, fill: "url(#hatch)" }));
+// Rows are "key=value" joined by ";", with \ ; and = backslash-escaped by
+// CO.encode_rows. Walk the string rather than split(";"), because a split would
+// break on an escaped separator. Nesting one encoded payload inside another
+// row's value is safe for the same reason: the inner separators arrive escaped
+// and this walker unescapes exactly one level.
+function decodeRows(raw) {
+  var rows = [], cur = "", i, ch;
+  for (i = 0; i < raw.length; i++) {
+    ch = raw.charAt(i);
+    if (ch === "\\" && i + 1 < raw.length) { cur += raw.charAt(++i); continue; }
+    if (ch === ";") { rows.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  rows.push(cur);
+  return rows;
+}
 
-  // The three edges. Setback and leg bound the corner that was REMOVED -- they
-  // are air, so they are dashed; the bevel is real material and is solid. The
-  // selected one is drawn solid and orange whichever it is: a dashed highlight
-  // reads as tentative, and orange is the colour the real facet already uses.
-  var edges = {
-    setback: { x1: IX, y1: IY, x2: XC, y2: IY, dash: "5,4" },
-    leg:     { x1: XC, y1: IY, x2: XC, y2: YL, dash: "5,4" },
-    face:    { x1: IX, y1: IY, x2: XC, y2: YL, dash: null }
-  };
-  var order = ["setback", "leg", "face"], i, k, e, at;
-  for (i = 0; i < order.length; i++) {
-    k = order[i]; e = edges[k];
-    at = { x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2,
-           stroke: (k === mode) ? "#f76707" : "#9aa5b0",
-           "stroke-width": (k === mode) ? 6 : 2 };
-    if (e.dash && k !== mode) at["stroke-dasharray"] = e.dash;
-    svg.appendChild(svgEl("line", at));
+// The payload for the chamfer currently in the dropdown, out of the by-slot
+// fields. null when this slot sent nothing, which is a normal state: a chamfer
+// whose shapes have been deleted has nothing to draw.
+function outlinesForSlot() {
+  var slot = el("Slot") ? el("Slot").value : "";
+  if (!slot) return null;
+  var oRaw = el("OutlinesBySlot") ? el("OutlinesBySlot").value : "";
+  var bRaw = el("OutlineBoxBySlot") ? el("OutlineBoxBySlot").value : "";
+  if (!oRaw || !bRaw) return null;
+  function pick(raw) {
+    var rows = decodeRows(raw), i;
+    for (i = 0; i < rows.length; i++) {
+      var at = rows[i].indexOf("=");
+      if (at > 0 && rows[i].substring(0, at) === slot) return rows[i].substring(at + 1);
+    }
+    return "";
+  }
+  var o = pick(oRaw), b = pick(bRaw);
+  if (!o || !b) return null;
+  return { raw: o, box: b };
+}
+
+function parseOutlines() {
+  // A selection is what the run cuts, so it always wins. Only when nothing is
+  // selected -- the rebuild case -- does the picture come from what the chosen
+  // chamfer remembers.
+  var raw = el("Outlines") ? el("Outlines").value : "";
+  var boxRaw = el("OutlineBox") ? el("OutlineBox").value : "";
+  if (!raw || !boxRaw) {
+    var mem = outlinesForSlot();
+    if (mem) { raw = mem.raw; boxRaw = mem.box; }
+  }
+  TOPVIEW = { loops: [], box: null, ok: false, why: "" };
+  if (!raw || !boxRaw) { TOPVIEW.why = "no payload"; return; }
+
+  var b = boxRaw.split(" ");
+  if (b.length !== 4) { TOPVIEW.why = "bad box"; return; }
+  var bw = parseFloat(b[2]) - parseFloat(b[0]);
+  var bh = parseFloat(b[3]) - parseFloat(b[1]);
+  if (!(bw > 0) || !(bh > 0)) { TOPVIEW.why = "empty box"; return; }
+  TOPVIEW.box = { w: bw, h: bh };
+
+  var rows = decodeRows(raw), i;
+  for (i = 0; i < rows.length; i++) {
+    var at = rows[i].indexOf("=");
+    if (at < 0) continue;
+    var nums = rows[i].substring(at + 1).split(" ");
+    var pts = [], k;
+    for (k = 0; k + 1 < nums.length; k += 2) {
+      var x = parseFloat(nums[k]), y = parseFloat(nums[k + 1]);
+      if (isNaN(x) || isNaN(y)) { pts = []; break; }
+      pts.push([x, y]);
+    }
+    if (pts.length >= 3) TOPVIEW.loops.push(pts);
+  }
+  TOPVIEW.ok = TOPVIEW.loops.length > 0;
+  if (!TOPVIEW.ok) TOPVIEW.why = "no usable loops";
+}
+
+// The eaten band is a stroke of width 2W with ROUND joins, which IS the set of
+// points within W of the outline -- the round join is the disc. So the survivor
+// is whatever survivor-colour still shows after the stroke is painted on top.
+// Nothing is offset, nothing is computed, and a live size change is one
+// attribute (see topViewResize).
+//
+// NO mask and NO clipPath: Trident's support for both is patchy and the paint
+// order gives the same picture with two fills and a stroke.
+var TV_SURVIVOR = "#e7e1d6";   // material that keeps its flat top
+var TV_EATEN    = "#cf6d16";   // what the chamfer takes
+var TV_VOID     = "#ffffff";   // the pane, and the inside of a pocket
+var TV_LINE     = "#8d8578";
+
+function topViewPathData(loops) {
+  var d = [], i, k, pts;
+  for (i = 0; i < loops.length; i++) {
+    pts = loops[i];
+    d.push("M" + pts[0][0] + "," + pts[0][1]);
+    for (k = 1; k < pts.length; k++) d.push("L" + pts[k][0] + "," + pts[k][1]);
+    d.push("Z");
+  }
+  return d.join(" ");
+}
+
+// side: "auto" | "inside" | "outside". Material is INSIDE the loops for a
+// raised shape, OUTSIDE them for a pocket. "auto" is drawn as a raised shape,
+// which is what an unforced single loop reads as.
+//
+// WHICH SIDE IS WHICH WAS INVERTED HERE until 2026-08-12, on every run since the
+// top view shipped: the test read `side === "outside"` and so drew a forced OUT
+// as a pocket and a forced IN as a raised shape -- the material on the wrong
+// side of the operator's own line, both ways round. Auto was never affected,
+// which is why it survived a design review, two gate cases and several sittings.
+//
+// The mapping is not a judgement call, and four independent places in this
+// product already state it:
+//   * EdgeBreaker.lua's CH_INSIDE_FOR_DIR comment, measured at the machine on
+//     2026-08-04: "an outward loop (material inside the vector)" -- and
+//     resolve_directions sends side "outside" to "outward". So OUT is the
+//     material-inside case, the RAISED shape.
+//   * classify_directions, same file: "outlines outward, holes inward".
+//   * the WHICH EDGES rail, on this page: OUT is "the outline of the part",
+//     IN is "pockets, holes, cutouts".
+//   * the isometric block's own note, 400 lines below this one, which prints
+//     "in - pocket only, outer edge left square" for side === "inside".
+// The block and this drawing sit side by side on one screen and disagreed.
+function drawTopView(root, W, side) {
+  if (!TOPVIEW.ok || !(W > 0)) return false;
+
+  var box = TOPVIEW.box;
+  var pocket = (side === "inside");
+
+  // A POCKET needs surrounding flat drawn, because for a pocket the flat IS the
+  // material. The margin is a fixed fraction of the part and is inside the
+  // letterbox below, deliberately NOT a multiple of W:
+  //   - tied to W it grew past the pane and buried the caption whole (seen at
+  //     0.213 on a T, 2026-08-12);
+  //   - tied to W it also resized the part on every drag frame, so the shape
+  //     crawled while the operator was trying to read it.
+  // A raised shape needs no surround: its material is the shape itself.
+  var margin = pocket ? 0.08 * Math.max(box.w, box.h) : 0;
+
+  // Same letterbox rule as the rest of the drawing. The pane is what the
+  // isometric block used to occupy, in canvas units.
+  var paneW = TV_W, paneH = TV_H;
+  var k = Math.min(paneW / (box.w + 2 * margin), paneH / (box.h + 2 * margin));
+  if (!isFinite(k) || k <= 0) return false;
+
+  var host = sceneAdd(root, "g", { transform: "translate(" + TV_X + "," + TV_Y + ")" });
+
+  // Geometry stays in JOB UNITS inside this group, so the 2W stroke scales with
+  // the drawing and stays honest. No vector-effect (Trident does not have it).
+  //
+  // scale(k, -k) FLIPS Y, and it is not optional: Aspire's job coordinates run Y
+  // UP and SVG runs Y DOWN, so without it the operator's part is drawn upside
+  // down against what is on their screen. No gate catches this -- a flipped T is
+  // still a valid T -- it was found by rendering the page and looking at it
+  // (2026-08-12). The trailing translate puts the box's bottom edge back at the
+  // group's origin after the flip, so the pane maths below is unchanged.
+  var g = sceneAdd(host, "g", {
+    transform: "translate(" + (k * margin) + "," + 0 + ") " +
+               "scale(" + k + "," + (-k) + ") " +
+               "translate(" + 0 + "," + (-(box.h + margin)) + ")"
+  });
+
+  var d = topViewPathData(TOPVIEW.loops);
+
+  if (pocket) {
+    // Material is the flat all around: paint the whole box survivor-coloured,
+    // then knock the pocket out of it, then paint the eaten band.
+    sceneAdd(g, "rect", { x: -margin, y: -margin,
+                          width: box.w + 2 * margin, height: box.h + 2 * margin,
+                          fill: TV_SURVIVOR });
+    sceneAdd(g, "path", { d: d, "fill-rule": "evenodd", fill: TV_VOID });
+  } else {
+    sceneAdd(g, "path", { d: d, "fill-rule": "evenodd", fill: TV_SURVIVOR });
   }
 
-  // The mode's own WORD, not a W/F/L letter: tying "Leg" to an edge is the
-  // whole point, and a letter would need a legend of its own. The number under
-  // it is what the operator typed -- in Face and Leg mode that number appears
-  // nowhere else on this drawing, which is half the reason the inset exists.
-  var XM = (L + XC) / 2;
-  var word = svgText(XM, 114, 22, "#f76707", mode.toUpperCase(), "middle");
-  word.setAttribute("font-weight", "600");
-  svg.appendChild(word);
-  // Drawn as TYPED, not through fnum: fnum rounds to four decimals, so a 1/32
-  // chamfer entered as 0.03125 came back as 0.0313 -- the one number on this
-  // dialog whose whole claim is that it is the operator's own is the one that
-  // must not be rounded. (fnum stays right for W, D, G and S: those are results,
-  // not something anybody typed.) A blank or half-typed field falls back to the
-  // rounded value rather than drawing whatever is in the box.
-  var typed = (sizeText || "").replace(/^\s+|\s+$/g, "");
-  var shown = /^\d*\.?\d+$/.test(typed) ? typed : fnum(size);
-  svg.appendChild(svgText(XM, 138, 24, "#334", shown + " " + UNIT, "middle"));
+  // THE BAND. id so topViewResize can find it without a redraw.
+  sceneAdd(g, "path", {
+    id: "TVBand", d: d, fill: "none", stroke: TV_EATEN,
+    "stroke-width": 2 * W, "stroke-linejoin": "round", "stroke-linecap": "round"
+  });
+
+  // TRIM THE BAND TO THE MATERIAL.
+  //
+  // The band is a 2W stroke centred on the operator's own vector, so exactly
+  // HALF of it lands where there is no material to eat: outside a raised shape,
+  // inside a pocket's void. Two consequences, both of them Tim's complaint on
+  // 2026-08-12 that "the orange shape buries the original vector shape" -- the
+  // part read W bigger than it is, and the one line in the picture the operator
+  // recognises was underneath orange.
+  //
+  // The centred stroke is NOT the bug and must not be replaced with an offset
+  // polygon. It is the exact set of points within W of the outline -- the true
+  // erosion, including the case where a thin arm is eaten away completely,
+  // which is the thing this drawing exists to show. Only the half landing on
+  // empty space is painted back out.
+  //
+  // One path each way, fill-rule evenodd, no clipPath (Trident, spec 6):
+  //   raised -- a surrounding rect with the loops as holes, so everything
+  //             OUTSIDE the part is repainted;
+  //   pocket -- the loops alone, so everything INSIDE the void is repainted.
+  //
+  // Class TVTrim, like the pocket's panels and the letterbox rects: this is a
+  // repaint of empty space, painted before every label, and it buries nothing.
+  // The label gates skip that class by name, and without it the raised case's
+  // trim -- a rect the size of the part plus 2W in every direction -- is read as
+  // artwork sitting under the caption.
+  var pad = margin + 2 * W;
+  if (pocket) {
+    sceneAdd(g, "path", { d: d, "fill-rule": "evenodd", fill: TV_VOID, "class": "TVTrim" });
+  } else {
+    sceneAdd(g, "path", {
+      d: "M" + (-pad) + "," + (-pad) +
+         " h" + (box.w + 2 * pad) + " v" + (box.h + 2 * pad) +
+         " h" + (-(box.w + 2 * pad)) + " Z " + d,
+      "fill-rule": "evenodd", fill: TV_VOID, "class": "TVTrim"
+    });
+  }
+
+  // The pocket's surround is a WINDOW onto the flat, and a chamfer wider than
+  // the margin paints orange out past its edge onto bare pane, which reads as a
+  // rendering fault rather than as "the flat here is gone". Four plain rects
+  // painted over the spill trim it back to the window -- paint order only, since
+  // clipPath is off the table on Trident (spec 6). Outside the pocket arm there
+  // is nothing out here to trim, and trimming would eat the band itself.
+  if (pocket) {
+    // The panels stop at the PANE's own edge, and that bound is not cosmetic.
+    // They used to run five part-widths in every direction, which is far past
+    // the pane and straight over the background grid -- so on the pocket side,
+    // and only there, the drawing sat on bare white while auto and inside kept
+    // their grid (Tim, in Aspire, 2026-08-12). The pane's corners in this
+    // group's own units, from the transform above: X = k*margin + k*x and
+    // Y = 8 + k*(box.h + margin - y), solved for the pane's host box.
+    var xLo = -margin, xHi = paneW / k - margin;
+    var yHi = box.h + margin, yLo = yHi - paneH / k;
+    var x0 = -margin, y0 = -margin;
+    var x1 = box.w + margin, y1 = box.h + margin;
+    var frame = [
+      { x: xLo, y: y1, width: xHi - xLo, height: Math.max(0, yHi - y1) },
+      { x: xLo, y: yLo, width: xHi - xLo, height: Math.max(0, y0 - yLo) },
+      { x: xLo, y: y0, width: Math.max(0, x0 - xLo), height: y1 - y0 },
+      { x: x1, y: y0, width: Math.max(0, xHi - x1), height: y1 - y0 }
+    ];
+    for (var fi = 0; fi < frame.length; fi++) {
+      frame[fi].fill = TV_VOID;
+      // Named so the label gate can skip them BY NAME. It used to skip them for
+      // being wider than 90% of the scene, which is a fact about the pane size
+      // rather than about the panels: shrinking the pane on 2026-08-12 dropped
+      // them under that line and every caption in the drawing was suddenly
+      // reported as sitting on artwork. They are painted first, underneath
+      // everything, and bury nothing.
+      frame[fi]["class"] = "TVTrim";
+      sceneAdd(g, "rect", frame[fi]);
+    }
+  }
+
+  // LETTERBOX. The band is a stroke centred on the outline, so half of it hangs
+  // outside the part's own box with nothing budgeting for it: it ran over the
+  // caption below the pane, and on the pocket side it used to be trimmed by four
+  // panels five part-widths across, which wiped the background grid off most of
+  // the canvas (both seen 2026-08-12).
+  //
+  // These four rects paint the page's own background back over everything
+  // outside the pane, which is what a clip would have done -- and clipPath is off
+  // the table on Trident (spec 6). They go on ROOT, not on host or the drawing
+  // group: the grid pattern is userSpaceOnUse, so it only lines up with the
+  // background it is repairing in an untransformed space. Drawn before the
+  // section view and before the caption, both of which paint over the top.
+  var pl = TV_X, pt = TV_Y, pr = pl + paneW, pb = pt + paneH;
+  var lb = [
+    { x: 0, y: 0, width: VBW, height: pt },
+    { x: 0, y: pb, width: VBW, height: Math.max(0, VBH - pb) },
+    { x: 0, y: pt, width: Math.max(0, pl), height: paneH },
+    { x: pr, y: pt, width: Math.max(0, VBW - pr), height: paneH }
+  ];
+  // Twice each: the pattern's tile is one hairline on TRANSPARENT ground, so a
+  // grid-filled rect on its own draws lines over the spill and hides nothing.
+  // #fff is #Scene's own background, so the pair together are the page again.
+  for (var li = 0; li < lb.length; li++) {
+    if (!(lb[li].width > 0) || !(lb[li].height > 0)) continue;
+    lb[li].fill = "#fff";
+    lb[li]["class"] = "TVTrim";
+    sceneAdd(root, "rect", lb[li]);
+    sceneAdd(root, "rect", { x: lb[li].x, y: lb[li].y,
+                             width: lb[li].width, height: lb[li].height,
+                             fill: "url(#ebGrid)" });
+  }
+
+  // The operator's own line, on top so they can see where they drew. 1.1, not
+  // the 0.5 it was: 0.5/k is the faintest line the renderer will accept, and
+  // this is the one thing in the picture they recognise.
+  sceneAdd(g, "path", {
+    d: d, fill: "none", stroke: TV_LINE, "stroke-width": 1.1 / k
+  });
+
+  // The caption goes on LAST, and on ROOT rather than on host -- which is not a
+  // tidying, it is the fix for a caption nobody could see.
+  //
+  // Paint order in SVG is DOCUMENT order, not the order calls are made. `host`
+  // was appended to root before the letterbox rects were, so everything inside
+  // host paints underneath them however late it is added -- and the caption sits
+  // above the pane, inside the top letterbox rect's own band (y 0 to the pane's
+  // own top edge). It was painted white every time. No gate could see it:
+  // check-topview.js counts the caption's TEXT and check-drawing-labels.js
+  // measures overlap, and a label buried under an opaque rect scores clean on
+  // both. Found by rendering the page and looking at it, 2026-08-12.
+  //
+  // On root it needs absolute scene coordinates, since it no longer inherits
+  // host's translate.
+  sceneAdd(root, "text", { x: TV_X, y: TV_Y - 10, "font-family": SCENE_MONO,
+                           "font-size": 9, fill: "#a8a49c" }, "CHAMFER TOOLPATH PREVIEW");
+
+  SCENE.topview = { k: k, pocket: pocket };
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// The part view: where the chamfer lands, driven by Side and Sharp corners.
+// A facet ring between each profile and its offset, dropped by the cut depth --
+// real geometry, not a painted band, so a concave corner reads correctly.
+// Back-facing facets are darkened rather than culled: culling them breaks the
+// ring exactly at the inside corners that Sharp corners is about.
+// ---------------------------------------------------------------------------
+var PART_OUTER = [[0,0],[150,0],[150,44],[134,44],[134,66],[150,66],[150,100],[0,100]];
+var PART_HOLE = [[40,30],[96,30],[96,72],[40,72]];
+
+function partHyp(a, b) { return Math.sqrt(a * a + b * b); }
+
+// Two callers: the rail (small, no captions, drawn into its own <svg>) and the
+// section drawing's right-hand column (full size, captions, and only when the
+// top view could not draw). ONE copy of the geometry -- do not fork this.
+//   opts.scale     the body's scale factor
+//   opts.origin    [x, y] in the target's own user space
+//   opts.captions  false in the rail; the list beneath it says the same things
+function drawPartView(root, opts) {
+  var YAW = 24 * Math.PI / 180, YC = Math.cos(YAW), YS = Math.sin(YAW);
+  var T = 15, CD = 7, bw = 6;
+  var sharpOn = el("Sharp").value === "1";
+  var sharpR = sharpOn ? 0 : 7;
+  var side = el("Side").value;                    // auto | inside | outside
+
+  function P(x, y) {
+    var dx = x - 75, dy = y - 50;
+    var rx = 75 + dx * YC - dy * YS, ry = 50 + dx * YS + dy * YC;
+    return [((rx - ry) * 0.866).toFixed(1), ((rx + ry) * 0.62).toFixed(1)];
+  }
+  function RN(n) { return [n[0] * YC - n[1] * YS, n[0] * YS + n[1] * YC]; }
+  function inPoly(pt, poly) {
+    var c = false;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      var A = poly[i], B = poly[j];
+      if ((A[1] > pt[1]) !== (B[1] > pt[1]) &&
+          pt[0] < (B[0] - A[0]) * (pt[1] - A[1]) / (B[1] - A[1]) + A[0]) c = !c;
+    }
+    return c;
+  }
+  function normals(poly, isHole) {
+    var out = [];
+    for (var i = 0; i < poly.length; i++) {
+      var p = poly[i], q = poly[(i + 1) % poly.length];
+      var dx = q[0] - p[0], dy = q[1] - p[1], L = partHyp(dx, dy) || 1;
+      var n = [dy / L, -dx / L];
+      var m = [(p[0] + q[0]) / 2 + n[0] * 0.6, (p[1] + q[1]) / 2 + n[1] * 0.6];
+      out.push(inPoly(m, poly) === !!isHole ? n : [-n[0], -n[1]]);
+    }
+    return out;
+  }
+  function offsetPoly(poly, d, isHole) {
+    var N = normals(poly, isHole), n = poly.length, out = [];
+    for (var i = 0; i < n; i++) {
+      var j = (i + n - 1) % n;
+      var a1 = [poly[j][0] + N[j][0] * d, poly[j][1] + N[j][1] * d];
+      var d1 = [poly[i][0] - poly[j][0], poly[i][1] - poly[j][1]];
+      var a2 = [poly[i][0] + N[i][0] * d, poly[i][1] + N[i][1] * d];
+      var d2 = [poly[(i + 1) % n][0] - poly[i][0], poly[(i + 1) % n][1] - poly[i][1]];
+      var den = d1[0] * d2[1] - d1[1] * d2[0] || 1e-6;
+      var t = ((a2[0] - a1[0]) * d2[1] - (a2[1] - a1[1]) * d2[0]) / den;
+      out.push([a1[0] + d1[0] * t, a1[1] + d1[1] * t]);
+    }
+    return out;
+  }
+  // A V-bit leaves a radius only where it cannot reach -- INSIDE corners.
+  // Outside corners come out pointed either way, so rounding is decided per
+  // vertex by convexity, never applied to the whole profile.
+  function roundFlags(poly, isHole) {
+    var A = 0, i;
+    for (i = 0; i < poly.length; i++) {
+      var q0 = poly[(i + 1) % poly.length];
+      A += poly[i][0] * q0[1] - q0[0] * poly[i][1];
+    }
+    var sg = (A > 0 ? 1 : -1), out = [];
+    for (i = 0; i < poly.length; i++) {
+      var c = poly[i], p = poly[(i + poly.length - 1) % poly.length], q = poly[(i + 1) % poly.length];
+      var cr = (c[0] - p[0]) * (q[1] - c[1]) - (c[1] - p[1]) * (q[0] - c[0]);
+      out.push(isHole ? cr * sg > 0 : cr * sg < 0);
+    }
+    return out;
+  }
+  function roundPoly(poly, flags, r) {
+    if (!r) return poly;
+    var out = [], NS = 6, n = poly.length;
+    for (var i = 0; i < n; i++) {
+      var c = poly[i];
+      if (!flags[i]) { out.push(c); continue; }
+      var p = poly[(i + n - 1) % n], q = poly[(i + 1) % n];
+      var upx = p[0] - c[0], upy = p[1] - c[1], uL = partHyp(upx, upy) || 1;
+      var unx = q[0] - c[0], uny = q[1] - c[1], nL = partHyp(unx, uny) || 1;
+      var up = [upx / uL, upy / uL], un = [unx / nL, uny / nL];
+      var rr = Math.min(r, uL / 2, nL / 2);
+      var ctr = [c[0] + (up[0] + un[0]) * rr, c[1] + (up[1] + un[1]) * rr];
+      var a0 = Math.atan2(c[1] + up[1] * rr - ctr[1], c[0] + up[0] * rr - ctr[0]);
+      var a1 = Math.atan2(c[1] + un[1] * rr - ctr[1], c[0] + un[0] * rr - ctr[0]);
+      while (a1 - a0 > Math.PI) a1 -= 2 * Math.PI;
+      while (a0 - a1 > Math.PI) a1 += 2 * Math.PI;
+      for (var kk = 0; kk <= NS; kk++) {
+        var t = a0 + (a1 - a0) * (kk / NS);
+        out.push([ctr[0] + Math.cos(t) * rr, ctr[1] + Math.sin(t) * rr]);
+      }
+    }
+    return out;
+  }
+  function pathOf(pts) {
+    var s = [];
+    for (var i = 0; i < pts.length; i++) s.push(P(pts[i][0], pts[i][1]).join(","));
+    return "M" + s.join("L") + "Z";
+  }
+  function hex2(v) { var s = v.toString(16); return s.length < 2 ? "0" + s : s; }
+  function mix(A, B, t) {
+    var s = "#";
+    for (var i = 0; i < 3; i++) {
+      var av = parseInt(A.substr(1 + i * 2, 2), 16), bv = parseInt(B.substr(1 + i * 2, 2), 16);
+      s += hex2(Math.round(av + (bv - av) * t));
+    }
+    return s;
+  }
+  // Wall visibility is culled on the BASE profile's normals, not the offset
+  // ring's, or concave corners emit stray slivers.
+  function walls(host, pts, N, top) {
+    var n = pts.length;
+    for (var i = 0; i < n; i++) {
+      var nr = RN(N[i]);
+      if (nr[0] + nr[1] <= 0.02) continue;
+      var p = pts[i], q = pts[(i + 1) % n];
+      if (partHyp(q[0] - p[0], q[1] - p[1]) < 0.4) continue;
+      var A = P(p[0], p[1]), B = P(q[0], q[1]);
+      var tone = mix("#c9c4ba", "#d9d4cb", (nr[0] - nr[1] + 1) / 2);
+      sceneAdd(host, "polygon", { fill: tone, stroke: tone, "stroke-width": 0.4,
+        points: [A[0] + "," + (+A[1] + top), B[0] + "," + (+B[1] + top),
+                 B[0] + "," + (+B[1] + top + T), A[0] + "," + (+A[1] + top + T)].join(" ") });
+    }
+  }
+  function ring(poly, isHole, show, away) {
+    var flags = roundFlags(poly, isHole);
+    var base = roundPoly(poly, flags, sharpR);
+    if (!show) return { hi: base, lo: base, cd: 0, N: normals(base, isHole), quads: [] };
+    var off = roundPoly(offsetPoly(poly, away ? bw : -bw, isHole), flags, sharpR);
+    var hi = away ? base : off, lo = away ? off : base;
+    var N = normals(base, isHole), n = lo.length, quads = [];
+    for (var i = 0; i < n; i++) {
+      var j = (i + 1) % n;
+      if (partHyp(lo[j][0] - lo[i][0], lo[j][1] - lo[i][1]) < 0.2 &&
+          partHyp(hi[j][0] - hi[i][0], hi[j][1] - hi[i][1]) < 0.2) continue;
+      var A = P(hi[i][0], hi[i][1]), B = P(hi[j][0], hi[j][1]);
+      var C = P(lo[j][0], lo[j][1]), D = P(lo[i][0], lo[i][1]);
+      var nr = RN(N[i]);
+      var tone = (nr[0] + nr[1] > 0.02) ? mix("#cf6d16", "#ec9440", (nr[0] - nr[1] + 1) / 2) : "#b45c10";
+      quads.push({ fill: tone, points: [A.join(","), B.join(","),
+                                        C[0] + "," + (+C[1] + CD), D[0] + "," + (+D[1] + CD)].join(" ") });
+    }
+    return { hi: hi, lo: lo, cd: CD, N: N, quads: quads };
+  }
+
+  var showO = side !== "inside", showH = side !== "outside";
+  var oR = ring(PART_OUTER, false, showO, side === "outside");
+  var hR = ring(PART_HOLE, true, showH, side === "inside");
+
+  var host = sceneAdd(root, "g",
+    { transform: "translate(" + opts.origin[0] + "," + opts.origin[1] + ")" });
+  var textX = -96;
+  if (opts.captions)
+    sceneAdd(host, "text", { x: textX, y: -18, "font-family": SCENE_MONO, "font-size": 9,
+                             fill: "#a8a49c" }, "WHERE THE CHAMFER LANDS");
+  // 1.3, not the 0.82 this view was born with. The corners are the thing this
+  // drawing exists to show -- pointed or rounded, outer edge or pocket -- and
+  // at 0.82 they were too small to read (Tim, 2026-08-11). The room came from
+  // the canvas narrowing to 950: the view moved right and up into space that
+  // used to be the dead band.
+  //
+  // 1.4 was tried first and the side captions below ended up UNDER the part:
+  // the body runs 256 canvas units tall at its worst (side=outside, which draws
+  // the outer chamfer too) and the captions start 248 below ISO_Y. The vertical
+  // budget is bit label + WHERE caption + body + three caption lines inside 380,
+  // and it is genuinely tight -- ISO_Y, this scale and the caption y values are
+  // one fit. Change any of them and re-run tests\check-drawing-labels.js, which
+  // exists because of exactly this.
+  var body = sceneAdd(host, "g", { transform: "scale(" + opts.scale + ")" });
+
+  // Paint order matters: body slabs, pocket floor, pocket walls, top face,
+  // outer chamfer, outer walls, pocket chamfer.
+  sceneAdd(body, "path", { d: pathOf(oR.lo) + " " + pathOf(hR.lo), "fill-rule": "evenodd",
+                           fill: "#c9c4ba", transform: "translate(0," + (oR.cd + T) + ")" });
+  sceneAdd(body, "path", { d: pathOf(oR.lo) + " " + pathOf(hR.lo), "fill-rule": "evenodd",
+                           fill: "#eae6e0", transform: "translate(0," + oR.cd + ")" });
+  sceneAdd(body, "path", { d: pathOf(hR.lo), fill: "#cbc5bb",
+                           transform: "translate(0," + (hR.cd + T) + ")" });
+  walls(sceneAdd(body, "g", {}), hR.lo, hR.N, hR.cd);
+  sceneAdd(body, "path", { d: pathOf(oR.hi) + " " + pathOf(hR.hi), "fill-rule": "evenodd",
+                           fill: "#eae6e0" });
+  var of1 = sceneAdd(body, "g", {});
+  for (var i1 = 0; i1 < oR.quads.length; i1++)
+    sceneAdd(of1, "polygon", { fill: oR.quads[i1].fill, stroke: oR.quads[i1].fill,
+                               "stroke-width": 0.4, points: oR.quads[i1].points });
+  walls(sceneAdd(body, "g", {}), oR.lo, oR.N, oR.cd);
+  var hf1 = sceneAdd(body, "g", {});
+  for (var i2 = 0; i2 < hR.quads.length; i2++)
+    sceneAdd(hf1, "polygon", { fill: hR.quads[i2].fill, stroke: hR.quads[i2].fill,
+                               "stroke-width": 0.4, points: hR.quads[i2].points });
+
+  // The captions name the mode and the corner treatment. In the RAIL they are
+  // suppressed: the WHICH EDGES list right below the picture already names all
+  // three modes, and the SHARP CORNERS note under that says what the toggle
+  // does. Repeating either inside the drawing is the duplication CO-02 objects
+  // to. In the section drawing the block is alone and they are the only thing
+  // saying what it shows.
+  if (!opts.captions) return;
+  var noteY = 248;
+  var note = (side === "auto") ? ["auto - outer edge", "and pocket, both"]
+           : (side === "inside") ? ["in - pocket only,", "outer edge left square"]
+           : ["out - outer edge only,", "pocket left square"];
+  sceneAdd(host, "text", { x: textX, y: noteY, "font-family": SCENE_MONO, "font-size": 10,
+                           fill: "#8b867e" }, note[0]);
+  sceneAdd(host, "text", { x: textX, y: noteY + 14, "font-family": SCENE_MONO, "font-size": 10,
+                           fill: "#8b867e" }, note[1]);
+  sceneAdd(host, "text", { x: textX, y: noteY + 34, "font-family": SCENE_MONO, "font-size": 10,
+                           fill: sharpOn ? "#2e7d4f" : "#b57612" },
+    sharpOn ? "sharp - inside corners point" : "off - inside corners round");
+}
+
+// The rail's picture. Same function, a target of its own, and a viewBox derived
+// from what actually got drawn rather than a hard-coded box -- the change
+// order's own compact box cut the plate's near bottom corner off square, and
+// deriving it from the geometry is what stops that class of bug coming back.
+function drawRailSpec() {
+  var g = el("SpecG"), svg = el("Spec");
+  if (!g || !svg) return;
+  while (g.firstChild) g.removeChild(g.firstChild);
+  drawPartView(g, { scale: 1, origin: [0, 0], captions: false });
+  try {
+    var b = g.getBBox();
+    if (!(b.width > 0) || !(b.height > 0)) return;
+    var m = 6;
+    svg.setAttribute("viewBox", (b.x - m) + " " + (b.y - m) + " " +
+                                (b.width + 2 * m) + " " + (b.height + 2 * m));
+  } catch (e) { /* leave whatever viewBox is there; the picture still draws */ }
+}
+
+// ---------------------------------------------------------------------------
+// The handles.
+//
+// Hit-testing is by proximity to the handle centre in DRAWING units, not by
+// handlers hung on the circles: the scene is rebuilt from nothing on every
+// redraw, so per-element handlers would have to be re-hung every frame.
+//
+// Both handles drag RELATIVELY -- they record the grab point and the value at
+// grab and apply the movement since. Absolute mapping breaks, because the
+// drawing rescales itself as the values change.
+// ---------------------------------------------------------------------------
+var dragKind = null, dragFrom = null;
+
+// The drawing keeps its own 950 x 380 shape inside whatever box it is given,
+// so it is centred with a blank margin on one axis. Mapping straight off the
+// box width puts every grab in the wrong place; take the margin off first.
+function sceneUser(e) {
+  var box = el("Scene");
+  var r = box.getBoundingClientRect();
+  var w = r.right - r.left, h = r.bottom - r.top;
+  var k = Math.min(w / VBW, h / VBH);
+  if (!(k > 0)) return null;
+  return { x: (e.clientX - r.left - (w - VBW * k) / 2) / k,
+           y: (e.clientY - r.top - (h - VBH * k) / 2) / k };
+}
+
+function sceneDown(e) {
+  e = e || window.event;
+  if (!SCENE.live || !haveBit) return;
+  var q = sceneUser(e);
+  if (!q) return;
+  // NEAREST handle wins, not the first one tested -- and that is not tidying.
+  // Since the orange dot moved to the face's LOWER end (CO-01) it sits on the
+  // material's right edge, a few units from the bit's axis, and at a small
+  // standoff the blue dot is inside its hit box. Tested in order, blue would
+  // win every grab and the size handle would simply not respond.
+  var best = null, bestD = 1e9;
+  function tryHandle(h, kind, r) {
+    if (!h) return;
+    var dx = q.x - h.x, dy = q.y - h.y, dd = dx * dx + dy * dy;
+    if (Math.abs(dx) < r && Math.abs(dy) < r && dd < bestD) { bestD = dd; best = kind; }
+  }
+  tryHandle(SCENE.blue, "pos", 22);
+  tryHandle(SCENE.yellow, "start", 20);
+  tryHandle(SCENE.orange, "size", 20);
+  if (best === "pos") {
+    dragKind = "pos";
+  } else if (best) {
+    dragKind = best;
+    dragFrom = { x: q.x, y: q.y, size: parseFloat(el("Size").value),
+                 start: parseFloat(el("StartDepth").value) || 0 };
+  }
+  // The idle handle's label fades while the other is being dragged, so the one
+  // that is moving is the one that is legible.
+  if (dragKind === "size" || dragKind === "start") fadeIdleLabel(dragKind);
+  if (dragKind) { if (e.preventDefault) e.preventDefault(); return false; }
+}
+
+function sceneMove(e) {
+  if (!dragKind) return;
+  e = e || window.event;
+  var q = sceneUser(e);
+  if (!q) return;
+
+  if (dragKind === "size" || dragKind === "start") {
+    var st = dragFrom;
+    if (!st || isNaN(st.size)) return;
+    // No axis lock any more. It existed only because ONE dot carried BOTH
+    // quantities and the gesture had to be disambiguated; with a handle each
+    // there is nothing to disambiguate, and a lock would only make a slightly
+    // diagonal drag do nothing.
+    //
+    // Down is positive in SVG and down grows both values, so neither delta is
+    // inverted -- unlike the old horizontal size drag, which was.
+    var ipu = 1 / SCENE.u;
+    var dy = q.y - st.y;
+    if (dragKind === "start") {
+      var s2 = st.start + dy * ipu;
+      if (s2 < 0) s2 = 0;
+      el("StartDepth").value = f4(s2);
+    } else {
+      // The dot rides the face's LOWER end, at SEC_TOP + St + Wd, and
+      // Wd = W / tan(half-angle) -- so a unit of vertical travel is
+      // ipu * tan(half-angle) of chamfer width, not ipu.
+      //
+      // The handle moves the SETBACK, which is what the drawing shows. The box
+      // may be holding a face or leg measurement, so convert back through the
+      // dialog's own pair of functions rather than assuming they are the same.
+      var a = halfAngle(currentAngle);
+      var Wnow = wFromSize(currentMode, st.size, a) + dy * ipu * SCENE.tanH;
+      var want = sizeFromW(currentMode, Wnow, a);
+      if (want === null) return;
+      // Clamped to what the gadget will actually cut, never to what fits the
+      // picture: displayMaxSize is the same ceiling the refusal message quotes.
+      var cap = displayMaxSize(currentMode, currentAngle, currentDia);
+      if (cap !== null && want > cap) want = cap;
+      if (want < 0.0005) want = 0.0005;
+      el("Size").value = f4(want);
+    }
+    redraw();
+    fadeIdleLabel(dragKind);
+  } else {
+    // Cut position. It lands on one of the six stops, never between them: Lua
+    // looks the chosen percentage up in its own preset list and refuses the run
+    // with an internal error if it is not there (EdgeBreaker.lua, "No preset
+    // matched"). Six detents, not a free slide, until that changes.
+    var pick = percentFromPoint(q);
+    if (pick !== null && pick !== currentPercent) selectPreset(pick, true);
+  }
+  if (e.preventDefault) e.preventDefault();
+  return false;
+}
+
+// Project the pointer onto the bit's axis, turn that into a standoff, and read
+// off the percentage across the safe band -- the inverse of solve()'s
+// g = g_lo + (percent/100) * (g_hi - g_lo). Snapped to the nearest stop.
+function percentFromPoint(q) {
+  var a = halfAngle(currentAngle), tanH = Math.tan(a);
+  var size = parseFloat(el("Size").value);
+  if (isNaN(size) || size <= 0 || !(SCENE.u > 0)) return null;
+  var W = wFromSize(currentMode, size, a);
+  var passes = passCount(currentDia, W, a);
+  if (passes === null) return null;
+  var b = bandWidth(W, passes);
+  var band = safeBand(currentDia, b, a);
+  if (!(band.g_hi > band.g_lo)) return null;
+
+  var Wu = Math.max(6, Math.round(W * SCENE.u)), Wd = Wu / tanH;
+  var St = Math.round((parseFloat(el("StartDepth").value) || 0) * SCENE.u);
+  // The tip travels along the axis; both pointer components carry information,
+  // so use the mean of the two projections rather than either alone.
+  var S = ((q.x - SEC_RIGHT) / tanH + (q.y - SEC_TOP - St - Wd)) / 2;
+  if (S < 0) S = 0;
+  var g = S * tanH / SCENE.u;
+  var pct = (g - band.g_lo) / (band.g_hi - band.g_lo) * 100;
+
+  var best = null, bestD = null;
+  for (var i = 0; i < PRESETS.length; i++) {
+    var d = Math.abs(PRESETS[i] - pct);
+    if (bestD === null || d < bestD) { bestD = d; best = PRESETS[i]; }
+  }
+  return best;
+}
+
+// drawRailSpec is skipped for the whole of a drag (see redraw), so the drag has
+// to end with one. Clearing dragKind FIRST is what lets it run.
+function sceneUp() {
+  dragKind = null; dragFrom = null; fadeIdleLabel(null);
+  drawRailSpec();
+}
+
+// While one handle is being dragged the other one's label steps back, so the
+// label that is describing what is moving is the one that reads. Applied after
+// every redraw as well as on grab: the scene is rebuilt from nothing each frame,
+// so an opacity set once would be thrown away on the first move.
+function fadeIdleLabel(kind) {
+  var pairs = [["LblSize", "size"], ["LblStart", "start"]];
+  for (var i = 0; i < pairs.length; i++) {
+    var t = el(pairs[i][0]);
+    if (!t) continue;
+    t.setAttribute("opacity", (kind && kind !== pairs[i][1]) ? "0.3" : "1");
+  }
 }
 
 // Depth versus stock. The bit's own limit is already handled by safeBand, which
@@ -1758,33 +2741,49 @@ function openHelp() {
   try { w.focus(); } catch (e2) {}
 }
 
+// Everything the operator sees, recomputed from the two boxes and the bit.
+// The order matters: the numbers are solved first, then the drawing is asked to
+// show them. Nothing here decides a cut -- solveBand/passCount/displayMaxSize
+// already did, and this function only routes their answers to the banners, the
+// strip and the scene.
 function redraw() {
+  // The rail's picture first, and outside every early return below: it is
+  // driven by Side and Sharp alone, so it is just as true with no bit chosen
+  // and no size typed as it is with both.
+  //
+  // NOT DURING A DRAG. Side and Sharp cannot change while a handle is held, so
+  // every frame of a drag was rebuilding this picture to be identical -- 88 of
+  // the ~163 elements a frame throws away, and worse than the count suggests,
+  // because drawRailSpec ends in a getBBox() that forces Trident to stop and
+  // lay the page out again. sceneUp draws it once when the drag ends, so it
+  // cannot be left stale by a Side change that somehow lands mid-gesture.
+  if (!dragKind) drawRailSpec();
   var size = parseFloat(el("Size").value);
   // Read live, like the size above and unlike stockThickness: Lua sets the
   // thickness once, but the user types the start depth and the warning has to
   // follow every keystroke.
   var sd = parseFloat(el("StartDepth").value);
   startDepth = (!isNaN(sd) && sd > 0) ? sd : 0;
-  var chart = el("Chart");
   var blockMsg = el("BlockMsg");
-  var depthWarn = el("DepthWarn");
   var segs = document.getElementsByClassName("seg");
-  while (chart.firstChild) chart.removeChild(chart.firstChild);
+
+  el("SizeUnit").innerHTML = UNIT;
+  el("StartUnit").innerHTML = UNIT;
+  el("SelStateTxt").innerHTML = shapesPhrase(FACTS.sel) + " selected";
 
   if (!haveBit || isNaN(size) || size <= 0) {
     blockMsg.style.display = "block";
     blockMsg.className = "wait";
     blockMsg.innerHTML = haveBit ? "Enter a chamfer size to see the cut."
                                  : "Choose a bit to see the cut.";
-    chart.style.display = "none";
-    depthWarn.innerHTML = ""; depthWarn.style.display = "none";
-    // Clear the note the same way the depth warning is cleared: a 3-pass note
-    // left standing after the size is deleted describes a cut nobody asked for.
-    el("PassNote").innerHTML = ""; el("PassNote").style.display = "none";
+    clearScene();
+    setMode("b-ok", "READY", haveBit ? "Type a chamfer size, or drag the orange dot."
+                                     : "Press SELECT to choose the V-bit this chamfer is cut with.");
+    setWarn("", "");
+    setPos(null);
     for (var q = 0; q < segs.length; q++) segs[q].children[1].innerHTML = "&nbsp;";
     setSummary("—");
-    el("SecWrap").style.display = "none";
-    currentSharpMax = "unknown"; applySharpState();
+    currentSharpMax = "unknown"; applySharpState(); syncSegments();
     return;
   }
 
@@ -1802,28 +2801,25 @@ function redraw() {
     // MAX_PASSES now -- multi-pass absorbs everything below it.
     var maxSize = displayMaxSize(currentMode, currentAngle, currentDia);
     var minDia = displayMinDia(currentMode, size, currentAngle);
-    blockMsg.innerHTML = (maxSize !== null && minDia !== null)
+    var tooBig = (maxSize !== null && minDia !== null)
       ? ("Too big for this bit, even in " + MAX_PASSES + " passes. The most it'll take " +
          "off is " + fnum(maxSize) + ". A " + fnum(minDia) + " bit would do the " +
          fnum(size) + " you asked for.")
       : ("Chamfer too big for a safe cut with this bit, even in " + MAX_PASSES +
          " passes. Use a larger bit or a smaller chamfer.");
-    chart.style.display = "none";
-    depthWarn.innerHTML = ""; depthWarn.style.display = "none";
-    el("PassNote").innerHTML = ""; el("PassNote").style.display = "none";
+    blockMsg.innerHTML = tooBig;
+    clearScene();
+    setMode("b-red", "NOTHING WOULD BE BUILT", tooBig);
+    setWarn("", "");
+    setPos(null);
     for (var q2 = 0; q2 < segs.length; q2++) segs[q2].children[1].innerHTML = "&nbsp;";
     setSummary(el("Size").value);
-    el("SecWrap").style.display = "none";
-    currentSharpMax = "unknown"; applySharpState();
+    currentSharpMax = "unknown"; applySharpState(); syncSegments();
     return;
   }
 
   // Greys the box only when there is nothing to sharpen at all, and greys the
   // CUT POSITION row when this run has passed to Aspire's chamfer engine.
-  //
-  // The auto-untick/auto-retick pair that used to live here is deleted with the
-  // state it managed (2026-08-04): the page no longer takes the tick away when
-  // a chamfer outgrows the bands, so there is nothing to hand back.
   applySharpState();
 
   // The cut position gives way to the corner: sharpening dies as the position
@@ -1831,10 +2827,7 @@ function redraw() {
   // only exists near the bottom of the range. Moving the position is visible
   // (the note below says so) and reversible -- untick (initSharp), and the
   // operator's own choice comes back -- which is the bar for doing something
-  // on their behalf. What gets remembered is their LAST REAL CHOICE: a click
-  // that gets dropped remembers the button they just pressed, and any other
-  // drop -- a size change while still ticked -- leaves whatever is already
-  // remembered alone rather than overwriting it with an already-dropped value.
+  // on their behalf. What gets remembered is their LAST REAL CHOICE.
   if (el("Sharp").value === "1" &&
       typeof currentSharpMax === "number" &&
       Number(el("Percent").value) > currentSharpMax) {
@@ -1844,172 +2837,189 @@ function redraw() {
     return;                     // selectPreset redraws; do not draw twice
   }
   // A click that is NOT dropped is the operator choosing freely, so there is
-  // nothing left to hand back. Clearing it also keeps the note below honest:
-  // a stale restore point would have it claim a drop that is not in force.
+  // nothing left to hand back.
   if (percentFromClick) sharpRestorePercent = null;
 
   // Which engine cuts this run. In aspire mode the bands play no part: the tool
   // is driven from the tip down the mitre, so the standoff is zero, the cut
   // position is not a choice, and the depth is the whole chamfer's --
   // W / tan(half angle), the same number CO.chamfer_cut_depth computes in Lua.
-  // One bite, so no seams and no pass note. `a` is already the half angle in
-  // radians (halfAngle above), which is the page's one conversion; nothing here
-  // re-derives it.
   var aspire = aspireMode();
-  // Mirrors CO.chamfer_cut_depth in EdgeBreaker.lua, which is the authority -
-  // if that line ever flips (sitting check C2), this one must flip with it.
   var dTip = W / Math.tan(a);
   var shownPasses = aspire ? 1 : passes;
 
   blockMsg.style.display = "none";
-  chart.style.display = "block";
-  el("SecWrap").style.display = "";
-  // What multi-pass means, in the two facts the operator can act on: how many
-  // passes, and that the band boundaries may show. Silent at one pass -- that
-  // is today's dialog, unchanged.
-  var pn = el("PassNote"), notes = [];
-  // The drop moved a control the operator can see, and nothing else on the
-  // page would say why. It goes here, beside the cut position it moved --
-  // not beside the checkbox that caused it, which is a column away.
-  // Not in aspire mode: a restore point can still be sitting there from a
-  // smaller chamfer, and a note explaining a cut position beside a row that is
-  // greyed out points at a control that no longer does anything. Unticking
-  // still hands the position back (initSharp), which is where that promise
-  // belongs.
-  if (!aspire && el("Sharp").value === "1" &&
-      sharpRestorePercent !== null) {
-    notes.push("Dropped to " + currentPercent + "% so the corners can be sharp. " +
-               "Untick <b>Sharp corners</b> to go back to " +
-               sharpRestorePercent + "%.");
-  }
-  if (shownPasses > 1) {
-    // The pronoun has to follow the count the same way the noun does: two
-    // passes leaves exactly one seam, and "1 faint line ... they sand out"
-    // does not agree in number.
-    var seams = passes - 1;
-    notes.push(passes + " passes, " + fnum(bw) + " " + UNIT + " of flute each. " +
-      "You may see " + seams + (seams > 1 ? " faint lines on the face &mdash; they sand out. "
-                                          : " faint line on the face &mdash; it sands out. ") +
-      "A bigger bit would do it in one.");
-  }
-  if (notes.length) {
-    pn.innerHTML = notes.join("<br>");
-    pn.style.display = "block";
-  } else {
-    pn.innerHTML = ""; pn.style.display = "none";
-  }
 
-  // Flute schematic (tip apex bottom -> shoulder top), same layout as the
-  // agreed brainstorm mockup (flute-percentage-5.html), scaled 0-100% across
-  // the bit's SAFE usable band (not the bit's literal physical tip/shoulder).
-  // The flute is drawn to the bit's REAL half-angle: half-width / depth =
-  // tan(a). Fit that true shape into the box (max depth MAXD, max half-width
-  // MAXHW) so a 90 deg bit reads wide-and-shallow and a 30 deg bit reads
-  // narrow-and-deep.
-  var MAXD = 160, MAXHW = 150;
-  var depth = MAXD, halfw = MAXD * Math.tan(a);
-  if (halfw > MAXHW) { depth = MAXHW / Math.tan(a); halfw = MAXHW; }
-  var TIPX = 660, TOPY = 70, TIPY = TOPY + depth, HALFW = halfw;
-  chart.appendChild(svgEl("line", {x1:TIPX,y1:TIPY,x2:TIPX-HALFW,y2:TOPY, stroke:"#4c6ef5", "stroke-width":3}));
-  chart.appendChild(svgEl("line", {x1:TIPX,y1:TIPY,x2:TIPX+HALFW,y2:TOPY, stroke:"#4c6ef5", "stroke-width":3}));
-  chart.appendChild(svgEl("line", {x1:TIPX-HALFW,y1:TOPY,x2:TIPX-HALFW,y2:TOPY-20, stroke:"#4c6ef5", "stroke-width":3}));
-  chart.appendChild(svgEl("line", {x1:TIPX+HALFW,y1:TOPY,x2:TIPX+HALFW,y2:TOPY-20, stroke:"#4c6ef5", "stroke-width":3}));
-  chart.appendChild(svgEl("line", {x1:TIPX-HALFW,y1:TOPY-20,x2:TIPX+HALFW,y2:TOPY-20, stroke:"#4c6ef5", "stroke-width":3}));
-  chart.appendChild(svgEl("line", {x1:TIPX-6,y1:TIPY,x2:TIPX+6,y2:TIPY, stroke:"#4c6ef5", "stroke-width":5}));
-  var tipLbl = svgEl("text", {x:TIPX+16,y:TIPY+7,"font-size":24,fill:"#666"});
-  tipLbl.textContent = "0% · tip margin";
-  chart.appendChild(tipLbl);
-  var topLbl = svgEl("text", {x:TIPX,y:38,"font-size":24,fill:"#666","text-anchor":"middle"});
-  topLbl.textContent = "100% · shoulder limit";
-  chart.appendChild(topLbl);
-
-  // Callouts sit on FIXED evenly-spaced rows, not beside their dot: a 90 deg
-  // flute is only ~150 units deep, so five stacked two-line labels collided.
-  // One line each, highest percent on top, leader line out to the flute.
-  // `deepest` is the section view's scale reference -- see drawSection. It has
-  // to be the largest preset's solve, not the selected one, or the drawing
+  // Every preset solved, because depthWarning needs the whole set to name a
+  // position that fits, and `deepest` is the drawing's scale reference -- it
+  // has to be the largest preset's solve, not the selected one, or the picture
   // renormalises on every click and hides the very change being made.
-  var selected = null, deepest = null, shallowest = null, rows = [];
-  // Six rows now, and the stack is bounded below by the two captions at y=270
-  // and y=296: the last row's baseline is ROW0 + 5*ROWH + 7 = 246, which clears
-  // the caption's ascender. Re-check both if a preset is ever added again.
-  var ROW0 = 44, ROWH = 39, LEADX = 440;
+  var selected = null, deepest = null, rows = [];
   for (var i = 0; i < PRESETS.length; i++) {
     var p = PRESETS[i];
     var s = solveBand(p, currentDia, W, bw, a);
     rows.push({ p: p, d: s.d });
-    // Each cut-position button carries its own depth: the choice is made on
-    // the number that ends up on the toolpath, not on a percentage. In aspire
-    // mode none of them is the number that ends up on the toolpath, so they
-    // blank rather than quote six depths the run will not use.
     if (segs[i]) segs[i].children[1].innerHTML = aspire ? "&nbsp;" : "D " + f4(s.d);
-    var t = p / 100;
-    var x = TIPX - t * HALFW;
-    var y = TIPY - t * (TIPY - TOPY);
-    var rowY = ROW0 + (PRESETS.length - 1 - i) * ROWH;
-    var isSel = (p === currentPercent);
-    if (isSel) selected = s;
+    if (p === currentPercent) selected = s;
     if (!deepest || s.d > deepest.d) deepest = s;
-    if (!shallowest || s.d < shallowest.d) shallowest = s;
-    var color = isSel ? "#e03131" : "#f76707";
-    chart.appendChild(svgEl("line", {x1:LEADX,y1:rowY,x2:x,y2:y, stroke:color, "stroke-width":1, opacity:0.45}));
-    chart.appendChild(svgEl("circle", {cx:x,cy:y,r:isSel?8:5,fill:color}));
-    var lbl = svgEl("text", {x:30,y:rowY+7,"font-size":26,fill:color,"font-weight":isSel?"700":"600"});
-    lbl.textContent = p + "%";
-    chart.appendChild(lbl);
-    var nums = svgEl("text", {x:110,y:rowY+7,"font-size":26,fill:isSel?"#333":"#777"});
-    nums.textContent = "D " + f4(s.d) + "  ·  G " + f4(s.g);
-    chart.appendChild(nums);
+  }
+  if (!selected) selected = solveBand(currentPercent, currentDia, W, bw, a);
+
+  // ---- the mode banner ----------------------------------------------------
+  var note = "";
+  // The drop moved a control the operator can see, and nothing else on the page
+  // would say why. Not in aspire mode: a restore point can still be sitting
+  // there from a smaller chamfer, and explaining a cut position that no longer
+  // applies points at a control that does nothing.
+  if (!aspire && el("Sharp").value === "1" && sharpRestorePercent !== null)
+    note = " Dropped to " + currentPercent + "% so the corners can be sharp. " +
+           "Turn <b>Sharp corners</b> off to go back to " + sharpRestorePercent + "%.";
+
+  if (aspire) {
+    setMode("b-blu", "CUT ON THE TIP",
+      "Past the flute's reach, so Aspire runs the tip down each corner. The cut is " +
+      "locked to the tip &mdash; cut position no longer applies." + note);
+  } else if (shownPasses > 1) {
+    // The pronoun has to follow the count the same way the noun does: two
+    // passes leaves exactly one seam.
+    var seams = passes - 1;
+    setMode("b-amb", passes + " PASSES",
+      "Too deep for one cut, so it comes out as " + passes + " toolpaths, already in " +
+      "cutting order. " + fnum(bw) + " " + UNIT + " of flute each. You may see " + seams +
+      (seams > 1 ? " faint lines on the face &mdash; they sand out."
+                 : " faint line on the face &mdash; it sands out.") + note);
+  } else {
+    setMode("b-ok", "ONE FLAT PASS",
+      "The flute covers the whole chamfer in a single cut." + note);
   }
 
-  // Pinned to the bottom of the viewBox, not to TIPY -- TIPY now moves with
-  // the bit angle (a 90 deg flute is shallow) and the caption should not.
-  // Centred on the viewBox (500), NOT on the flute: centred on the flute the
-  // longer of the two captions ran off the right edge and was clipped.
-  var cap = svgEl("text", {x:500,y:270,"font-size":24,fill:"#666","text-anchor":"middle"});
-  cap.textContent = currentAngle + "° bit, " + currentDia + " " + UNIT +
-    " dia, chamfer size " + size + " " + UNIT;
-  chart.appendChild(cap);
-
-  // The one line in this chart that still describes the run. In aspire mode
-  // that means the tip depth and nothing else: there is no percentage to
-  // select, and no standoff to quote (G is zero by construction -- the tip
-  // rides the mitre), so naming either would be the contradiction the greying
-  // above is there to remove. It keeps its dark ink while the rest fades
-  // (#ChartWrap.off #SelTxt), because it is the fact and they are the
-  // background. Id added for that rule; DRAFT wording.
-  var selTxt = svgEl("text", {id:"SelTxt",x:500,y:296,"font-size":24,fill:"#333","text-anchor":"middle","font-weight":"600"});
-  selTxt.textContent = aspire
-    ? "from the tip  ·  D " + f4(dTip)
-    : "selected " + currentPercent + "%  ·  D " + f4(selected.d) +
-      "  ·  G " + f4(selected.g) +
-      "  ·  contact band " + f4(selected.band_lo) + "–" + f4(selected.band_hi);
-  chart.appendChild(selTxt);
-
-  // The same numbers the caption above just quoted, drawn. `selected` is
-  // resolved in the preset loop and is what the toolpath will actually cut.
-  //
-  // In aspire mode the tip sits ON the mitre: G is zero (no standoff), the
-  // depth is dTip, and the same dTip is the scale reference at both ends --
-  // deepest and shallowest are the same single cut, because there is only one.
-  var drew = aspire
-    ? drawSection(W, dTip, 0, currentAngle, startDepth, dTip, 0, currentDia, dTip, 1)
-    : drawSection(W, selected.d, selected.g, currentAngle, startDepth,
-                  deepest.d, deepest.g, currentDia, shallowest.d, passes);
-  // Only when there is a choice to explain. At 90 deg setback and leg are the
-  // same quantity, updateModeVisibility() hides the row and forces setback, and
-  // an inset would be answering a question nobody asked.
-  if (drew && currentAngle !== 90)
-    drawModeInset(currentMode, size, currentAngle, el("Size").value);
-
-  // Last, because it depends on the selected preset resolved in the loop above.
-  // The quantity is always the depth this run will really reach, which in aspire
-  // mode is the tip depth and has nothing to do with the selected preset.
+  // ---- the warning banner -------------------------------------------------
+  // The quantity is always the depth this run will really reach, which in
+  // aspire mode is the tip depth and has nothing to do with the selected preset.
   var msg = depthWarning(rows, aspire ? dTip : selected.d);
-  depthWarn.innerHTML = msg;
-  depthWarn.style.display = msg ? "block" : "none";
+  setWarn(msg ? "DEEPER THAN THE STOCK" : "", msg);
+
+  // ---- the strip ----------------------------------------------------------
+  setPos(aspire ? "tip" : currentPercent);
+
+  // ---- the drawing --------------------------------------------------------
+  // In aspire mode the tip sits ON the mitre: no standoff, and the depth is
+  // dTip. Everything handed over is already solved; the scene only scales it.
+  renderScene({
+    W: W,
+    g: aspire ? 0 : selected.g,
+    d: aspire ? dTip : selected.d,
+    ang: currentAngle,
+    dia: currentDia,
+    start: startDepth,
+    passes: aspire ? 1 : passes,
+    aspire: aspire,
+    percent: currentPercent,
+    unit: UNIT
+  });
+
   setSummary(el("Size").value);
   applySharpState();
+  syncSegments();
+}
+
+// The three small writers the branches above share, so an early return cannot
+// leave one of them describing the previous state.
+function clearScene() {
+  var g = el("SceneG");
+  if (g) while (g.firstChild) g.removeChild(g.firstChild);
+  SCENE.live = false; SCENE.orange = null; SCENE.blue = null;
+  // The blocked paths -- no bit, or a chamfer too big to cut -- still have to
+  // size the box. Without this the panel keeps whatever height the last drawing
+  // gave it and the layout runs out of room exactly where the message that
+  // explains the refusal has to fit.
+  fitScene();
+}
+function setMode(cls, head, note) {
+  el("ModeBn").className = "bn " + cls;
+  el("ModeH").innerHTML = head;
+  el("ModeN").innerHTML = note;
+}
+function setWarn(head, note) {
+  var b = el("WarnBn");
+  if (!head && !note) { b.style.display = "none"; return; }
+  b.style.display = "";
+  el("WarnH").innerHTML = head;
+  el("WarnN").innerHTML = note;
+}
+function setPos(v) {
+  var e = el("PosVal");
+  if (v === null) { e.innerHTML = "&mdash;"; e.className = "off"; return; }
+  if (v === "tip") { e.innerHTML = "TIP"; e.className = "off"; return; }
+  e.innerHTML = v + "%";
+  e.className = "";
+}
+
+// ---------------------------------------------------------------------------
+// The segmented controls and the pill are FACES. The radios and the checkbox
+// they cover are still the state, still named, and still what every existing
+// handler reads and writes -- which is why five working functions did not have
+// to be rewritten for this dialog. Two rules keep the illusion honest:
+//   1. clicking a face clicks the control behind it, so the real handler runs;
+//   2. syncSegments() runs after every redraw, so a face can never disagree
+//      with the control it is covering -- including when the code moves the
+//      cut position or the side on the operator's behalf.
+// ---------------------------------------------------------------------------
+function bindSegment(groupId, radioName) {
+  var group = el(groupId);
+  if (!group) return;
+  var labels = group.getElementsByTagName("label");
+  for (var i = 0; i < labels.length; i++) {
+    labels[i].onclick = function () {
+      if (/(^| )off( |$)/.test(el(groupId).className)) return false;
+      var input = this.getElementsByTagName("input")[0];
+      if (!input || input.disabled) return false;
+      input.checked = true;
+      if (input.onclick) input.onclick();
+      syncSegments();
+      return false;
+    };
+  }
+}
+function syncSegments() {
+  syncOne("ModeGroup", "ModeRadio");
+  syncOne("SideGroup", "SideRadio");
+  var tog = el("SharpTog"), box = el("SharpBox");
+  if (tog && box) tog.className = box.checked ? "on" : "";
+  var lab = el("SharpLab");
+  var off = (box && box.disabled);
+  // "rlab", not "lab": the label is a rail heading now, and writing "off" alone
+  // would strip the class that styles it -- the same trap #SideGroup's rows are
+  // written around.
+  if (lab) lab.className = off ? "rlab off" : "rlab";
+  var note = el("SharpNote");
+  if (note) {
+    // Driven by the VALUE, on every sync, not by the click that changed it.
+    note.innerHTML = (box && box.checked) ? "Inside corners run to a point."
+                                          : "Inside corners get the tool's radius.";
+    note.className = off ? "off" : "";
+  }
+}
+function syncOne(groupId, radioName) {
+  var group = el(groupId);
+  if (!group) return;
+  var labels = group.getElementsByTagName("label");
+  for (var i = 0; i < labels.length; i++) {
+    var input = labels[i].getElementsByTagName("input")[0];
+    labels[i].className = (input && input.checked) ? "on" : "";
+  }
+}
+// One nudge of the size box, in the unit the operator is working in. Clamped to
+// the same ceiling the drag and the refusal message use, so all three agree.
+function nudgeSize(by) {
+  var v = parseFloat(el("Size").value);
+  if (isNaN(v)) v = 0;
+  v = v + by;
+  if (v < 0.0005) v = 0.0005;
+  var cap = displayMaxSize(currentMode, currentAngle, currentDia);
+  if (cap !== null && v > cap) v = cap;
+  el("Size").value = f4(v);
+  redraw();
 }
 
 var attempts = 0;
@@ -2058,11 +3068,6 @@ var t = setInterval(function() {
     // layout gate can render every banner state, including ones no seeded
     // field combination would produce.
     setBanner(window.__FORCE_STATE || el("Kind").value || "add");
-    var toggleHelp = function() {
-      var h = el("HelpBody");
-      h.style.display = (h.style.display === "block") ? "none" : "block";
-    };
-    el("HelpLink").onclick = toggleHelp;
     el("ButtonHelp").onclick = openHelp;
     // Test-only: forces the browser-open path to fail so the gate can measure
     // the fallback line, which is longer than any real summary.
@@ -2077,6 +3082,31 @@ var t = setInterval(function() {
       if (this.value.replace(/^\s+|\s+$/g, "") === "") this.value = "0";
       redraw();
     };
+
+    // ---- v1.15 wiring ----------------------------------------------------
+    // The radios and the checkbox are still the state; the segmented buttons
+    // and the pill are only their faces, kept in step by syncSegments() after
+    // every redraw. Clicking a face clicks the control behind it, so all five
+    // of the existing handlers run exactly as they did.
+    bindSegment("ModeGroup", "ModeRadio");
+    bindSegment("SideGroup", "SideRadio");
+    el("SharpTog").onclick = function () {
+      if (aspireMode() && /(^| )off( |$)/.test(el("SharpLab").className)) return;
+      var box = el("SharpBox");
+      box.checked = !box.checked;
+      if (box.onclick) box.onclick();
+    };
+    // The steppers move the size by one thousandth of an inch, or one
+    // hundredth of a millimetre -- a nudge in the unit the operator is in.
+    var stepBy = (UNIT === "mm") ? 0.01 : 0.001;
+    el("SizeUp").onclick = function () { nudgeSize(stepBy); };
+    el("SizeDown").onclick = function () { nudgeSize(-stepBy); };
+
+    el("Scene").onmousedown = sceneDown;
+    document.onmousemove = sceneMove;
+    document.onmouseup = sceneUp;
+    window.onresize = function () { fitScene(); };
+
     redraw();
   }
 }, 100);

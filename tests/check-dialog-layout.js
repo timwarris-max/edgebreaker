@@ -104,12 +104,16 @@ var SIDECAP_NOTHING = "nothing_to_work_from_-_Aspire_picks_the_side_itself";
 
 var CASES = [
   // The one-pass contract, and it is the assertion most likely to be dropped
-  // for looking like it tests nothing: an ordinary chamfer must say NOTHING
-  // about passes and draw NO seam marks. Multi-pass is meant to be invisible
-  // until it is needed, and a note or a ring appearing on a one-bite cut would
-  // be the whole feature leaking into every run.
+  // for looking like it tests nothing: an ordinary chamfer must say ONE FLAT
+  // PASS and draw NO seam marks. Multi-pass is meant to be invisible until it
+  // is needed, and a pass count or a seam mark appearing on a one-bite cut
+  // would be the whole feature leaking into every run.
+  //
+  // Stated as a headline rather than as "the note is empty", which is what it
+  // used to say: the mode banner is never empty in this dialog, so an
+  // empty-string assertion would be a check that cannot fail.
   { name: "90deg default (as opened)", bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.020",
-    expectNote: "", expectSeams: 0 },
+    expectHead: "ONE FLAT PASS", expectSeams: 0 },
   { name: "60deg (mode radios shown)", bit: "60deg V-bit",       angle: "60", dia: "0.5",  size: "0.030" },
   { name: "30deg (deepest flute)",     bit: "30deg V-bit",       angle: "30", dia: "0.5",  size: "0.030" },
   // v1.13.0 moved this one. 0.120 on this bit is a two-pass cut now, not a
@@ -118,9 +122,10 @@ var CASES = [
   // because noSection only SKIPS a check and asserts nothing at all. 0.9 is
   // past the eight-pass ceiling, and the refusal now has to SAY so, which is
   // what stops it happening a third time. It doubles as the over-the-ceiling
-  // case: the refusal renders with no pass note beside it.
+  // case: the mode banner has to go red and say nothing is being built, rather
+  // than sitting there quoting a pass count for a cut that will not happen.
   { name: "oversize (block message)",  bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.9",
-    noSection: true, expectNote: "", expectSeams: 0,
+    noSection: true, expectHead: "NOTHING WOULD BE BUILT", expectSeams: 0,
     expectBlock: "Too big for this bit, even in 8 passes. The most it'll take off is 0.75. " +
                  "A 0.3 bit would do the 0.9 you asked for." },
   // Task 8: mode radios + the HiddenNote sentence Lua sends when it silently
@@ -193,7 +198,9 @@ var CASES = [
   { name: "banner: teach (amber)", bit: "60deg V-bit", angle: "60", dia: "0.5", size: "0.030",
     chamfers: "1|Chamfer 1 - 0.06 in - shapes missing or moved|nomem|0.06|setback|auto|60|;2|New chamfer (2)|new|||||",
     slot: "1", kind: "rebuild", facts: "sel=3;excluded=;mem=4",
-    force: "teach", expectBanner: "I don't know which shapes" },
+    // Pin the suffix, not "Rebuilding Chamfer 1": that prefix is shared with the
+    // blue rebuild banner above and would pass on the wrong state.
+    force: "teach", expectBanner: "its shapes aren't known" },
   { name: "banner: replace (red)", bit: "60deg V-bit", angle: "60", dia: "0.5", size: "0.030",
     chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40|;3|New chamfer (3)|new|||||",
     slot: "1", kind: "add", facts: "sel=3;excluded=;mem=4",
@@ -233,56 +240,58 @@ var CASES = [
   // v1.8.0: the size modes. Face and Leg are the two the caption has to explain
   // and the two no case exercised -- every case above runs at the `setback`
   // default. 90 deg has no mode row, so it must have no caption either.
-  // expectEdge is [x1,y1,x2,y2] of the edge that must be the orange one, in the
-  // inset's own coordinates (IX=898, IY=20, IW=36, IH=58 in the dialog): the
-  // setback is the top edge, the leg the right edge, the face the slant.
-  { name: "setback mode caption + inset", bit: "60deg V-bit", angle: "60", dia: "0.5",
+  //
+  // v1.15 took the corner inset away, and with it the drawn half of these
+  // cases: the highlighted edge and the typed number the inset carried. The
+  // caption is what is left, and it is now the ONLY thing on the dialog that
+  // says what Setback, Face and Leg mean, which makes it worth more than it was.
+  { name: "setback mode caption", bit: "60deg V-bit", angle: "60", dia: "0.5",
     size: "0.030", mode: "setback",
-    expectCaption: "across the top face", expectInset: "SETBACK",
-    expectEdge: [898, 20, 934, 20] },
-  { name: "face mode caption + inset", bit: "60deg V-bit", angle: "60", dia: "0.5",
+    expectCaption: "across the top face" },
+  { name: "face mode caption", bit: "60deg V-bit", angle: "60", dia: "0.5",
     size: "0.030", mode: "face",
-    expectCaption: "along the slanted bevel face", expectInset: "FACE",
-    expectEdge: [898, 20, 934, 78] },
-  { name: "leg mode caption + inset", bit: "12.4deg V-bit", angle: "12.4", dia: "0.25",
+    expectCaption: "along the slanted bevel face" },
+  { name: "leg mode caption", bit: "12.4deg V-bit", angle: "12.4", dia: "0.25",
     size: "0.020", mode: "leg",
-    expectCaption: "down the side face", expectInset: "LEG",
-    expectEdge: [934, 20, 934, 78] },
-  // At 90 deg setback and leg are the same quantity, the mode row is hidden,
-  // and an inset would answer a question nobody asked. Absence is the assertion:
-  // expectEdge null means no highlighted edge may exist at all.
-  { name: "90deg has no mode row and no inset", bit: "1/4in 90deg V-bit", angle: "90",
+    expectCaption: "down the side face" },
+  // At 90 deg setback and leg are the same quantity and the mode row is hidden,
+  // so a caption would answer a question nobody asked. Absence is the assertion.
+  { name: "90deg has no mode row and no caption", bit: "1/4in 90deg V-bit", angle: "90",
     dia: "0.25", size: "0.020",
-    expectCaption: "", expectInset: "", expectEdge: null },
+    expectCaption: "" },
   // An obtuse bit has the corner the other way round -- the setback is 1.73x the
-  // leg at 120 deg, not 0.58x -- so the inset's width and height swap and its far
-  // corner moves right, XC 934 -> 956. 120 and 140 deg marking V-bits are real
-  // bits, and drawn unswapped this picture states the opposite of the truth while
-  // every word on the dialog stays right.
-  { name: "120deg obtuse (setback drawn longer than the leg)", bit: "120deg V-bit",
+  // leg at 120 deg, not 0.58x. 120 and 140 deg marking V-bits are real bits and
+  // the geometry code has to survive them, so the state is still rendered even
+  // though the picture that used to state the difference is gone.
+  { name: "120deg obtuse", bit: "120deg V-bit",
     angle: "120", dia: "0.5", size: "0.030", mode: "setback",
-    expectCaption: "across the top face", expectInset: "SETBACK",
-    expectEdge: [898, 20, 956, 20] },
-  // The inset's number is sold as the one the operator typed, so it must not be
-  // rounded: fnum reports a 1/32 chamfer as 0.0313.
-  { name: "typed size drawn as typed (1/32, obtuse)", bit: "120deg V-bit",
+    expectCaption: "across the top face" },
+  { name: "1/32 chamfer on an obtuse bit", bit: "120deg V-bit",
     angle: "120", dia: "0.5", size: "0.03125", mode: "face",
-    expectCaption: "along the slanted bevel face", expectInset: "FACE",
-    expectInsetNum: "0.03125 in", expectEdge: [898, 20, 956, 56] },
-  // The same case in MM is the real ink<=990 worst case: the box has already
-  // swapped wider and moved right, the typed number is the longest label on it,
-  // and "mm" is a wider suffix than "in" -- 972.4 against 961.4. Without this
-  // the gate never renders its own worst case, because no other case combines
+    expectCaption: "along the slanted bevel face" },
+  // The same thing in MM on a big bit. It used to be the ink-past-the-clip worst
+  // case, back when the inset's own labels were the rightmost ink in the frame;
+  // the inset is gone and it is not the worst case of anything any more. Kept as
+  // a plain layout case, because it is still the only one that combines
   // millimetres with a non-90 deg bit.
-  { name: "widest the inset ever gets (1/32, obtuse, mm)", bit: "120deg V-bit",
-    angle: "120", dia: "12", size: "0.03125", mode: "face", units: "mm",
-    expectInset: "FACE", expectInsetNum: "0.03125 mm", expectEdge: [898, 20, 956, 56] },
+  { name: "1/32 chamfer, obtuse bit, mm", bit: "120deg V-bit",
+    angle: "120", dia: "12", size: "0.03125", mode: "face", units: "mm" },
   // The header is a fixed 88px box shared by a title, a badge that grows with
   // the bit's library name, and now a button. 45 characters is the longest name
   // spec 5 costed; it leaves the badge 928px wide.
   { name: "long bit name in the header", bit: "60deg V-bit", angle: "60", dia: "0.5",
     size: "0.030",
     badgeName: "V-Bit 60.0&deg; - 1/2\" - Amana 45771-K spoilboard" },
+  // 2026-08-12: the case above was the longest name spec 5 costed, and it fits.
+  // Nothing ever seeded a name past it, so the three header probes below
+  // (hdrInk / hdrPair / hdrGap) had never been provoked and #BitBadge had no
+  // width cap at all -- a long enough library name grew the badge leftward
+  // until it collided with the picker button or crowded the version text.
+  // 68 characters is not invented: Vectric tool names carry the manufacturer,
+  // the part number and a description, and this is one of Amana's own.
+  { name: "hostile bit name (no cap = sheared header)", bit: "60deg V-bit", angle: "60",
+    dia: "0.5", size: "0.030", small: true,
+    badgeName: "V-Bit 60.0&deg; - 1/2\" - Amana 45774-K Carbide Tipped Spoilboard Surfacing" },
   // Nothing has ever been picked on this machine. Before the merge this state
   // could not exist -- the dialog could not open without a bit -- so the page's
   // currentAngle = 90 / currentDia = 0.25 defaults were harmless. They are a
@@ -297,16 +306,16 @@ var CASES = [
   // this job, when all that has happened is that they have not chosen a bit yet.
   // dis: 0 is therefore v1.13.0's answer, restored and pinned.
   { name: "no bit yet (first run ever)", bit: "", angle: "", dia: "", size: "0.020",
-    noSection: true, noChart: true, expectCaption: "", expectInset: "",
+    noSection: true, noPos: true, expectCaption: "",
     expectSharp: { dis: 0, chk: 0, cap: 0 }, expectPresetsOff: 0,
     expectBlock: "Choose a bit to see the cut." },
-  // Opens on a 90 deg bit -- no mode row, no caption, no inset -- then the
-  // operator picks a 30 deg 1/2in bit without the dialog closing. Everything
-  // downstream of currentAngle has to follow, including the mode row, which
-  // redraw() does not touch: only updateModeVisibility() can unhide it.
+  // Opens on a 90 deg bit -- no mode row, no caption -- then the operator picks
+  // a 30 deg 1/2in bit without the dialog closing. Everything downstream of
+  // currentAngle has to follow, including the mode row, which redraw() does not
+  // touch: only updateModeVisibility() can unhide it.
   { name: "picking a bit mid-dialog redraws the page", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.030", pick: "30.000000|0.500000",
-    expectCaption: "across the top face", expectInset: "SETBACK" },
+    expectCaption: "across the top face" },
 
   // v1.11.0 sharp corners, widened to outside runs 2026-08-03. The checkbox
   // lives on the Side row and is live exactly when the side is FORCED --
@@ -358,10 +367,10 @@ var CASES = [
     expectSharp: { dis: 0, chk: 1, cap: 0 },
     expectPresetsOff: 1, expectPresetCap: "cut from the tip",
     // 0.13 setback on a 90 deg bit: W = 0.13 and tan(45) = 1, so the tip depth
-    // IS the chamfer size. The bar and the chart must both say so, and neither
-    // may still be quoting the 80% band depth (0.1718) beside it.
-    expectSummary: ["from the tip", "0.13 in"],
-    expectSelTxt: ["from the tip", "D 0.1300"] },
+    // IS the chamfer size. The bar has to say so and must not still be quoting
+    // the 80% band depth (0.1718) beside it. The flute chart's bold line said
+    // the same thing here until v1.15 deleted the chart.
+    expectSummary: ["from the tip", "0.13 in"] },
   // The other half, and the one that says the greying is not simply always on:
   // the same bit and the same chamfer with the box UNTICKED is an ordinary
   // multi-pass run, so the buttons must still work. Without this a page that
@@ -370,9 +379,9 @@ var CASES = [
     angle: "90", dia: "0.25", size: "0.13", side: "auto", sharp: "0", small: true,
     expectSharp: { dis: 0, chk: 0, cap: 0 }, expectPresetsOff: 0,
     // The control for the pair above: same bit, same size, box unticked, and
-    // both sentences still name the cut position. Without this a page that said
+    // the bar still names the cut position. Without this a page that said
     // "from the tip" unconditionally would pass every aspire case here.
-    expectSummary: ["@ 80%"], expectSelTxt: ["selected 80%", "G "] },
+    expectSummary: ["@ 80%"] },
   // The ceiling is side-blind arithmetic (sharpMaxPercent takes no side), and
   // this pair is what says so out loud rather than by argument: same bit, same
   // size, all three sides, same aspire state. They replace the two refusal
@@ -473,51 +482,66 @@ var CASES = [
     expectSideOff: 0, expectSideShown: "inside" },
   // The drop, said out loud. Ticking the box on a chamfer whose cut position is
   // too deep to sharpen moves that position on the operator's behalf, and this
-  // note beside the buttons is the only thing that says so. Sharpening and
+  // sentence in the mode banner is the only thing that says so. Sharpening and
   // multi-pass can only ever meet at TWO passes -- sharpening needs W <= 0.85r,
   // a second pass needs W > 0.75r -- so this is also the only shape in which
-  // both notes are on screen at once, i.e. the tallest #PassNote the page can
-  // produce. Numbers: a 1/4in 90deg bit on a 0.095 chamfer takes 2 passes and
-  // sharpens no higher than 20%, so the seeded 80% opens dropped to 20%.
+  // both sentences are on screen at once, i.e. the tallest mode banner the page
+  // can produce. Numbers: a 1/4in 90deg bit on a 0.095 chamfer takes 2 passes
+  // and sharpens no higher than 20%, so the seeded 80% opens dropped to 20%.
   // Also the control for the side greying: a ticked box BELOW the ceiling is an
   // ordinary bands run, so Inside is honoured and the radios must still show it.
   // Without this a page that read "auto" unconditionally would pass every aspire
   // case above.
+  //
+  // v1.15 reworded the way back: "Untick Sharp corners" became "Turn Sharp
+  // corners off", which is what the control does now that it is a toggle rather
+  // than a tick box. The <b> around its name is stripped before matching.
   { name: "sharp: the drop says so (two notes at once)", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.095", side: "inside", sharp: "1", small: true,
     expectSideShown: "inside",
     expectSharp: { dis: 0, chk: 1, cap: 0 }, expectSelected: "20%", expectSeams: 1,
+    expectHead: "2 PASSES",
     expectNote: "Dropped to 20% so the corners can be sharp. " +
-                "Untick Sharp corners to go back to 80%." },
-  // The drop is side-blind too, and it has to be: the note names the checkbox
+                "Turn Sharp corners off to go back to 80%." },
+  // The drop is side-blind too, and it has to be: the sentence names the toggle
   // as the way back, so an outside run that silently moved the cut position
   // and said nothing would leave the operator cutting somewhere they never
   // chose. Same bit, same size, same numbers as the inside case above --
-  // which is the point. Not marked `small`: the tall #PassNote it produces is
+  // which is the point. Not marked `small`: the tall banner it produces is
   // already measured at the small window by the inside case, and this one is
   // here for the behaviour, not for another copy of the same worst case.
   { name: "sharp: the drop says so, outside", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.095", side: "outside", sharp: "1",
     expectSharp: { dis: 0, chk: 1, cap: 0 }, expectSelected: "20%", expectSeams: 1,
+    expectHead: "2 PASSES",
     expectNote: "Dropped to 20% so the corners can be sharp. " +
-                "Untick Sharp corners to go back to 80%." },
+                "Turn Sharp corners off to go back to 80%." },
 
-  // v1.13.0 multi-pass. The pass note is the tallest new thing in a right
-  // column that was already the tight one, and it is longest at the highest
-  // pass count. The seam rings are the other half: passes-1 of them, never
-  // passes, because the last pass's tip sits out in the waste and leaves no
-  // mark -- an off-by-one there draws a line on the face that will not be
-  // there, or hides one that will. Numbers below are CO.pass_count's, computed
-  // in real Lua on a 1/4in 90deg bit: 0.25 -> 3 passes, 0.7 -> 8, 0.9 -> over
-  // the ceiling.
+  // v1.13.0 multi-pass. The mode banner is the tallest thing above the drawing
+  // and it is longest at the highest pass count. The seam marks are the other
+  // half: passes-1 of them, never passes, because the last pass's tip sits out
+  // in the waste and leaves no mark -- an off-by-one there draws a line on the
+  // face that will not be there, or hides one that will. Numbers below are
+  // CO.pass_count's, computed in real Lua on a 1/4in 90deg bit: 0.25 -> 3
+  // passes, 0.7 -> 8, 0.9 -> over the ceiling.
+  //
+  // v1.15 rewrote the sentence: the count moved into the headline (it used to
+  // open the note as "3 passes, ..."), and the note now explains what the count
+  // MEANS -- one toolpath per pass, already ordered -- before it gets to the
+  // flute depth and the seams. Both halves are pinned, because a headline
+  // saying 3 over a note describing 8 is exactly the half-rewrite this catches.
   { name: "three passes", bit: "1/4in 90deg V-bit", angle: "90", dia: "0.25", size: "0.25",
-    expectNote: "3 passes, 0.0833 in of flute each. You may see 2 faint lines on the face",
+    expectHead: "3 PASSES",
+    expectNote: "Too deep for one cut, so it comes out as 3 toolpaths, already in " +
+                "cutting order. 0.0833 in of flute each. You may see 2 faint lines on the face",
     expectSeams: 2 },
-  // The worst the note can get: the longest count, the plural seam wording, and
-  // the most rings the section ever has to hold apart.
+  // The worst the banner can get: the longest count, the plural seam wording,
+  // and the most marks the section ever has to hold apart.
   { name: "eight passes (the worst the note can get)", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.7",
-    expectNote: "8 passes, 0.0875 in of flute each. You may see 7 faint lines on the face",
+    expectHead: "8 PASSES",
+    expectNote: "Too deep for one cut, so it comes out as 8 toolpaths, already in " +
+                "cutting order. 0.0875 in of flute each. You may see 7 faint lines on the face",
     expectSeams: 7 },
   // Everything the multi-pass note can be shown beside, at once: eight passes
   // AND a start depth AND a stock warning AND the hidden note AND the deepest
@@ -530,7 +554,9 @@ var CASES = [
     note: "2 bits for a different job unit were hidden.",
     chamfers: "1|Chamfer 1 - 0.06 in|differs|0.06|setback|auto|60|;2|Chamfer 2 - 0.015 in|differs|0.015|face|inside|40|;3|New chamfer (3)|new|||||",
     slot: "1", kind: "add", facts: "sel=3;excluded=;mem=4", force: "replace",
-    expectNote: "8 passes, 0.0875 in of flute each. You may see 7 faint lines on the face",
+    expectHead: "8 PASSES",
+    expectNote: "Too deep for one cut, so it comes out as 8 toolpaths, already in " +
+                "cutting order. 0.0875 in of flute each. You may see 7 faint lines on the face",
     expectSeams: 7,
     expectWarn: "Reaches 0.9688 in even at 0%" },
 
@@ -718,16 +744,49 @@ function seed(c, viewW, viewH) {
     "var real=Math.round((low-top)/zf)+16;" +
     "var over=real-sc.clientHeight;" +
     "var r=ok.getBoundingClientRect();" +
-    // The section SVG is overflow="hidden", so anything drawn past the right
-    // edge of its viewBox is CLIPPED -- it cannot change any scroll size and the
+    // The scene SVG is overflow="hidden", so anything drawn past the right edge
+    // of its viewBox is CLIPPED -- it cannot change any scroll size and the
     // overflow measurement above can never see it. A label running off the end
     // renders as a truncated word and nothing else. getBBox() is used rather
-    // than the drawn coordinates because it carries real font metrics, and the
-    // inset's labels are text-anchor="middle" so they reach past their anchor.
+    // than the drawn coordinates because it carries real font metrics, and some
+    // labels are text-anchor="end"/"middle" so they reach past their anchor.
     // An empty group (no bit, or the oversize block) reports 0, not -Infinity.
-    "var sg=document.getElementById('SecG'), ink=0, kid=sg?sg.children:[];" +
+    //
+    // v1.15: this read #SecG, which no longer exists, so `ink` was 0 in every
+    // case and the assertion below passed on nothing at all. The group is
+    // #SceneG now. Read the limitation note at that assertion before trusting
+    // this number -- it is a partial measurement, not a complete one.
+    "var scg=document.getElementById('SceneG'), ink=0, kid=scg?scg.children:[];" +
     "for(var j=0;j<kid.length;j++){try{var bb=kid[j].getBBox();" +
     "if(bb.x+bb.width>ink)ink=bb.x+bb.width;}catch(e){}}" +
+    // What the scene actually DREW. Both of these used to be read out of the
+    // dumped source by capturing <g id="SecG">...</g>, and that capture cannot
+    // be repointed at the new group: #SceneG NESTS <g> elements (the part view
+    // is a translated group of its own, and it is drawn BEFORE the material),
+    // so a non-greedy capture stops at the part view's own closing tag and
+    // never reaches the stock, the seams or the handles. Asked of the live DOM
+    // instead, which has no such blind spot.
+    //
+    // drewStock: the section's stock profile, the one polygon on the page
+    // filled #e7e1d6. Found by COLOUR, not by position: the part view sits at
+    // ISO_X=740 inside a translate(), so its own points are small local numbers
+    // and the old "a point left of x=800 must be the section's" rule would now
+    // be satisfied by the part view alone.
+    "var drewStock=(scg&&scg.querySelectorAll('polygon[fill=\"#e7e1d6\"]').length)?1:0;" +
+    // seams: the passes-1 marks where the passes meet. They are short diagonal
+    // <line> strokes in #b57612 now, not rings. Counting <circle> would be
+    // worse than useless -- a circle inside #SceneG is a HANDLE these days, the
+    // blue cut-position dot and the orange size dot -- so a bare id swap would
+    // report 2 seams on every case, including the ones that must draw none.
+    // -1 when the group itself is missing, which no expectation can match.
+    "var seams=scg?scg.querySelectorAll('line[stroke=\"#b57612\"]').length:-1;" +
+    // Is the depth warning on screen? It is a banner of its own at the top of
+    // #Scroll now, hidden with display:none when the cut fits. Visibility has
+    // to be measured rather than inferred from the text: setWarn("","") hides
+    // the banner and deliberately does NOT clear #WarnN, so the words from the
+    // last state are still sitting in the DOM when the banner is silent.
+    "var wb=document.getElementById('WarnBn');" +
+    "var warnOn=(wb&&wb.offsetWidth>0&&wb.offsetHeight>0)?1:0;" +
     // #Hdr has never been measured: the gate walks #Scroll's children and stops.
     // Putting the picker button up here means measuring up here, or the button's
     // height is unprotected. Three numbers, all relative to the header itself:
@@ -763,9 +822,9 @@ function seed(c, viewW, viewH) {
     // so they stay raw, same reasoning as hdrPair. okBottom vs viewH (below)
     // is untouched for a different reason: both sides are already viewport
     // space, so there is nothing to convert. ink is untouched for a third
-    // reason: getBBox() reports the section SVG's own user-space units, which
-    // a CSS zoom on an ancestor HTML box never touches, and the 990 clip
-    // margin is authored in those same units -- it was never broken.
+    // reason: getBBox() reports the scene SVG's own user-space units, which
+    // a CSS zoom on an ancestor HTML box never touches, and the 950 clip
+    // margin is authored in those same units -- zoom was never its problem.
     "var bar=document.getElementById('Bar'), br=bar.getBoundingClientRect();" +
     "var cx=document.getElementById('ButtonCancel').getBoundingClientRect();" +
     "function vis(e){return (e&&e.offsetWidth>0&&e.offsetHeight>0)?e.getBoundingClientRect():null;}" +
@@ -799,15 +858,17 @@ function seed(c, viewW, viewH) {
     "var presetsOff=(pres&&pres.className.indexOf('off')>=0)?1:0;" +
     "var pcap=document.getElementById('PresetCap');" +
     "var pcapOn=(pcap&&pcap.offsetWidth>0)?1:0;" +
-    // The flute chart greys with the row. Measured as COMPUTED INK on a real
-    // chart label rather than as a class name on the wrapper, because the two
-    // halves can fail independently: redraw() sets the class, a CSS rule
-    // #ChartWrap.off carries it onto the SVG, and either one alone leaves the
-    // chart looking exactly as it did. The value is the same grey #Presets.off
-    // uses on its dead text (#9aa0a6 = rgb(154,160,166)); the chart's live ink
-    // is #666/#333/#777, none of which can read as this by accident.
-    "var ctx=document.querySelector('#ChartWrap #Chart text');" +
-    "var chartOff=(ctx&&window.getComputedStyle(ctx).fill==='rgb(154, 160, 166)')?1:0;" +
+    // The PICTURE has to stop offering the choice too, and in v1.15 that is
+    // #PosVal in the strip: the flute chart is gone, and the gauge that
+    // replaced it is drawn on the bit and simply LEFT OUT in aspire mode
+    // rather than greyed. Two numbers, because the state is applied in two
+    // places that can fail apart: applyAspireState() sets the class, setPos()
+    // writes the word, and either one alone leaves a live-looking percentage
+    // beside a row that no longer does anything. Same underscore/ASCII
+    // flattening as sideCapTxt, so the value is one token on the title line.
+    "var pv=document.getElementById('PosVal');" +
+    "var posOff=(pv&&pv.className.indexOf('off')>=0)?1:0;" +
+    "var posTxt=pv?pv.innerHTML.replace(/[^\\x20-\\x7E]+/g,'-').replace(/\\s+/g,'_'):'-';" +
     // 2026-08-06: the SIDE row greys in the same state and for the same kind of
     // reason -- Aspire's engine picks each loop's side from the geometry, so a
     // forced Inside/Outside is a control that cannot be honoured. Three numbers,
@@ -836,17 +897,26 @@ function seed(c, viewW, viewH) {
     // source pins in tests/test_release.lua say the reporter is written right;
     // this says it RAN and produced something Lua can read. '-' rather than an
     // empty string so the field always has a token in the title line.
+    // #Rail is a sibling of #Scroll, not a child, so the child walk at the top
+    // of this probe cannot see it -- the same blind spot #Hdr needed its own
+    // three probes for. Its contents overflowing is the one way the rail can
+    // fail a layout, and nothing else here would report it.
+    "var rl=document.getElementById('Rail');" +
+    "var railOver=rl?(rl.scrollHeight-rl.clientHeight):-1;" +
     "var ws=document.getElementById('WinSize').value||'-';" +
     "document.title='MEASURE over='+over+' content='+real+' avail='+sc.clientHeight+" +
     "' okBottom='+Math.round(r.bottom)+' viewH=" + viewH + "'+" +
     "' ink='+(Math.round(ink*10)/10)+" +
+    "' drewStock='+drewStock+' seams='+seams+' warnOn='+warnOn+" +
     "' hdrInk='+hdrInk+' hdrPair='+hdrPair+' hdrGap='+hdrGap+" +
     "' helpW='+helpW+' helpX='+helpX+' helpGap='+helpGap+' barGap='+barGap+" +
     "' barOver='+barOver+' noteOn='+noteOn+' sumOn='+sumOn+" +
     "' sharpDis='+sharpDis+' sharpChk='+sharpChk+' capOn='+capOn+" +
-    "' presetsOff='+presetsOff+' pcapOn='+pcapOn+' chartOff='+chartOff+" +
+    "' presetsOff='+presetsOff+' pcapOn='+pcapOn+" +
+    "' posOff='+posOff+' posTxt='+posTxt+" +
     "' sideOff='+sideOff+' sideCapOn='+sideCapOn+' sideDis='+sideDis+" +
     "' sideShown='+sideShown+' sideCapTxt='+sideCapTxt+" +
+    "' railOver='+railOver+" +
     "' winsize='+ws;" +
     "},1500);</script></body>");
   return s;
@@ -863,86 +933,14 @@ function attrsOf(tag) {
   return a;
 }
 
-// Everything drawn into the section frame, section view and corner inset alike,
-// lives in the #SecG group. Scoping to it keeps the flute chart's own orange
-// leader lines out of the way.
-function secG(out) {
-  var m = /<g id="SecG">([\s\S]*?)<\/g>/.exec(out);
-  return m ? m[1] : null;
-}
-
-// Every orange (highlighted) line in the corner inset, as [x1,y1,x2,y2].
+// v1.15 removed five source-scraping helpers that all hung off one capture of
+// <g id="SecG">...</g>: the corner inset's highlighted edge and its typed
+// number (the inset itself is gone), the seam ring count and the section's
+// stock block (both moved into the in-page probes in seed(), because the new
+// #SceneG nests groups and a non-greedy source capture stops inside the first
+// one), and the flute chart's bold selected line (the chart is gone, and
+// #Summary already asserts the same words on the same cases).
 //
-// The section view highlights the real bevel facet in the SAME orange at the
-// SAME width, so colour alone cannot tell the two apart. The inset is the only
-// thing drawn right of x=800 (see the header comment above drawModeInset in
-// EdgeBreakerDialog.htm: the frame is empty from 800 to 990 in every case), and
-// the section's facet is drawn at x<=380, so the x range is what separates them.
-function insetHighlights(out) {
-  var g = secG(out);
-  if (g === null) return null;
-  var tags = g.match(/<line\b[^>]*>/g) || [], hits = [], i, a;
-  for (i = 0; i < tags.length; i++) {
-    a = attrsOf(tags[i]);
-    if (a.stroke !== "#f76707") continue;
-    if (!(+a.x1 >= 800) || !(+a.x2 >= 800)) continue;
-    hits.push([+a.x1, +a.y1, +a.x2, +a.y2]);
-  }
-  return hits;
-}
-
-// The number drawn under the mode word, unit and all. Same x>=800 rule as
-// insetHighlights -- every label the section view draws for itself sits left of
-// that -- and the mode word carries no digit, so the inset's numeric label is
-// the only text this can return.
-function insetNumbers(out) {
-  var g = secG(out);
-  if (g === null) return null;
-  var re = /<text\b([^>]*)>([^<]*)<\/text>/g, m, a, hits = [];
-  while ((m = re.exec(g)) !== null) {
-    a = attrsOf("<text " + m[1] + ">");
-    if (+a.x >= 800 && /\d/.test(m[2])) hits.push(m[2]);
-  }
-  return hits;
-}
-
-// How many seam rings the section drew. svgEl("circle", ...) is called in
-// exactly two places on the page: the seam ring, appended to #SecG, and the
-// flute chart's position dot, appended to `chart` -- a DIFFERENT svg element.
-// So a circle inside #SecG is a seam ring and nothing else, and secG() captures
-// the whole group because the page nests no <g> inside it (there is no other
-// svgEl("g") or createElementNS on the page at all).
-function seamRings(out) {
-  var g = secG(out);
-  if (g === null) return null;
-  return (g.match(/<circle\b/g) || []).length;
-}
-
-// The pass note's text, tags stripped, the same way the block message is read.
-// Callers must match an ASCII-only fragment: the copy carries an em-dash, and
-// character-encoding round-trips are not what this gate is for.
-function passNoteText(out) {
-  var m = /id="PassNote"[^>]*>([\s\S]*?)<\/div>/.exec(out);
-  return m ? m[1].replace(/<[^>]*>/g, "") : null;
-}
-
-// Did the SECTION's stock block draw? The inset appends two polygons of its own
-// with the same two fills, so a bare polygon count is satisfied by the inset
-// alone. The inset is a corner detail pinned to the right of the frame -- its
-// leftmost ink is x=858 -- while the section's block spans the drawing from
-// x=20, so a polygon with a point left of x=800 can only be the section's.
-function sectionDrewStock(out) {
-  var g = secG(out);
-  if (g === null) return false;
-  var tags = g.match(/<polygon\b[^>]*>/g) || [], i, re, m;
-  for (i = 0; i < tags.length; i++) {
-    re = /(-?[\d.]+)\s*,\s*(-?[\d.]+)/g;
-    while ((m = re.exec(attrsOf(tags[i]).points || "")) !== null)
-      if (parseFloat(m[1]) < 800) return true;
-  }
-  return false;
-}
-
 // Which cut-position button is lit, as its data-pct. Exactly one may be, and
 // the whole dialog downstream -- chart, section, summary, the number that ends
 // up on the toolpath -- follows the same currentPercent this reflects.
@@ -981,20 +979,22 @@ function runCase(c, viewW, viewH, label) {
     "--dump-dom", "file:///" + f.replace(/\\/g, "/")
   ], { encoding: "utf8", maxBuffer: 40 * 1024 * 1024 });
 
-  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d) sharpDis=(-?\d) sharpChk=(-?\d) capOn=(\d) presetsOff=(\d) pcapOn=(\d) chartOff=(\d) sideOff=(\d) sideCapOn=(\d) sideDis=(-?\d) sideShown=(\S+) sideCapTxt=(\S+) winsize=([^\s<]+)/.exec(out);
+  var m = /MEASURE over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+) ink=(-?[\d.]+) drewStock=(\d) seams=(-?\d+) warnOn=(\d) hdrInk=(-?\d+) hdrPair=(-?\d+) hdrGap=(-?\d+) helpW=(-?\d+) helpX=(-?\d+) helpGap=(-?\d+) barGap=(-?\d+) barOver=(-?\d+) noteOn=(\d) sumOn=(\d) sharpDis=(-?\d) sharpChk=(-?\d) capOn=(\d) presetsOff=(\d) pcapOn=(\d) posOff=(\d) posTxt=(\S+) sideOff=(\d) sideCapOn=(\d) sideDis=(-?\d) sideShown=(\S+) sideCapTxt=(\S+) railOver=(-?\d+) winsize=([^\s<]+)/.exec(out);
   if (!m) { console.log("FAIL  " + name + "  (no measurement - page error?)"); failed++; return; }
 
   var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH2 = +m[5], ink = +m[6];
-  var hdrInk = +m[7], hdrPair = +m[8], hdrGap = +m[9];
-  var helpW = +m[10], helpX = +m[11], helpGap = +m[12], barGap = +m[13], barOver = +m[14];
-  var noteOn = +m[15], sumOn = +m[16];
-  var sharpDis = +m[17], sharpChk = +m[18], capOn = +m[19];
-  var presetsOff = +m[20], pcapOn = +m[21], chartOff = +m[22];
-  var sideOff = +m[23], sideCapOn = +m[24], sideDis = +m[25], sideShown = m[26];
-  var sideCapTxt = m[27];
+  var drewStock = +m[7], seams = +m[8], warnOn = +m[9];
+  var hdrInk = +m[10], hdrPair = +m[11], hdrGap = +m[12];
+  var helpW = +m[13], helpX = +m[14], helpGap = +m[15], barGap = +m[16], barOver = +m[17];
+  var noteOn = +m[18], sumOn = +m[19];
+  var sharpDis = +m[20], sharpChk = +m[21], capOn = +m[22];
+  var presetsOff = +m[23], pcapOn = +m[24], posOff = +m[25], posTxt = m[26];
+  var sideOff = +m[27], sideCapOn = +m[28], sideDis = +m[29], sideShown = m[30];
+  var sideCapTxt = m[31];
+  var railOver = +m[32];
   // [^\s<]+ rather than \S+: winsize is the last field on the title line, and
   // --dump-dom serialises "</title>" straight after it with no space between.
-  var winsize = m[28];
+  var winsize = m[33];
   var bad = [];
 
   // v1.12.0 defect fix. The page reports its own client box twice -- as it is
@@ -1011,21 +1011,30 @@ function runCase(c, viewW, viewH, label) {
              wsPair[1] + " with nothing resized");
   if (over > 0) bad.push("content overflows by " + over + "px");
   if (okBottom > viewH2) bad.push("OK button below the fold");
-  // The section's viewBox is 1000 wide and clipped, so this is the one
-  // constraint on the drawing that the overflow measurement structurally cannot
-  // enforce: ink past the edge is silently cut off instead of pushing anything.
-  // 990 is the drawing's own margin. Today's worst is the inset's number on an
-  // obtuse bit -- the box swaps wider and its labels move right with it -- in
-  // MM, because "mm" is a wider suffix than "in": 972.4 for "0.03125 mm" against
-  // 961.4 for the same size in inches. That is 17.6 units of real headroom, not
-  // the 28.6 the inch case suggests, which is why the case below seeds mm.
+  // The scene's viewBox is 950 wide and the <svg> is overflow="hidden", so this
+  // is the one constraint on the drawing that the overflow measurement
+  // structurally cannot enforce: ink past the edge is silently cut off instead
+  // of pushing anything, and a label that runs off the end renders as a
+  // truncated word with nothing else to show for it.
   //
-  // The number is now drawn AS TYPED, so its length is bounded by what a person
-  // enters rather than by fnum's four decimals. Measured, it takes a 9-character
-  // number in mm (10 in inches) before anything is lost, and the loss is a
-  // truncated tail, not a wrong figure. 1/64 in (0.015625) and 1/32 in as mm
-  // (0.79375) both clear it easily, so no length cap is worth the code.
-  if (ink > 990) bad.push("section drawing runs to x=" + ink + ", past the 990 clip margin");
+  // 950 because v1.15 brought the drawing's own coordinate box down from
+  // 1500x380 to 950x380 (VBW/VBH in the dialog), closing 500 units of dead band
+  // between the section and the part view. The old 990 was the old box's margin.
+  //
+  // WHAT THIS DOES AND DOES NOT MEASURE, because it is easy to read as more
+  // than it is. getBBox() reports an element's box in its OWN user space and
+  // takes no account of transforms on its ancestors. The part view sits inside
+  // translate(740,68) scale(1.3), so it measures here as though it were drawn at
+  // the origin and this probe under-reports it badly. So: a partial check, on
+  // directly-drawn artwork only.
+  //
+  // It is kept anyway because it is strictly better than what it replaced. This
+  // read the removed #SecG until v1.15, which meant `ink` was 0 in every case,
+  // for every window size, and the assertion passed on a measurement of nothing
+  // at all. Text landing outside the canvas is properly owned by
+  // tests\check-drawing-labels.js, which measures with getBoundingClientRect()
+  // and is transform-safe.
+  if (ink > 950) bad.push("scene drawing runs to x=" + ink + ", past the 950 clip margin");
   // Trident is not pixel-identical to Chrome (form controls, zoom), so a
   // layout that only just fits here can still clip in Aspire.
   //
@@ -1048,6 +1057,10 @@ function runCase(c, viewW, viewH, label) {
   // (probe, 2026-07-28 Q4), so a Chrome-side number is a fair proxy -- but the
   // assertion is against the header's own box, never against 42.
   if (hdrInk > 74) bad.push("header ink reaches " + hdrInk + "px of its 74px box");
+  // The rail. -1 means the element is gone, which is a failure of its own: this
+  // gate must not fall silent the day somebody deletes the rail.
+  if (railOver < 0) bad.push("#Rail is not on the page");
+  else if (railOver > 0) bad.push("the rail's contents overflow it by " + railOver + "px");
   // Both boxes float right, button outboard. A negative gap is the long-name
   // case running the badge under the button.
   if (hdrPair < 0) bad.push("badge and picker button overlap by " + (-hdrPair) + "px");
@@ -1079,17 +1092,36 @@ function runCase(c, viewW, viewH, label) {
     bad.push("the summary is not shown");
   }
 
-  // The warning is display-only, so assert rendered text rather than a
-  // measurement. --dump-dom carries the post-JS DOM, so #DepthWarn's content is
-  // already in `out`. Match an ASCII-only fragment: the message contains an
-  // em-dash and character-encoding round-trips are not what this gate is for.
+  // The depth warning. v1.15 moved it out of the strip into a red banner of its
+  // own at the top of #Scroll -- container #WarnBn, headline #WarnH (always the
+  // literal "DEEPER THAN THE STOCK"), body #WarnN. The WORDS did not change:
+  // depthWarning() is the same function it always was, which is why every
+  // expected string below survived the rewrite untouched.
+  //
+  // SILENCE IS MEASURED, NOT READ. setWarn("","") hides the banner and
+  // deliberately leaves #WarnN's text standing, so a case that asserted "the
+  // text is empty" would be satisfied by a banner shouting the last state's
+  // warning at the operator. It also has to be measured rather than scraped
+  // from the dumped source: this gate's old version read the now-dead #DepthWarn
+  // stub, which nothing writes, and two silent cases passed on an element that
+  // could never have said anything.
+  //
+  // Match an ASCII-only fragment: the message contains an em-dash and
+  // character-encoding round-trips are not what this gate is for.
   if (c.expectWarn !== undefined) {
-    var w = /id="DepthWarn"[^>]*>([^<]*)</.exec(out);
-    var got = w ? w[1] : "(no #DepthWarn element)";
     if (c.expectWarn === "") {
-      if (got !== "") bad.push("expected silence, got: " + got);
-    } else if (got.indexOf(c.expectWarn) === -1) {
-      bad.push("warning missing '" + c.expectWarn + "', got: " + got);
+      if (warnOn) {
+        var wq = /id="WarnN"[^>]*>([\s\S]*?)<\/span>/.exec(out);
+        bad.push("expected silence, got the warning banner: " +
+                 (wq ? wq[1].replace(/<[^>]*>/g, "") : "(no #WarnN element)"));
+      }
+    } else if (!warnOn) {
+      bad.push("expected the warning banner, but it is hidden");
+    } else {
+      var w = /id="WarnN"[^>]*>([\s\S]*?)<\/span>/.exec(out);
+      var got = w ? w[1].replace(/<[^>]*>/g, "") : "(no #WarnN element)";
+      if (got.indexOf(c.expectWarn) === -1)
+        bad.push("warning missing '" + c.expectWarn + "', got: " + got);
     }
   }
 
@@ -1112,33 +1144,53 @@ function runCase(c, viewW, viewH, label) {
       bad.push("block message missing '" + c.expectBlock + "', got: " + bt);
   }
 
-  // v1.13.0: the pass note is the only thing that tells the operator this cut
-  // takes more than one bite, in what order, and that the seams are expected.
-  // "" is an assertion in its own right and the important one: at one pass, and
-  // on a refusal, the note must be EMPTY. Note what this does NOT prove -- the
-  // gate renders one state per case, so it cannot see a note left standing from
-  // a PREVIOUS size. That the page clears it on the way through is pinned in
-  // the page's own code, not here; deleting the clear line leaves this green.
+  // The MODE BANNER: the coloured strip under the state banner that says what
+  // kind of cut this is. It is where v1.15 put the old #PassNote, and it is now
+  // the only thing that tells the operator a cut takes more than one bite, in
+  // what order, and that the seams are expected. Two halves, asserted through
+  // two keys, because they fail apart: the headline #ModeH names the state and
+  // the body #ModeN explains it.
+  //
+  // THE OLD `expectNote: ""` HAD TO GO. This banner is never empty -- an
+  // ordinary one-bite cut reads "ONE FLAT PASS", a refusal reads "NOTHING WOULD
+  // BE BUILT" -- so "assert nothing is written here" would now be a check that
+  // cannot fail. The one-pass contract it carried, which is the assertion most
+  // likely to be dropped for looking like it tests nothing, becomes a positive
+  // one: an ordinary chamfer must say ONE FLAT PASS and draw no seams.
+  //
+  // #ModeN carries <b> markup (the sharp-drop sentence names the toggle), so
+  // tags are stripped the same way the block message's are, and callers must
+  // match an ASCII-only fragment -- the copy carries an em-dash and
+  // character-encoding round-trips are not what this gate is for.
+  //
+  // What this does NOT prove: the gate renders one state per case, so it cannot
+  // see a banner left standing from a PREVIOUS redraw. That every branch of
+  // redraw() calls setMode() is pinned in the page's own code, not here.
+  if (c.expectHead !== undefined) {
+    var mh = /id="ModeH"[^>]*>([\s\S]*?)<\/span>/.exec(out);
+    var mht = mh ? mh[1].replace(/<[^>]*>/g, "") : "(no #ModeH element)";
+    if (mht.indexOf(c.expectHead) === -1)
+      bad.push("mode headline expected '" + c.expectHead + "', got: " + mht);
+  }
   if (c.expectNote !== undefined) {
-    var pn = passNoteText(out);
-    if (pn === null) {
-      bad.push("no #PassNote element");
-    } else if (c.expectNote === "") {
-      if (pn.replace(/^\s+|\s+$/g, "") !== "") bad.push("expected no pass note, got: " + pn);
-    } else if (pn.indexOf(c.expectNote) === -1) {
-      bad.push("pass note missing '" + c.expectNote + "', got: " + pn);
-    }
+    var mn = /id="ModeN"[^>]*>([\s\S]*?)<\/span>/.exec(out);
+    var mnt = mn ? mn[1].replace(/<[^>]*>/g, "") : "(no #ModeN element)";
+    if (mnt.indexOf(c.expectNote) === -1)
+      bad.push("mode note missing '" + c.expectNote + "', got: " + mnt);
   }
 
   // There are passes-1 seams, never passes: the final pass's tip is out in the
   // waste, clear of the finished face, and leaves no mark. The count is drawn
-  // rather than written, so it can be wrong while the note beside it reads
+  // rather than written, so it can be wrong while the banner beside it reads
   // right -- which is the whole reason this is counted rather than trusted.
+  //
+  // Counted in the live DOM by the seam mark's own stroke colour. See the probe
+  // in seed() for why the old <circle> count could not simply be repointed: a
+  // circle in this drawing is a HANDLE now.
   if (c.expectSeams !== undefined) {
-    var rings = seamRings(out);
-    if (rings === null) bad.push("no #SecG group in the DOM");
-    else if (rings !== c.expectSeams)
-      bad.push("expected " + c.expectSeams + " seam ring(s), got " + rings);
+    if (seams < 0) bad.push("no #SceneG group in the DOM");
+    else if (seams !== c.expectSeams)
+      bad.push("expected " + c.expectSeams + " seam mark(s), got " + seams);
   }
 
   // The banner has to SAY the right thing, not merely fit: a state that
@@ -1164,64 +1216,32 @@ function runCase(c, viewW, viewH, label) {
     }
   }
 
-  // The inset is the only thing on the dialog that says what Face and Leg
-  // MEAN, and it is drawn rather than written -- so a case that measures fine
-  // while drawing no inset is exactly the silent regression worth catching.
-  if (c.expectInset !== undefined) {
-    var iw = out.match(/>(SETBACK|FACE|LEG)</g) || [];
-    var got = iw.length ? iw[0].slice(1, -1) : "";
-    if (got !== c.expectInset)
-      bad.push("inset word expected '" + (c.expectInset || "none") + "', got '" +
-               (got || "none") + "'");
-  }
+  // The corner inset is gone with v1.15 and three checks went with it: the mode
+  // word, which of the three edges was highlighted, and the typed size drawn
+  // beside them. What survives of them is #ModeCaption above, which still names
+  // the mode in words on every case that used to check the picture.
+  //
+  // Deleted rather than repointed on purpose. The word check had already rotted
+  // into a check that could not fail: it scanned the WHOLE page for the first
+  // >SETBACK|FACE|LEG< and the mode radios in the control strip now supply one,
+  // so it read SETBACK in every case and could never go green on face or leg.
+  // And the typed number's nearest survivor, the size dimension on the drawing,
+  // shows the SOLVED width rather than the string the operator typed -- a
+  // different promise -- and belongs to tests\check-scene.js, which owns it.
 
-  // The word above is only ever mode.toUpperCase(), so it is right by
-  // construction and proves nothing about the DRAWING: which of the three edges
-  // is the orange one is the entire message of the inset, and it can be wrong
-  // while the word is right. Proved by mutation -- pinning the highlight to the
-  // setback edge in all three modes, i.e. the feature completely broken, left
-  // this gate reporting "All layouts fit."
-  if (c.expectEdge !== undefined) {
-    var hits = insetHighlights(out);
-    if (hits === null) {
-      bad.push("no #SecG group in the DOM");
-    } else if (!c.expectEdge) {
-      if (hits.length)
-        bad.push("expected no highlighted inset edge, got " + hits.length +
-                 ": " + JSON.stringify(hits));
-    } else if (hits.length !== 1) {
-      // Two highlights are as wrong as none: the inset answers a which-one
-      // question, so it has to name exactly one edge.
-      bad.push("expected exactly 1 highlighted inset edge, got " + hits.length +
-               ": " + JSON.stringify(hits));
-    } else if (hits[0].join(",") !== c.expectEdge.join(",")) {
-      bad.push("inset highlights the wrong edge: expected [" + c.expectEdge.join(",") +
-               "], got [" + hits[0].join(",") + "]");
-    }
-  }
-
-  // The inset says this number is the one you typed, so a rounded one is a
-  // broken promise, not a cosmetic difference: 0.03125 is a real 1/32 chamfer
-  // and fnum() turns it into 0.0313.
-  if (c.expectInsetNum !== undefined) {
-    var nums = insetNumbers(out);
-    if (nums === null) bad.push("no #SecG group in the DOM");
-    else if (nums.length !== 1)
-      bad.push("expected exactly 1 numeric inset label, got " + nums.length +
-               ": " + JSON.stringify(nums));
-    else if (nums[0] !== c.expectInsetNum)
-      bad.push("inset number expected '" + c.expectInsetNum + "', got '" + nums[0] + "'");
-  }
-
-  // v1.7.0: the section view is drawn, not written, so a case that measures
-  // fine while drawing nothing is the failure worth catching -- exactly the
-  // class the receipt's own top-view check existed for. It has to identify the
-  // SECTION's stock block specifically: the corner inset appends two polygons
-  // with the same two fills, so counting polygons would leave this passing on
-  // the inset alone the moment the inset stops being gated on the section
-  // having drawn.
+  // The section view is drawn, not written, so a case that measures fine while
+  // drawing nothing is the failure worth catching. The stock profile is what is
+  // looked for, by its own fill colour, which is used exactly once on the page.
+  //
+  // The old x<800 discriminator is dead and could not be kept: it existed to
+  // tell the section's block from the corner inset's, and the part view that
+  // replaced the inset is drawn inside a translate() -- so its points are small
+  // LOCAL numbers and every one of them would satisfy "left of 800". Colour is
+  // the only thing that still separates them. What this does not prove: that
+  // the profile has the right SHAPE. The handles' arithmetic is
+  // tests\check-scene.js's job, not this gate's.
   if (!c.noSection) {
-    if (!sectionDrewStock(out)) bad.push("section view drew nothing");
+    if (!drewStock) bad.push("section view drew nothing");
   }
 
   // v1.11.0 sharp corners: the checkbox is live exactly when the side is
@@ -1245,20 +1265,35 @@ function runCase(c, viewW, viewH, label) {
   // two halves are asserted TOGETHER, from one field, because they are one
   // state: applyAspireState sets both, and a greyed row with no caption (or a
   // caption under a live row) is the way a half-applied state would look.
-  // The flute chart is the third half: it is a chart OF cut positions, so a
-  // greyed row above a chart still printing six of them in full colour is the
-  // same contradiction the greying exists to remove. Asserted from the same
-  // field for the same reason -- one state, one function (applyAspireState).
+  // The READ-OUT is the third half: #PosVal is the number in the strip that
+  // answers "where on the flute", so a greyed row beside a live-looking "80%"
+  // is the same contradiction the greying exists to remove. Asserted from the
+  // same field for the same reason -- one state, one function
+  // (applyAspireState). This used to be measured on the flute chart's ink;
+  // v1.15 deleted the chart, and the gauge that replaced it is drawn on the bit
+  // and simply LEFT OUT in aspire mode rather than greyed, so there is nothing
+  // there to take a colour reading from.
   if (c.expectPresetsOff !== undefined) {
     if (presetsOff !== c.expectPresetsOff)
       bad.push("#Presets greyed=" + presetsOff + " want " + c.expectPresetsOff);
     if (pcapOn !== c.expectPresetsOff)
       bad.push("#PresetCap visible=" + pcapOn + " want " + c.expectPresetsOff);
-    // Only where a chart exists to grey. The blocked states (no bit, oversize)
-    // hide the chart entirely, so there is no ink to measure and nothing the
-    // operator could misread; asserting 0 there would pass on the absence.
-    if (!c.noChart && chartOff !== c.expectPresetsOff)
-      bad.push("#Chart ink greyed=" + chartOff + " want " + c.expectPresetsOff);
+    // Only where there is a position to read. The blocked states (no bit,
+    // oversize) hand setPos() a null, which greys the read-out and blanks it to
+    // an em-dash for a reason that has nothing to do with aspire mode.
+    //
+    // Both directions, deliberately. Asserting only "it says TIP when greyed"
+    // would be satisfied by a page that said TIP always, which is exactly the
+    // half-check this rewrite exists to remove; the live case has to show a
+    // real percentage back.
+    if (!c.noPos) {
+      if (posOff !== c.expectPresetsOff)
+        bad.push("#PosVal greyed=" + posOff + " want " + c.expectPresetsOff);
+      var wantPos = c.expectPresetsOff ? /^TIP$/ : /^\d+%$/;
+      if (!wantPos.test(posTxt))
+        bad.push("#PosVal reads '" + posTxt + "', want " +
+                 (c.expectPresetsOff ? "TIP" : "a percentage"));
+    }
     // The side row was the fourth half of the same state (2026-08-06) and is
     // NOT any more (2026-08-07). It greys on a narrower condition than the
     // presets: the cut position really is gone at any size on the aspire path,
@@ -1306,14 +1341,19 @@ function runCase(c, viewW, viewH, label) {
   if (c.expectSideShown !== undefined && sideShown !== c.expectSideShown)
     bad.push("side radios show '" + sideShown + "', want '" + c.expectSideShown + "'");
 
-  // The button bar's one-liner and the chart's bold line are the two places
-  // that still SPEAK a cut position, and both had to stop in aspire mode -- a
-  // bar reading "@ 80%" over a greyed row is the dialog contradicting itself in
-  // the last place the operator looks before pressing OK. Substrings, plural,
-  // so the wording and the NUMBER are both pinned: a line that says "from the
-  // tip" while quoting a band depth would be half fixed.
+  // The button bar's one-liner is the last place the operator looks before
+  // pressing OK, and it still SPEAKS a cut position -- so it had to stop in
+  // aspire mode: "@ 80%" over a greyed row is the dialog contradicting itself.
+  // Substrings, plural, so the wording and the NUMBER are both pinned: a line
+  // that says "from the tip" while quoting a band depth would be half fixed.
   // Middots and em-dashes are deliberately not matched on -- character
   // round-trips through --dump-dom are not what this gate is for.
+  //
+  // The flute chart's bold selected line said the same thing in the same states
+  // and was checked beside this. The chart is gone with v1.15 and that check
+  // went with it: it had nothing left to point at, and both halves of what it
+  // asserted -- the wording and the number -- are already asserted here, on the
+  // same four cases.
   function textOf(re, what) {
     var mm = re.exec(out);
     return mm ? mm[1].replace(/<[^>]*>/g, "") : "(no " + what + " element)";
@@ -1323,13 +1363,6 @@ function runCase(c, viewW, viewH, label) {
     for (var si = 0; si < c.expectSummary.length; si++)
       if (sumText.indexOf(c.expectSummary[si]) === -1)
         bad.push("summary missing '" + c.expectSummary[si] + "', got: " + sumText);
-  }
-  if (c.expectSelTxt !== undefined) {
-    var selText = textOf(/id="SelTxt"[^>]*>([\s\S]*?)<\/text>/, "#SelTxt");
-    for (var ti = 0; ti < c.expectSelTxt.length; ti++)
-      if (selText.indexOf(c.expectSelTxt[ti]) === -1)
-        bad.push("chart's selected line missing '" + c.expectSelTxt[ti] +
-                 "', got: " + selText);
   }
 
   // The words, not just the visibility -- this caption is the only thing that
@@ -1444,6 +1477,27 @@ var MSG_CASES = [
           "skipped 2 shapes that Aspire's offset collapsed to nothing because they " +
           "are narrower than the chamfer at this cut position." },
 
+  // 2026-08-13: the recall note was reworded to explain itself, and it is now
+  // the longest single note the product can produce -- longer than the wrap case
+  // above, which was written when it was two counts and a clause. Seeded with
+  // the toolpath note stacked under it, because that is what a real recall run
+  // shows and note_text always appends it.
+  //
+  // Measured 15px over at the design size and ACCEPTED (Tim, 2026-08-13) rather
+  // than growing the message window. scrollMax pins it at 20 so a longer note
+  // fails here instead of quietly scrolling further.
+  { name: "msg: recall note (longest single note) + toolpath note",
+    kind: "m-warn", tall: true, scrollMax: 20,
+    head: "Chamfer 1 rebuilt from memory",
+    rows: "Offset=9 vectors (9 outward, 0 inward);G=0.0403 in;Plunge D=0.0803 in;" +
+          "Standoff=0.0403 in;Layer=EdgeBreaker - Offset 01",
+    note: "Note: nothing was selected, so this run used the same shapes as last " +
+          "time. There were 12 of them, and 9 are left - the rest have been moved, " +
+          "edited or deleted. Select them and run again if you want them chamfered " +
+          "too.\n\n" +
+          "Toolpath 'Chamfer 1 - 0.06 in [EdgeBreaker 01]' created and calculated " +
+          "(Profile On, depth 0.0803 in)\nusing V-Bit 60.0&deg; - 1/2&quot;." },
+
   // The whole point of writing with innerText. If any of this reaches the page
   // as markup the assertion below fails and the <b> renders instead.
   { name: "msg: a value that looks like markup stays text", kind: "m-done", tall: true,
@@ -1471,6 +1525,11 @@ var MSG_CASES = [
   // it. The "full report" case above, whose note is one short line, is not a
   // state the Lua can produce.
   //
+  // 2026-08-13: the seeded note was the ignored-vectors line, which can no
+  // longer open a report on its own -- it prints, but it stopped being a reason.
+  // Swapped for the open-vector note, which still is one and is shorter, so this
+  // case stays the floor it was written to be.
+  //
   // Seeded exactly as EdgeBreaker.lua ~2723 builds note_text: sel_notes with
   // its leading break stripped, then "\n\n", then toolpath_note (which carries
   // a "\n" of its own before the tool name). Entities rather than literal
@@ -1483,7 +1542,7 @@ var MSG_CASES = [
     head: "Chamfer 2 rebuilt",
     rows: "Offset=3 vectors (3 outward, 0 inward);G=0.0403 in;Plunge D=0.0803 in;" +
           "Standoff=0.0403 in;Layer=EdgeBreaker - Offset 02",
-    note: "Note: ignored 1 selected vector that EdgeBreaker drew itself.\n\n" +
+    note: "Note: 2 open vector(s) skipped.\n\n" +
           "Toolpath 'Chamfer 2 - 0.06 in [EdgeBreaker 02]' created and calculated " +
           "(Profile On, depth 0.0803 in)\nusing V-Bit 60.0&deg; - 1/2&quot;." },
 
@@ -1570,7 +1629,17 @@ MSG_CASES.forEach(function (c) {
   var scrolls = false;
   if (over > 0) {
     if (MSG_CLAMPED) scrolls = true;
-    else bad.push("message overflows its window by " + over + "px");
+    // scrollMax: a per-case, PRINTED acceptance that this message scrolls at the
+    // design size, with a CEILING on how far. Tim's ruling, 2026-08-13, taken on
+    // the measured alternative of a taller message window: the longest reports
+    // may run past the fold, because OK stays pinned and the reader scrolls.
+    //
+    // The ceiling is the point. An open acceptance would let the note grow
+    // without limit and this gate would say nothing; the number pins how bad the
+    // accepted case actually is, so the next line added to it fails here.
+    else if (c.scrollMax != null && over <= c.scrollMax) scrolls = true;
+    else bad.push("message overflows its window by " + over + "px" +
+                  (c.scrollMax != null ? " - past its accepted " + c.scrollMax + "px" : ""));
   }
   // This one never stands down. A pinned bar is the whole reason scrolling is
   // an acceptable answer, so if OK ever leaves the window the argument above
@@ -1602,7 +1671,9 @@ MSG_CASES.forEach(function (c) {
 
   console.log((bad.length ? "FAIL  " : "ok    ") + c.name +
     "  content " + content + " / " + avail + " avail, slack " + (avail - content) + "px" +
-    (scrolls ? "  (scrolls " + over + "px - window clamped to the screen, OK still pinned)" : "") +
+    (scrolls ? "  (scrolls " + over + "px - " +
+       (MSG_CLAMPED ? "window clamped to the screen" : "accepted, ceiling " + c.scrollMax + "px") +
+       ", OK still pinned)" : "") +
     (bad.length ? "  <-- " + bad.join("; ") : ""));
   if (bad.length) failed++;
 });
@@ -1685,7 +1756,16 @@ var SCR_VW = SCR_W - FRAME_W, SCR_VH = SCR_H - FRAME_H;
 console.log("");
 ["EdgeBreakerDialog.htm", "MessageDialog.htm"].forEach(function (name) {
   var src = fs.readFileSync(path.join(__dirname, "..", "gadget", "EdgeBreaker", name), "utf8");
-  var svgs = src.match(/<svg\b[^>]*>/g) || [];
+  // \s, not \b: [^>]* matches zero characters, so \b made the bare five-character
+  // string "<svg>" a hit -- and that string appears twice in this dialog's own
+  // commentary (a CSS comment and a JS comment), neither of which carries
+  // overflow="hidden". This check was therefore permanently red and could not
+  // report a real unclipped element: the failure was already on screen. Both
+  // genuine <svg> tags on the page carry attributes, so requiring whitespace
+  // after the tag name loses nothing real. An attribute-less <svg> would be
+  // skipped, but it would also have no viewBox and no size and would fail
+  // everything else here.
+  var svgs = src.match(/<svg\s[^>]*>/g) || [];
   var pct = svgs.filter(function (t) { return /\bwidth\s*=\s*"[^"]*%"/.test(t); });
   var open = svgs.filter(function (t) { return !/\boverflow\s*=\s*"hidden"/.test(t); });
   if (pct.length || open.length) {

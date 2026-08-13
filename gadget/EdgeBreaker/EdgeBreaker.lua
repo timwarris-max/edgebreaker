@@ -2,9 +2,9 @@
 require "strict"
 -- ============================================================
 -- EdgeBreaker — V-bit chamfer via offset-into-waste + cut On.
--- Spec:      docs/superpowers/specs/2026-07-26-edgebreaker-v1.5-design.md
---            (v1.0-1.4 spec: docs/superpowers/specs/2026-07-22-chamfer-offset-gadget-design.md)
--- SDK facts: docs/m0-results.md
+-- Spec:      specs/2026-07-26-edgebreaker-v1.5-design.md
+--            (v1.0-1.4 spec: specs/2026-07-22-chamfer-offset-gadget-design.md)
+-- SDK facts: specs/m0-results.md
 -- Pure geometry lives in the CO table so plain Lua can load and
 -- unit-test this file. Only main() and CO.sdk_* touch the SDK.
 -- The gadget was called ChamferOffset through v1.4.x; that spelling now
@@ -47,7 +47,7 @@ CO.FIT_EPS = 1e-9
 
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.14.1"
+CO.VERSION         = "1.15.0"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -139,6 +139,14 @@ end
 -- DESIGN_SIZE is what the LAYOUT is authored against -- keep it in step with
 -- DESIGN_W/H in EdgeBreakerDialog.htm and WIN_W/H in the layout gate. It is
 -- also the cap: the page never scales UP, so a bigger window is dead space.
+--
+-- Two more constants are measured against this width and go stale silently if
+-- it moves. RAIL_W (340, in the page and again in tests/check-strip.js) is the
+-- bite the right-hand rail takes out of the window, and the control strip gets
+-- what is left. TV_X (562, in the page) is where the top view's pane starts,
+-- and it was chosen from how far right the section half actually reaches --
+-- lengthening a label out there steals from the preview with nothing warning
+-- you. Change this width and re-measure both.
 CO.DESIGN_SIZE  = { 1800, 1000 }        -- keep in step with EdgeBreakerDialog.htm
 CO.DEFAULT_SIZE = { 1280, 700 }         -- no measurement: fits 1366x768
 CO.SCREEN_MARGIN = 16                   -- so the window is not flush to the screen edge
@@ -153,7 +161,7 @@ CO.SCREEN_MARGIN = 16                   -- so the window is not flush to the scr
 -- only screens between roughly 1600 and 2250 wide change at all.
 CO.SCREEN_FRACTION = 0.80
 
--- Styled messages (see docs/superpowers/specs/2026-07-28-edgebreaker-styled-messages-design.md).
+-- Styled messages (see specs/2026-07-28-edgebreaker-styled-messages-design.md).
 -- The class names are the setup dialog's own banner palette under different
 -- names, so the two windows are visibly one product.
 CO.MESSAGE_KINDS = { error = "m-error", warn = "m-warn", done = "m-done" }
@@ -834,6 +842,100 @@ function CO.polygonize(spans, tol)
       end
    end
    return loop
+end
+
+-- ============================================================
+-- The live top view (2026-08-11, live-top-view spec sections 5 and 5a)
+-- ============================================================
+-- A DISPLAY-PERFORMANCE cap, not a decision rule. Nothing about the cut depends
+-- on it: blowing it costs the picture and falls back to the isometric block,
+-- never a wrong answer. It is therefore NOT the kind of tuned constant
+-- `topology-not-thresholds` forbids -- but say so out loud, because it looks
+-- like one. Measured by TopViewProbe, 2026-08-11.
+CO.VIEW_POINT_BUDGET = 20000
+
+-- The same kind of cap, across ALL of a job's chamfers on the rebuild path,
+-- where one payload per chamfer goes into the dialog at once (2026-08-12).
+-- TopViewProbe found no field ceiling at 775,111 characters for ONE field; the
+-- total across many was never measured, so this stays an order below the single
+-- figure that did pass. Blowing it costs the later chamfers their picture and
+-- nothing else -- they fall back to the block, one at a time.
+CO.VIEW_SLOT_CHAR_BUDGET = 600000
+
+-- The union of every loop's own bounding box, which is what the page letterboxes
+-- into its pane. A loop with no bbox is SKIPPED rather than folded in as a box at
+-- the origin -- one missing box would otherwise drag the whole view out to
+-- include 0,0 and shrink the part to nothing.
+function CO.outline_bbox(loops)
+   if type(loops) ~= "table" then return nil end
+   local u = nil
+   for _, lp in ipairs(loops) do
+      local b = lp.bbox
+      if b ~= nil then
+         if u == nil then
+            u = { x0 = b.x0, y0 = b.y0, x1 = b.x1, y1 = b.y1 }
+         else
+            if b.x0 < u.x0 then u.x0 = b.x0 end
+            if b.y0 < u.y0 then u.y0 = b.y0 end
+            if b.x1 > u.x1 then u.x1 = b.x1 end
+            if b.y1 > u.y1 then u.y1 = b.y1 end
+         end
+      end
+   end
+   return u
+end
+
+-- The chord tolerance that puts one polygon segment per half display pixel.
+-- The run polygonizes at 0.001 because it is making geometry; this is making a
+-- picture, and a picture finer than its own pixels costs points for nothing.
+-- nil where the inputs cannot produce a scale, so the caller falls back rather
+-- than dividing by zero.
+function CO.view_tolerance(box_w, box_h, pane_w, pane_h)
+   if type(box_w) ~= "number" or type(box_h) ~= "number" then return nil end
+   if type(pane_w) ~= "number" or type(pane_h) ~= "number" then return nil end
+   if box_w <= 0 or box_h <= 0 or pane_w <= 0 or pane_h <= 0 then return nil end
+   local scale = math.min(pane_w / box_w, pane_h / box_h)
+   if not (scale > 0) or scale ~= scale then return nil end
+   return 0.5 / scale
+end
+
+-- Total points across every loop, and whether that is affordable. Two returns
+-- rather than one boolean: the count goes in the fallback's printed reason, so a
+-- budget that starts firing on ordinary jobs is visible to us.
+function CO.view_point_budget(loops)
+   local total = 0
+   if type(loops) == "table" then
+      for _, lp in ipairs(loops) do
+         if type(lp.pts) == "table" then total = total + #lp.pts end
+      end
+   end
+   return total, total <= CO.VIEW_POINT_BUDGET
+end
+
+-- One row per loop, keyed by its index so the page can report which one failed
+-- to parse. Points are RELATIVE to the union box's corner: absolute job
+-- coordinates can run to five digits before the point, and the field has a
+-- measured ceiling (TopViewProbe, 2026-08-11).
+--
+-- `tol` is accepted and ignored when a loop already carries `pts` -- the caller
+-- polygonizes once and passes the result in, so the tests can exercise the
+-- encoding without span records.
+function CO.encode_outlines(loops, tol, ox, oy)
+   if type(loops) ~= "table" or #loops == 0 then return "" end
+   local rows = {}
+   for i, lp in ipairs(loops) do
+      local pts = lp.pts
+      if pts == nil and lp.spans ~= nil then pts = CO.polygonize(lp.spans, tol) end
+      if type(pts) == "table" and #pts > 0 then
+         local flat = {}
+         for _, p in ipairs(pts) do
+            flat[#flat + 1] = string.format("%.4f", p[1] - ox)
+            flat[#flat + 1] = string.format("%.4f", p[2] - oy)
+         end
+         rows[#rows + 1] = { tostring(i), table.concat(flat, " ") }
+      end
+   end
+   return CO.encode_rows(rows)
 end
 
 function CO.signed_area(pts)
@@ -1530,7 +1632,7 @@ end
 -- A template's layer restriction is OPTIONAL: "_vcgfNumLayers" may be 0, in which
 -- case no "_vcgfLayerName<i>" tags exist at all (confirmed against a real template
 -- saved without layer scoping). Layout (tests/tools/dump-template.lua — see
--- docs/m0-results.md):
+-- specs/m0-results.md):
 --   _vcgfNumLayers: tag, 4-byte type tag (01 00 00 00), u32 LE count.
 --   _vcgfLayerName<i>: tag, 4-byte type tag (03 00 00 00), 3 marker bytes
 --     (FF FE FF), 1-byte character count, then that many UTF-16LE characters.
@@ -1613,7 +1715,7 @@ end
 
 -- Machine Vectors strategy, stored after the UTF-16LE tag "_ppdProfileType".
 -- Codes verified against fixtures: 2=On, 0=Outside (1=Inside inferred, no
--- Inside fixture exists). See docs/m0-results.md.
+-- Inside fixture exists). See specs/m0-results.md.
 local MV_NEEDLE = ("_ppdProfileType"):gsub(".", "%0\0")
 local MV_CODES = { [0] = "outside", [1] = "inside", [2] = "on" }
 
@@ -3343,6 +3445,35 @@ function CO.doomed_layer(name, slot, n, migrate)
    return s == slot and k ~= nil and k > n
 end
 
+-- Orange, not magenta: Vectric highlights selected vectors and toolpaths in
+-- magenta, so an offset drawn in it competes with Aspire's own UI state and
+-- "check the offsets before you cut" gets harder to do (live 2026-07-26). Blue
+-- and cyan were tried and rejected: blue reads as black at thin line widths,
+-- cyan washes out on the white background.
+CO.OFFSET_COLOUR_BANDS  = 0x008CFF   -- orange (BGR)
+CO.OFFSET_COLOUR_ASPIRE = 0x000000   -- black (BGR)
+
+-- The orange above was right for the path it was chosen on and the aspire path
+-- is what falsified it. On the BANDS path the offsets are the product: they sit
+-- out in the waste, they are what the tool follows, and a colour that stands
+-- out is doing a job. On the ASPIRE path they are an exact clone lying ON the
+-- operator's own vector -- they have to be, the chamfer engine cuts the
+-- operator's own edge -- so a colour that stands out is not highlighting the
+-- product, it is HIDING it. Measured live 2026-08-05: "I can see it, but it's
+-- hard to see mine."
+--
+-- Locking (see sdk_prepare_layers and main's lock_copies) does not help with
+-- this and was measured not to: Aspire draws a locked layer in full, undimmed
+-- colour and shows the padlock in the Layers panel only (2026-08-07). The lock
+-- fixes the click; this fixes the look; neither does the other's job.
+--
+-- Anything not "aspire" falls through to orange -- released behaviour -- so a
+-- strategy that fails to arrive cannot silently repaint a bands job black.
+function CO.offset_layer_colour(strategy)
+   if strategy == "aspire" then return CO.OFFSET_COLOUR_ASPIRE end
+   return CO.OFFSET_COLOUR_BANDS
+end
+
 -- Get-or-create THIS chamfer's n output layers and clear stale offsets from the
 -- previous run. Wiping is safe because partition_loops has already dropped
 -- everything selected ON these layers from the input -- by layer membership, so
@@ -3352,7 +3483,7 @@ end
 --
 -- Layers are found by ENUMERATION, never by GetLayerWithName: that call CREATES
 -- the layer when it is missing, and we are here to remove some of them.
-function CO.sdk_prepare_layers(job, slot, n, migrate)
+function CO.sdk_prepare_layers(job, slot, n, migrate, strategy)
    local old_left = false
    local doomed = {}
    local lpos = job.LayerManager:GetHeadPosition()
@@ -3365,6 +3496,19 @@ function CO.sdk_prepare_layers(job, slot, n, migrate)
       end
    end
    for _, layer in ipairs(doomed) do
+      -- Unlock BEFORE the wipe, for the same reason as the per-band loop below:
+      -- a doomed layer was locked by the run that created it, and locked
+      -- survives save/close/reopen, so every rebuild that retires a band arrives
+      -- at a locked layer. Whether RemoveObject works on one has never been
+      -- measured and is not going to be -- unlocking first means nobody has to
+      -- know. Getting it wrong here is not cosmetic: a throwing RemoveObject
+      -- refuses the whole rebuild, and a silently no-opping one leaves stale
+      -- orange vectors on the canvas that nothing cuts any more, which is the
+      -- exact harm CO.doomed_layer exists to prevent.
+      --
+      -- pcall'd: a throwing write leaves the layer as it was found, i.e.
+      -- released behaviour, which is never worth failing a run over.
+      pcall(function() layer.Locked = false end)
       local objs = {}
       local pos = layer:GetHeadPosition()
       while pos ~= nil do
@@ -3382,6 +3526,34 @@ function CO.sdk_prepare_layers(job, slot, n, migrate)
    local layers = {}
    for k = 1, n do
       local layer = job.LayerManager:GetLayerWithName(CO.offset_layer_name(slot, k))
+      -- LOCKED, not hidden, and the difference is one property. Hiding these
+      -- layers was built (session 081) and killed at the machine (082): Aspire
+      -- cannot Recalculate All Toolpaths when a toolpath's source vectors are
+      -- on a HIDDEN layer. A locked layer stays VISIBLE, so recalc reads it
+      -- fine -- measured 2026-08-07, which is the whole reason locking is
+      -- viable where hiding was not.
+      --
+      -- Off here, unconditionally, because main() puts it back on at every
+      -- exit and a locked layer therefore survives into the next run (locked
+      -- persists through save/close/reopen).
+      --
+      -- FIRST THING IN THE LOOP, before the enumerate-and-remove below, and the
+      -- order is the whole point: taking the lock off BEFORE the wipe is what
+      -- makes "can a locked layer be emptied?" a question nobody has to answer.
+      -- Run it after the wipe instead and every rebuild after the first calls
+      -- RemoveObject on a locked layer -- which either throws (RemoveObject is
+      -- not pcall'd, so the rebuild dies with "Couldn't prepare the offset
+      -- layer") or silently no-ops, leaving the previous run's copies in place
+      -- for the layer-restricted toolpath to cut alongside the current ones.
+      -- Neither failure is visible offline, which is why the test spy holds an
+      -- object and records layer.Locked at the moment RemoveObject is called.
+      --
+      -- It is also why the probe tested the full round trip: a lock we could
+      -- not take off from Lua would be a one-way door.
+      --
+      -- pcall'd: a throwing write leaves the layer as it was found, which is
+      -- released behaviour, and that is never worth failing a run over.
+      pcall(function() layer.Locked = false end)
       local objs = {}
       local pos = layer:GetHeadPosition()
       while pos ~= nil do
@@ -3390,12 +3562,7 @@ function CO.sdk_prepare_layers(job, slot, n, migrate)
          objs[#objs + 1] = obj
       end
       for _, obj in ipairs(objs) do layer:RemoveObject(obj) end
-      -- Orange, not magenta: Vectric highlights selected vectors and toolpaths
-      -- in magenta, so an offset drawn in it competes with Aspire's own UI state
-      -- and "check the offsets before you cut" gets harder to do (live
-      -- 2026-07-26). Blue and cyan were tried and rejected: blue reads as black
-      -- at thin line widths, cyan washes out on the white background.
-      layer:SetColour(0x008CFF)   -- orange (BGR)
+      layer:SetColour(CO.offset_layer_colour(strategy))
       layers[k] = layer
    end
    return layers, old_left
@@ -3808,7 +3975,7 @@ end
 -- Delete every toolpath carrying THIS slot's ownership marker. Collect first,
 -- delete after — never delete while iterating (same doomed[] pattern as
 -- sdk_prepare_layers). DeleteToolpath(tp) with an OBJECT argument is
--- live-proven on Aspire 12.5 (mastercam-tooling session 054 probe); an
+-- live-proven on Aspire 12.5 (session-054 probe); an
 -- unreadable Name just means that toolpath is left alone, and so does one
 -- marked for a different slot. A non-number slot raises rather than matching
 -- anything.
@@ -4213,6 +4380,56 @@ function main(script_path)
    local sel_fps = {}
    for i, loop in ipairs(kept) do sel_fps[i] = loop.bbox end
 
+   -- The top view's payload, built HERE because `kept` still carries the span
+   -- geometry and the dialog has not been constructed yet (live-top-view spec 5).
+   -- Every failure is silent and ends at the isometric block: a missing picture
+   -- is not something the operator can act on, and the block is what ships today.
+   -- The pane size is the drawing's own canvas, which the page letterboxes into.
+   --
+   -- `kept[i].bbox` is a MEMORY fingerprint -- {cx, cy, xlen, ylen}, see
+   -- bbox_fingerprint -- and CO.outline_bbox unions CORNER boxes. Converting
+   -- here rather than teaching outline_bbox both shapes keeps the fingerprint
+   -- the one thing chamfer memory compares. Without this the union box comes
+   -- back all-nil, the arithmetic below throws into the pcall, and the picture
+   -- silently never draws (proved offline 2026-08-11).
+   local VIEW_PANE_W, VIEW_PANE_H = 950, 380
+   -- One set of loops in, the page's two fields out, "" and "" for every
+   -- failure. Written as a function because the rebuild path below needs the
+   -- same arithmetic on a different set of loops.
+   local function view_payload(loops)
+      local field, box_field = "", ""
+      local ok = pcall(function()
+         local corner_boxes = {}
+         for _, lp in ipairs(loops) do
+            local b = lp.bbox
+            if b ~= nil then
+               corner_boxes[#corner_boxes + 1] = { bbox = {
+                  x0 = b.cx - b.xlen / 2, y0 = b.cy - b.ylen / 2,
+                  x1 = b.cx + b.xlen / 2, y1 = b.cy + b.ylen / 2 } }
+            end
+         end
+         local ubox = CO.outline_bbox(corner_boxes)
+         if ubox == nil then return end
+         local bw, bh = ubox.x1 - ubox.x0, ubox.y1 - ubox.y0
+         local tol = CO.view_tolerance(bw, bh, VIEW_PANE_W, VIEW_PANE_H)
+         if tol == nil then return end
+         local drawable = {}
+         for _, lp in ipairs(loops) do
+            if lp.spans ~= nil then
+               drawable[#drawable + 1] = { pts = CO.polygonize(lp.spans, tol) }
+            end
+         end
+         local total, affordable = CO.view_point_budget(drawable)
+         if not affordable then return end
+         if total == 0 then return end
+         field = CO.encode_outlines(drawable, tol, ubox.x0, ubox.y0)
+         box_field = string.format("%.4f %.4f %.4f %.4f", 0, 0, bw, bh)
+      end)
+      if not ok then return "", "" end
+      return field, box_field
+   end
+   local outline_field, outline_box_field = view_payload(kept)
+
    -- Which remembered shapes are still in this job? A chamfer whose shapes have
    -- all been moved, edited or deleted cannot be rebuilt FROM memory, so for
    -- every decision below it counts as memory-less: it is offered as the amber
@@ -4450,6 +4667,59 @@ function main(script_path)
    -- no way to express "unknown".
    local thickness = CO.sdk_material_thickness(is_mm)
    dlg:AddTextField("Thickness", thickness and tostring(thickness) or "")
+   -- Empty is a normal state, and the page treats anything it cannot parse as
+   -- empty too, so a field that fails to land entirely (a measured Aspire
+   -- failure mode: ScreenProbe round 2, Acer) degrades to released behaviour
+   -- rather than a broken picture.
+   -- A REBUILD has nothing selected, so the payload above is empty and the
+   -- picture falls back to the generic block -- even though the gadget knows
+   -- exactly which shapes it is about to cut (Tim, 2026-08-12). Read them here.
+   --
+   -- One payload PER CHAMFER, because the Change dropdown switches chamfer
+   -- entirely inside the page: a single payload would go on drawing the first
+   -- chamfer's part after the operator picked another one, which is worse than
+   -- the generic block -- it is a confident wrong picture.
+   --
+   -- Only when nothing is selected. With a selection the run cuts the selection,
+   -- which is already drawn, and clearing the selection here would destroy the
+   -- very thing being drawn. It sits this late so that classify_selection and
+   -- sdk_selected_slot have both already read the live selection.
+   local slot_outline_field, slot_box_field = "", ""
+   if #kept == 0 then
+      local rows_o, rows_b, spent = {}, {}, 0
+      for _, c in ipairs(chamfers) do
+         local res = c.resolved
+         if res ~= nil and res.found ~= nil and res.found > 0 and res.objs ~= nil
+            and spent < CO.VIEW_SLOT_CHAR_BUDGET then
+            -- Same route as the rebuild itself takes: put the objects into the
+            -- selection and read them back, so the picture is built from the
+            -- geometry the run will actually use.
+            local loops = nil
+            pcall(function()
+               job.Selection:Clear()
+               for _, obj in ipairs(res.objs) do job.Selection:Add(obj, true, true) end
+               loops = CO.sdk_selection_spans(job)
+            end)
+            if loops ~= nil and #loops > 0 then
+               local f, b = view_payload(loops)
+               if f ~= "" and b ~= "" and spent + #f <= CO.VIEW_SLOT_CHAR_BUDGET then
+                  rows_o[#rows_o + 1] = { tostring(c.slot), f }
+                  rows_b[#rows_b + 1] = { tostring(c.slot), b }
+                  spent = spent + #f
+               end
+            end
+         end
+      end
+      -- Put the selection back to empty, which is how the operator left it. A
+      -- cancelled run must not leave shapes picked that they did not pick.
+      pcall(function() job.Selection:Clear() end)
+      slot_outline_field = CO.encode_rows(rows_o)
+      slot_box_field = CO.encode_rows(rows_b)
+   end
+   dlg:AddTextField("Outlines", outline_field)
+   dlg:AddTextField("OutlineBox", outline_box_field)
+   dlg:AddTextField("OutlinesBySlot", slot_outline_field)
+   dlg:AddTextField("OutlineBoxBySlot", slot_box_field)
    dlg:AddTextField("HiddenNote", template_ok and "" or template_err)
    dlg:AddTextField("Mode", seed.mode)
    dlg:AddTextField("Side", seed.side)
@@ -4953,7 +5223,7 @@ function main(script_path)
    -- saying it once.
    local sharp_refused = (sharp_ok and not sharp_run) and CO.sharp_nesting_note(sharp_why) or nil
    local ok_layer, layers, old_layer_left =
-      pcall(CO.sdk_prepare_layers, job, slot, n_passes, migrating)
+      pcall(CO.sdk_prepare_layers, job, slot, n_passes, migrating, strategy)
    if not ok_layer then
       -- One layer per band now, so an error naming only band 1 points at the
       -- wrong layer on every multi-pass run.
@@ -4968,6 +5238,30 @@ function main(script_path)
              .. ":\n" .. tostring(layers),
       })
       return false
+   end
+   -- Lock the copies back up on the way out. One writer, seven call sites --
+   -- every way out that exists once the layers are prepared, because a HALF
+   -- drawn set of selectable copies poisons exactly as thoroughly as a full
+   -- one. test_release.lua pins the PAIRING with CO.sdk_leave_user_layer, which
+   -- already marks that same set of exits.
+   --
+   -- What this buys, and it is one thing: a box-select and a click cannot
+   -- REACH a locked layer (measured 2026-08-07, with its unlocked control run
+   -- -- same box, same job, unlocked returns 2, locked returns 1). On the
+   -- aspire path the copies are COINCIDENT with the operator's own vector, so
+   -- clicking your own shape could grab ours and a hand-selected rebuild then
+   -- read as "nothing selected" on a shape you are looking at.
+   --
+   -- Walks the layers prepare handed back rather than re-finding them by name:
+   -- GetLayerWithName is get-or-CREATE, and a failed run must not conjure empty
+   -- layers on its way out the door.
+   --
+   -- pcall'd per layer: failing to lock leaves a successful run and an unlocked
+   -- layer, i.e. today's behaviour, which is never worth failing a run over.
+   local function lock_copies()
+      for _, layer in ipairs(layers) do
+         pcall(function() layer.Locked = true end)
+      end
    end
    -- The layer wipe just made any previous chamfer toolpath meaningless (its
    -- vectors are gone), so this is the moment to delete marked toolpaths.
@@ -5124,6 +5418,7 @@ function main(script_path)
          -- One failure report for both offset calls: which of the two could not
          -- offset the vector is not something the operator can act on differently.
          if oerr then
+            lock_copies()
             CO.sdk_leave_user_layer(job)
             CO.show_message(gadget_dir, {
                kind = "error",
@@ -5148,6 +5443,7 @@ function main(script_path)
       for k = 1, n_passes do
          local ok_draw, cad, derr = pcall(CO.sdk_draw_group, layers[k], v.groups[k])
          if not (ok_draw and cad) then
+            lock_copies()
             CO.sdk_leave_user_layer(job)
             CO.show_message(gadget_dir, {
                kind = "error",
@@ -5219,6 +5515,7 @@ function main(script_path)
          local probe, perr = CO.sdk_offset_loop(job, loop.obj,
             CO.chamfer_probe_distance(dirs[i], r.W))
          if perr then
+            lock_copies()
             CO.sdk_leave_user_layer(job)
             CO.show_message(gadget_dir, {
                kind = "error",
@@ -5244,6 +5541,7 @@ function main(script_path)
             local rev = CO.chamfer_copy_reverse(CO.signed_area(loop.pts))
             local ok_copy, contour, cerr = pcall(CO.sdk_clone_loop, loop.obj, rev)
             if not (ok_copy and contour ~= nil) then
+               lock_copies()
                CO.sdk_leave_user_layer(job)
                CO.show_message(gadget_dir, {
                   kind = "error",
@@ -5258,6 +5556,7 @@ function main(script_path)
             local bk = dirbands.band_of[i]
             local ok_draw, cad, derr = pcall(CO.sdk_draw_contour, layers[bk], contour)
             if not (ok_draw and cad) then
+               lock_copies()
                CO.sdk_leave_user_layer(job)
                CO.show_message(gadget_dir, {
                   kind = "error",
@@ -5287,6 +5586,7 @@ function main(script_path)
    -- this point), so selection_skip_notes has to ride along too, or "None of
    -- the 12" understates what was actually selected.
    if #drawn == 0 then
+      lock_copies()
       CO.sdk_leave_user_layer(job)
       pcall(function() job.Selection:Clear() end)
       for _, obj in ipairs(orig_sel) do
@@ -5326,6 +5626,16 @@ function main(script_path)
       })
       return false
    end
+   -- NO lock_copies() here, and it is the one exit that does not pair with the
+   -- leave-user-layer call above. Everything below still has work to do WITH the
+   -- drawn offsets: the toolpath loop calls job.Selection:Add on every one of
+   -- them before each template load. Whether a programmatic Selection:Add
+   -- succeeds on an object sitting on a LOCKED layer has never been measured --
+   -- the live probe established only that a BOX-SELECT cannot reach one -- and
+   -- guessing costs either every run ("could not select the drawn offsets") or,
+   -- worse, a silently empty selection that a hand-recreated UNRESTRICTED
+   -- template would then bind to nothing. So the main path locks last, at each
+   -- of its two successful returns, where there is nothing left to select.
    CO.sdk_leave_user_layer(job)
    job:Refresh2DView()
 
@@ -5337,7 +5647,7 @@ function main(script_path)
    if strategy == "aspire" then build_ok, build_err = chamfer_bytes_ok, chamfer_template_err end
    if build_ok then
       -- pcall shapes: (true,table)=success, (true,nil,err)=soft failure, (false,errstr)=raw throw
-      -- depth stored in job units (docs/m0-results.md, mm-sample)
+      -- depth stored in job units (specs/m0-results.md, mm-sample)
       local built, fail_at, fail_why = 0, nil, nil
       local last_res = nil
       -- Per-pass warnings are collected rather than appended to toolpath_note as
@@ -5552,7 +5862,18 @@ function main(script_path)
       job:Refresh2DView()
    end
 
-   local sel_notes = CO.selection_skip_notes(skipped_open, skipped_own)
+   -- The own-vector note is split OUT of sel_notes, so it no longer opens a box
+   -- (Tim, 2026-08-13). Rebuilding a chamfer normally leaves the previous run's
+   -- orange lines sitting in the selection, so "ignored N selected vector(s) that
+   -- EdgeBreaker drew itself" describes a NORMAL rebuild rather than something to
+   -- act on -- and an amber box on every rebuild is exactly the speed bump v1.7.0
+   -- deleted. It still PRINTS whenever the report opens for another reason; it
+   -- just stopped being a reason. Nothing is hidden by this: the two paths where
+   -- ignoring vectors actually cost the run something -- nothing wide enough to
+   -- chamfer, and nothing left to work from -- have their own message boxes and
+   -- pass skipped_own to selection_skip_notes themselves.
+   local sel_notes = CO.selection_skip_notes(skipped_open, 0)
+   local own_note = CO.selection_skip_notes(0, skipped_own)
    -- The skipped shapes' biggest-that-fits, converted and floored exactly the
    -- way the whole-run refusal's suggestion is (CO.floor4: fmt_len rounds to
    -- NEAREST and could print a number just above the W that actually passed).
@@ -5579,9 +5900,25 @@ function main(script_path)
    -- Spec 8: a rebuild from memory says what it could not find, rather than
    -- quietly cutting a smaller chamfer than the one that was there before.
    if recalled_missing > 0 then
+      -- Reworded 2026-08-13 (Tim): the old line said "rebuilt from 9 of its 12
+      -- remembered shape(s)" and left the operator to work out what a remembered
+      -- shape is, why it rebuilt from memory at all, and what to do about the
+      -- three that went. Say all three.
       sel_notes = sel_notes .. string.format(
-         "\n\nNote: rebuilt from %d of its %d remembered shape(s) - the others are no longer "
-         .. "in this job (moved, edited or deleted).", #loops, #loops + recalled_missing)
+         -- No "(s)": the recall path only reaches here with at least one shape
+         -- found and at least one missing, so the total is always 2 or more.
+         -- "the rest" is phrased to read correctly at a count of one, which a
+         -- number in that slot could not be trusted to do.
+         --
+         -- It no longer describes the gadget's own memory (Tim, 2026-08-13).
+         -- That memory is the gadget's business; what the operator needs is which
+         -- shapes got cut and what to do about the ones that did not. A pin in
+         -- test_release.lua holds the wording, and it reads this whole function
+         -- INCLUDING its comments -- so do not quote the old phrasing here.
+         "\n\nNote: nothing was selected, so this run used the same shapes as last time. There "
+         .. "were %d of them, and %d are left - the rest have been moved, edited or deleted. "
+         .. "Select them and run again if you want them chamfered too.",
+         #loops + recalled_missing, #loops)
    end
    if old_layer_left then
       sel_notes = sel_notes .. string.format(
@@ -5599,7 +5936,13 @@ function main(script_path)
    -- on the setup dialog before OK was pressed, and the section view it drew is
    -- now there too, live. What is left is only worth a dialog when there is
    -- something to act on.
-   if not CO.should_report(trouble, sel_notes) then return true end
+   -- The first of the main path's two successful exits, and the last moment
+   -- anything touches the drawn offsets. See the note beside the
+   -- CO.sdk_leave_user_layer call above for why the lock waits until here.
+   if not CO.should_report(trouble, sel_notes) then
+      lock_copies()
+      return true
+   end
 
    -- This is now the ONLY report the gadget produces, and it appears only when
    -- there is something to say: it has to state the reach too, for the same
@@ -5647,7 +5990,10 @@ function main(script_path)
    -- line but wrong as the FIRST thing in #Note's pre-wrap box -- strip the
    -- leading break here, in the styled box only. plain still uses sel_notes
    -- directly, unchanged, so the fallback text does not move.
-   local note_text = (sel_notes:gsub("^%s+", ""))
+   -- own_note rides along here rather than in sel_notes: it prints on every
+   -- report, it just never causes one (see where it is built).
+   local all_notes = sel_notes .. own_note
+   local note_text = (all_notes:gsub("^%s+", ""))
    if toolpath_note ~= "" then
       note_text = (note_text ~= "" and (note_text .. "\n\n") or "") .. toolpath_note
    end
@@ -5664,7 +6010,7 @@ function main(script_path)
          CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in,
          ((n_passes > 1) and "layers" or "layer"), CO.offset_layer_phrase(slot, n_passes),
          cut_depth, unit.suffix, start_txt,
-         sel_notes, toolpath_note)
+         all_notes, toolpath_note)
    else
       plain_text = string.format(
          "EdgeBreaker - Chamfer %d %s\n\nOffset %s (%d outward, %d inward) by G %.4f %s\nonto %s %s.\n\nPlunge depth D: %.4f %s%s\nStandoff from wall: %.4f %s%s\n\n%s\n\n%s",
@@ -5672,7 +6018,7 @@ function main(script_path)
          CO.offset_count_phrase(#loops, n_out + n_in), n_out, n_in, s.g, unit.suffix,
          ((n_passes > 1) and "layers" or "layer"), CO.offset_layer_phrase(slot, n_passes),
          cut_depth, unit.suffix, start_txt, s.standoff, unit.suffix,
-         sel_notes, r.tip_flat_advisory, toolpath_note)
+         all_notes, r.tip_flat_advisory, toolpath_note)
    end
 
    CO.show_message(gadget_dir, {
@@ -5682,5 +6028,8 @@ function main(script_path)
       note = note_text,
       plain = plain_text,
    })
+   -- The main path's second successful exit. Same reason as the first: the lock
+   -- goes on only once nothing else is going to select the drawn offsets.
+   lock_copies()
    return true
 end

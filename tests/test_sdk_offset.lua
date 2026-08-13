@@ -1433,3 +1433,173 @@ do
    CHECK(res4.objs[1] == star,
          "find by fps: the class rule holds even if IsSystemLayer cannot be read")
 end
+
+-- v1.15.0: the offset layer's colour depends on which engine is cutting.
+--
+-- On the BANDS path the offsets ARE the product -- displaced into the waste,
+-- the line the tool follows, worth eyeing before a cut. That is why they are
+-- orange, and why orange rather than magenta (Vectric's own selection
+-- highlight). Nothing about that has changed.
+--
+-- On the ASPIRE path they are an exact clone lying ON the operator's own
+-- vector, because Aspire's chamfer engine cuts the operator's own edge. There
+-- is nothing to eye -- Tim, asked directly, does not ever need to look at one
+-- -- and orange means the operator sees OUR line where THEIR line is. Black
+-- makes the picture the truth: one line, where there is functionally one line.
+--
+-- The fall-through is ORANGE, which is released behaviour: an unrecognised
+-- strategy must not silently repaint a bands job.
+do
+   CHECK(CO.OFFSET_COLOUR_BANDS == 0x008CFF,
+         "the bands colour is still the orange v1.3.1 chose")
+   CHECK(CO.OFFSET_COLOUR_ASPIRE == 0x000000,
+         "the aspire colour is black")
+   CHECK(CO.offset_layer_colour("bands") == CO.OFFSET_COLOUR_BANDS,
+         "a bands run paints its offsets orange")
+   CHECK(CO.offset_layer_colour("aspire") == CO.OFFSET_COLOUR_ASPIRE,
+         "an aspire run paints its coincident copies black")
+   CHECK(CO.offset_layer_colour(nil) == CO.OFFSET_COLOUR_BANDS,
+         "no strategy at all falls through to orange, i.e. released behaviour")
+   CHECK(CO.offset_layer_colour("something else") == CO.OFFSET_COLOUR_BANDS,
+         "an unrecognised strategy falls through to orange, never to black")
+end
+
+-- v1.15.0: prepare unlocks and paints.
+--
+-- UNLOCK: main() locks these layers on the way out of every run, and they
+-- survive save/close/reopen locked (measured 2026-08-07). So a rebuild always
+-- arrives at a LOCKED layer and has to take the lock off before it can wipe and
+-- draw. Doing it here, unconditionally, is what makes "can a locked layer be
+-- emptied?" a question nobody has to answer.
+--
+-- PAINT: the fifth argument is the strategy, appended rather than inserted so
+-- that every pre-existing caller keeps working and lands on orange.
+do
+   local function spy_layer()
+      local L = { colours = {}, objs = {} }
+      L.GetHeadPosition = function() return nil end
+      L.GetNext         = function() return nil, nil end
+      L.RemoveObject    = function() end
+      L.SetColour       = function(_, c) L.colours[#L.colours + 1] = c end
+      return L
+   end
+   local function job_with(L)
+      return { LayerManager = {
+         GetHeadPosition  = function() return nil end,
+         GetLayerWithName = function() return L end,
+      } }
+   end
+
+   local La = spy_layer()
+   La.Locked = true                                   -- as a rebuild finds it
+   CO.sdk_prepare_layers(job_with(La), 1, 1, false, "aspire")
+   CHECK(La.Locked == false,
+         "prepare takes the lock OFF, so the wipe and the drawing run unlocked")
+   CHECK(#La.colours == 1 and La.colours[1] == CO.OFFSET_COLOUR_ASPIRE,
+         "an aspire run paints its layer black, exactly once")
+
+   local Lb = spy_layer()
+   Lb.Locked = true
+   CO.sdk_prepare_layers(job_with(Lb), 1, 1, false, "bands")
+   CHECK(Lb.Locked == false, "a bands run unlocks too - one rule, both paths")
+   CHECK(#Lb.colours == 1 and Lb.colours[1] == CO.OFFSET_COLOUR_BANDS,
+         "a bands run still paints its offsets orange")
+
+   -- A caller that passes no strategy at all gets released behaviour.
+   local Lc = spy_layer()
+   CO.sdk_prepare_layers(job_with(Lc), 1, 1, false)
+   CHECK(#Lc.colours == 1 and Lc.colours[1] == CO.OFFSET_COLOUR_BANDS,
+         "no strategy argument still paints orange")
+
+   -- A layer that THROWS on the lock write must not take the run down with it.
+   -- Failure here is silent and safe: the worst case is a layer left as it was
+   -- found, which is today's behaviour.
+   local Ld = spy_layer()
+   setmetatable(Ld, { __newindex = function(_, k)
+      if k == "Locked" then error("no such member") end
+   end })
+   local okd = pcall(CO.sdk_prepare_layers, job_with(Ld), 1, 1, false, "bands")
+   CHECK(okd == true, "a throwing lock write does not abort the run")
+end
+
+-- v1.15.0: the unlock has to come BEFORE the wipe, and this is the check that
+-- can tell the difference.
+--
+-- The spies above cannot. Their GetHeadPosition returns nil, so RemoveObject
+-- never runs at all, and a check whose message says "so the wipe and the
+-- drawing run unlocked" passes with the write in either position -- which is
+-- exactly what let the write sit AFTER the wipe through a whole build with the
+-- suite green. A pin that cannot fail is not a pin.
+--
+-- So: a spy that HOLDS an object, and whose RemoveObject records layer.Locked
+-- at the moment it is called. It must already be false. If the unlock drifts
+-- back below the wipe, every rebuild after the first calls RemoveObject on a
+-- locked layer -- which either throws (RemoveObject is not pcall'd, so the
+-- rebuild dies) or silently no-ops (the previous run's copies stay, and the
+-- layer-restricted toolpath cuts them alongside the current ones). Neither is
+-- visible from anywhere else offline.
+do
+   local function watching_layer(n_objs)
+      local L = { seen = {}, objs = {} }
+      for i = 1, n_objs do L.objs[i] = "obj-" .. i end
+      L.GetHeadPosition = function(self) return #self.objs > 0 and 1 or nil end
+      L.GetNext = function(self, pos)
+         local nxt = pos + 1
+         return self.objs[pos], (nxt <= #self.objs) and nxt or nil
+      end
+      L.RemoveObject = function(self, _)
+         -- The value AT THE MOMENT OF THE CALL, not at the end of the run.
+         self.seen[#self.seen + 1] = self.Locked
+      end
+      L.SetColour = function() end
+      return L
+   end
+
+   -- The per-band loop.
+   local Lp = watching_layer(2)
+   Lp.Locked = true                                   -- as a rebuild finds it
+   CO.sdk_prepare_layers({ LayerManager = {
+      GetHeadPosition  = function() return nil end,
+      GetLayerWithName = function() return Lp end,
+   } }, 1, 1, false, "aspire")
+   CHECK(#Lp.seen == 2,
+         "the band layer's stale objects were actually removed (got "
+         .. #Lp.seen .. " of 2)")
+   CHECK(Lp.seen[1] == false and Lp.seen[2] == false,
+         "the band layer was ALREADY UNLOCKED at every RemoveObject call")
+
+   -- The doomed loop -- a band this rebuild no longer needs. It was locked by
+   -- the run that created it and locked survives save/close/reopen, so it is
+   -- found locked for exactly the same reason.
+   local Ld2 = watching_layer(2)
+   Ld2.Name   = CO.offset_layer_name(1, 2)            -- band 2, doomed at n = 1
+   Ld2.Locked = true
+   local fresh = watching_layer(0)
+   local doomed_list = { Ld2 }
+   local _, old_left = CO.sdk_prepare_layers({ LayerManager = {
+      GetHeadPosition  = function() return 1 end,
+      GetNext          = function(_, pos)
+         local nxt = pos + 1
+         return doomed_list[pos], (nxt <= #doomed_list) and nxt or nil
+      end,
+      GetLayerWithName = function() return fresh end,
+      RemoveLayer      = function(_, layer) layer.removed = true end,
+   } }, 1, 1, false, "bands")
+   CHECK(#Ld2.seen == 2,
+         "the doomed layer's objects were actually removed (got "
+         .. #Ld2.seen .. " of 2)")
+   CHECK(Ld2.seen[1] == false and Ld2.seen[2] == false,
+         "the doomed layer was ALREADY UNLOCKED at every RemoveObject call")
+   CHECK(Ld2.removed == true and old_left == false,
+         "the emptied doomed layer is still removed and not reported as left")
+end
+
+-- main() has to hand prepare the strategy, or every aspire run paints orange
+-- and the whole colour half is inert with the suite green.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   CHECK(src:find("pcall(CO.sdk_prepare_layers, job, slot, n_passes, migrating, strategy)",
+                  1, true) ~= nil,
+         "main() passes the strategy through to prepare_layers")
+end

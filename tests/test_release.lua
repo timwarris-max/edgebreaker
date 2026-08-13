@@ -78,6 +78,25 @@ do
    CHECK(same, "the page's cut positions are Lua's, in the same order")
 end
 
+-- The chamfer side travels back to Lua as one of three strings in the hidden
+-- #Side field, written by the radios' own click handler. The v1.16 rail rebuilds
+-- those radios as a stacked list with new ids and a new source order, and the
+-- labels beside them read OUT / IN / AUTO -- which are LABELS, not values. A
+-- rewrite that renamed a value would leave the page looking right and hand Lua
+-- a side it does not recognise.
+--
+-- Anchored on the radio markup, not on the bare string: "auto" and "inside"
+-- appear elsewhere in the file (CSS, comments, the aspire-mode branch), so a
+-- pin on either alone could not fail.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreakerDialog.htm", "rb"))
+   local src = f:read("*a"); f:close()
+   for _, v in ipairs({ "auto", "inside", "outside" }) do
+      CHECK(src:find('name="SideRadio" value="' .. v .. '"', 1, true) ~= nil,
+            'the dialog still has a SideRadio whose value is "' .. v .. '"')
+   end
+end
+
 -- unit info
 local mm = CO.unit_info(true)
 CHECK(mm.suffix == "mm", "mm suffix"); NEAR(mm.default_size, 0.5, 1e-9, "mm default size")
@@ -413,7 +432,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.14.1", "version gate: 1.14.1")
+CHECK(CO.VERSION == "1.15.0", "version gate: 1.15.0")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -1115,13 +1134,26 @@ do
    -- would do it silently -- the box simply clearing itself as the size grows.
    CHECK(page:find("sharpAutoUnticked", 1, true) == nil,
          "and nothing unticks the box on the operator's behalf any more")
-   -- The checkbox's own label followed the caption. "Sharp inside corners" over
-   -- a working Outside run is worse than no label at all. Pinned with its input
-   -- and its closing tag, because the same two words also appear in the "How it
-   -- decides" panel and in the drop note, and a bare search would find those and
-   -- never look at the control itself.
-   CHECK(page:find('<input type="checkbox" id="SharpBox"> Sharp corners</label>', 1, true) ~= nil,
-         "and the checkbox is labelled for both sides, not just Inside")
+   -- The control's own label followed the caption. "Sharp inside corners" over a
+   -- working Outside run is worse than no label at all.
+   --
+   -- v1.15 moved the words out of the <label> and into their own #SharpLab span,
+   -- because the instrument strip draws the control as a pill with its name
+   -- beside it rather than as a captioned checkbox. The CHECKBOX IS STILL THE
+   -- STATE -- the pill only clicks it -- so both halves are pinned: the words,
+   -- in the element that now carries them, and the input they belong to. The
+   -- same two words also appear in the "How it decides" panel and in the drop
+   -- note, which is why this looks at the labelling element and not for a bare
+   -- string anywhere on the page.
+   -- v1.16 moved the control into the rail, so the words now sit in a rail
+   -- heading rather than a strip span. The tag changed; the requirement -- that
+   -- the label names neither side -- did not.
+   CHECK(page:find('id="SharpLab">SHARP CORNERS<', 1, true) ~= nil,
+         "and the sharp-corners control is labelled for both sides, not just Inside")
+   CHECK(page:find('<input type="checkbox" id="SharpBox">', 1, true) ~= nil,
+         "and that label still belongs to a real checkbox, which is still the state")
+   CHECK(page:find("Sharp inside corners", 1, true) == nil,
+         "and nothing on the page calls it inside-only")
    -- 2026-08-03 (Auto): sharpSideOk is DELETED, along with all three of its call
    -- sites. It existed to hold ONE copy of the side test for the greying, the
    -- cut-position drop and the note that explains the drop. There is no side
@@ -1516,6 +1548,37 @@ do
          "and it asks AFTER the drop, from the value that was actually used")
    CHECK(mbody:find('if side_note then sel_notes = sel_notes .. "\\n\\n" .. side_note end', 1, true) ~= nil,
          "and the sentence is appended to sel_notes, which is what breaks the silence")
+   -- The ignored-vectors note PRINTS but never opens the box (2026-08-13, Tim's
+   -- ruling: re-selecting the previous run's orange lines is what a normal
+   -- rebuild looks like). Four pins, because there are four ways to lose it:
+   -- sel_notes taking the own count back (an amber box on every rebuild again),
+   -- own_note never being built, the join landing BEFORE should_report (the box
+   -- returns by another door), and the plain fallback still printing sel_notes
+   -- (the note disappears on a machine with scripting off, where nothing else
+   -- would ever say a vector was ignored).
+   CHECK(mbody:find("local sel_notes = CO.selection_skip_notes(skipped_open, 0)", 1, true) ~= nil,
+         "the ignored-vectors count is kept OUT of sel_notes, so it cannot break the silence")
+   CHECK(mbody:find("local own_note = CO.selection_skip_notes(0, skipped_own)", 1, true) ~= nil,
+         "and is built on its own instead")
+   local i_all = mbody:find("local all_notes = sel_notes .. own_note", 1, true)
+   local i_quiet = mbody:find("if not CO.should_report(trouble, sel_notes) then", 1, true)
+   CHECK(i_all ~= nil and i_quiet ~= nil and i_quiet < i_all,
+         "and is joined back on AFTER the silence has been decided, so it still prints")
+   local _, nall = mbody:gsub("all_notes", "")
+   CHECK(nall == 4,
+         "all_notes is what note_text AND both plain fallbacks print, found " .. nall)
+   -- The recall note explains itself (2026-08-13, Tim). The old line quoted two
+   -- counts and left "remembered shape" undefined, never said why it had rebuilt
+   -- from memory, and gave the operator nothing to do about the shapes that went.
+   CHECK(mbody:find("nothing was selected, so this run used the same shapes as last time",
+                    1, true) ~= nil,
+         "the recall note says WHY the shapes it cut were not the selection")
+   CHECK(mbody:find("Select them and run again if you want them chamfered too", 1, true) ~= nil,
+         "and what to do about the shapes that are gone")
+   -- Tim, 2026-08-13: the product does not talk about its own memory to the
+   -- operator. "remembers" was the tell in both the banner and this note.
+   CHECK(mbody:find("it remembers", 1, true) == nil,
+         "and it never mentions what the gadget remembers")
    -- Negative: the old call must not come back, and the strategy must be
    -- assigned in exactly ONE place - two of them could disagree about which
    -- engine is cutting, which is the whole failure this ordering fixes.
@@ -1650,7 +1713,15 @@ do
    CHECK(mbody:find("Failed drawing the copy of vector ", 1, true) ~= nil,
          "the aspire draw failure talks about the copy, not an offset vector")
    -- Negative, scoped to the rows block's aspire arm: no bands numbers in it.
-   local r0 = mbody:find("local rows", 1, true)
+   -- Anchored on the declaration AND the line that must follow it. "local rows"
+   -- on its own also matches the FIRST LETTERS of any longer name --
+   -- `local rows_o, rows_b` (the top view's per-chamfer payload builder)
+   -- hijacked it on 2026-08-12 and pointed this block at 700 lines of unrelated
+   -- code, which then failed for a reason that had nothing to do with the
+   -- report. Same trap as the bare-name one at the top of the next block.
+   -- The %s+ is doing the real work twice over: it refuses `rows_o`, and it
+   -- spans CRLF, which a literal "\n" does not -- this file is CRLF.
+   local r0 = mbody:find('local rows%s+if strategy == "aspire" then')
    local r1 = r0 ~= nil and mbody:find("if start > 0 then", r0, true) or nil
    local rblock = (r0 ~= nil and r1 ~= nil) and mbody:sub(r0, r1) or ""
    local ra0 = rblock:find([[if strategy == "aspire" then]], 1, true)
@@ -1869,4 +1940,143 @@ do
    -- loop_unknown are merely unused locals and an unreadable id gets CUT.
    CHECK(mbody:find("if layer_unknown > 0 or loop_unknown > 0 then", 1, true) ~= nil,
          "main() refuses when anything's layer could not be read")
+end
+
+-- v1.15.0: the copies' layer is locked on the way out of every run.
+--
+-- WHY A PAIRING AND NOT A COUNT. A bare count (`there are 7 lock_copies()
+-- calls`) is satisfied by seven calls in the wrong places, and it goes stale
+-- silently the moment an eighth exit is added -- which is precisely what
+-- happened to the count in session 081's notes: it said five, and by the time
+-- anyone came back to build on it there were seven.
+--
+-- CO.sdk_leave_user_layer(job) already marks exactly the set of exits that
+-- exist once the layers are prepared -- it is there for the same reason, so
+-- that a run cannot leave the job in a state that costs the operator work. So
+-- pin the pairing: every one of those calls must be immediately preceded by
+-- lock_copies(). A new exit that restores the active layer but forgets the
+-- lock is the mistake no behavioural test notices, and this is the check that
+-- notices it.
+--
+-- SIX OF SEVEN, AND THE SEVENTH IS THE MAIN PATH -- DO NOT "TIDY" IT BACK.
+-- The six that pair are the aborts: nothing selects anything after them, so
+-- locking there is free. The main path is different, and the difference is not
+-- cosmetic. Below its leave-user-layer call the toolpath loop still calls
+-- job.Selection:Add on every drawn offset, once per template load. Whether a
+-- programmatic Selection:Add succeeds on an object sitting on a LOCKED layer
+-- has never been measured -- the live probe established only that a BOX-SELECT
+-- cannot reach one -- and the two ways of guessing wrong are a run that always
+-- fails ("could not select the drawn offsets") and a silently empty selection
+-- that a hand-recreated UNRESTRICTED template binds to nothing. So the main
+-- path locks LAST instead, at each of its two successful returns, where there
+-- is nothing left to select. Both of those are pinned below, which is what
+-- keeps this an exception rather than a hole: the main path did not stop
+-- locking, it moved its lock past the selection work.
+--
+-- The main-path call is identified by the line that FOLLOWS it,
+-- job:Refresh2DView(), which no other exit has -- rather than by position in
+-- the file, which any new exit would shift.
+--
+-- The DEFINITION line is `function CO.sdk_leave_user_layer(job)`, which does
+-- not equal the call line once both are trimmed -- so this pin cannot match its
+-- own definition, the failure mode that made four pins inert in session 079.
+--
+-- defs is counted by SUBSTRING over the whole source, not by matching a
+-- whole trimmed line -- fixed after review found the line-equality form only
+-- caught a copy-pasted duplicate formatted exactly like the real one. A
+-- reformatted second writer (e.g. `local function lock_copies() end` on one
+-- line) has different line-trimmed text but the same substring, and sailed
+-- straight past the old check -- proving "no identically-formatted
+-- duplicate exists", not "no second writer exists". Scoped to
+-- "local function lock_copies" specifically so a stray comment or string
+-- mentioning "lock_copies" elsewhere can't inflate the count; grep confirms
+-- that exact substring appears nowhere else in the file.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+
+   -- Trimmed non-blank lines, in order. Comment lines are kept: a lock_copies()
+   -- separated from its exit by a comment is not "immediately preceded", and
+   -- the point of this pin is that the two sit together.
+   local lines = {}
+   for line in src:gmatch("[^\r\n]+") do
+      local t = line:match("^%s*(.-)%s*$")
+      if t ~= "" then lines[#lines + 1] = t end
+   end
+
+   local calls, unpaired, mainpath_unpaired = 0, 0, 0
+   for i, t in ipairs(lines) do
+      -- The DEFINITION begins "function ", the calls do not.
+      if t == "CO.sdk_leave_user_layer(job)" then
+         calls = calls + 1
+         if lines[i - 1] ~= "lock_copies()" then
+            unpaired = unpaired + 1
+            if lines[i + 1] == "job:Refresh2DView()" then
+               mainpath_unpaired = mainpath_unpaired + 1
+            end
+         end
+      end
+   end
+
+   -- Both of main()'s successful returns: the early should_report exit and the
+   -- final one at the end of the file.
+   --
+   -- Scoped from the lock_copies DEFINITION, not from main()'s own, and the
+   -- boundary is a real one rather than a convenience: lock_copies is defined
+   -- the moment the layers exist, and before that point there is nothing to
+   -- lock. Scoping from main() instead swept in a "return true" belonging to
+   -- the narrow-break guard's shapes_hold closure, hundreds of lines earlier
+   -- and long before any layer is prepared -- a third return that has no
+   -- business being paired with anything.
+   local mstart = src:find("local function lock_copies", 1, true)
+   local mbody = mstart ~= nil and src:sub(mstart) or ""
+   local returns, returns_locked = 0, 0
+   do
+      local mlines = {}
+      for line in mbody:gmatch("[^\r\n]+") do
+         local t = line:match("^%s*(.-)%s*$")
+         if t ~= "" then mlines[#mlines + 1] = t end
+      end
+      for i, t in ipairs(mlines) do
+         if t == "return true" then
+            returns = returns + 1
+            if mlines[i - 1] == "lock_copies()" then
+               returns_locked = returns_locked + 1
+            end
+         end
+      end
+   end
+
+   local defs = 0
+   local at = 1
+   while true do
+      local s = src:find("local function lock_copies", at, true)
+      if not s then break end
+      defs = defs + 1
+      at = s + 1
+   end
+
+   CHECK(calls == 7,
+         "there are still seven exits once the layers are prepared (got "
+         .. calls .. ")")
+   CHECK(unpaired == 1,
+         "six of the seven lock the copies first (" .. unpaired
+         .. " did not, expected exactly 1)")
+   CHECK(mainpath_unpaired == 1,
+         "the one that does not is the MAIN PATH -- it locks at its returns"
+         .. " instead, after the toolpath loop has finished selecting")
+   CHECK(returns == 2,
+         "main() still has exactly two successful returns (got " .. returns .. ")")
+   CHECK(returns_locked == 2,
+         "both of them lock the copies first (" .. returns_locked .. " of 2 do)")
+   CHECK(defs == 1,
+         "lock_copies is defined exactly once, so there is a single writer")
+
+   -- The lock has to come from the prepared layers, not from a re-read of the
+   -- job: re-finding them by name would call GetLayerWithName, which is
+   -- get-or-CREATE, and a failed run would start conjuring empty layers.
+   CHECK(src:find("for _, layer in ipairs(layers) do", 1, true) ~= nil,
+         "lock_copies walks the layers prepare returned")
+   CHECK(src:find("pcall(function() layer.Locked = true end)", 1, true) ~= nil,
+         "and the write is pcall'd, so a failure to lock never fails a run")
 end

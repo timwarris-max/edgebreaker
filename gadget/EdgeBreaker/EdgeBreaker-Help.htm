@@ -71,7 +71,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </head>
 <body>
 <header>
-  <div class="name">EdgeBreaker<span class="ver">v1.14.1</span></div>
+  <div class="name">EdgeBreaker<span class="ver">v1.15.0</span></div>
   <div class="sub">Help &mdash; works offline</div>
 </header>
 <main>
@@ -80,6 +80,8 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <blockquote><p>Through v1.4.x this gadget was called <strong>ChamferOffset</strong>. Same gadget, new name. Jobs built with the old version still work — see <a href="#chamfers-from-older-versions">Chamfers from older versions</a>.</p></blockquote></div>
 <nav class="toc"><h2>On this page</h2><ul>
 <li><a href="#how-it-decides-what-to-build">How it decides what to build</a></li>
+<li><a href="#which-edges-get-chamfered">Which edges get chamfered</a></li>
+<li><a href="#the-layer-it-draws-on">The layer it draws on</a></li>
 <li><a href="#notes">Notes</a></li>
 <li><a href="#where-on-the-flute-you-cut">Where on the flute you cut</a></li>
 <li><a href="#big-chamfers">Big chamfers</a></li>
@@ -87,6 +89,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <li><a href="#sharp-corners">Sharp corners</a></li>
 <li><a href="#big-sharp-chamfers">Big sharp chamfers</a></li>
 <li><a href="#the-section-view">The section view</a></li>
+<li><a href="#what-the-chamfer-leaves">What the chamfer leaves</a></li>
 <li><a href="#what-a-chamfer-remembers">What a chamfer remembers</a></li>
 <li><a href="#more-than-one-chamfer-in-a-job">More than one chamfer in a job</a></li>
 <li><a href="#bits-come-from-your-tool-database">Bits come from your tool database</a></li>
@@ -103,24 +106,38 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <tbody>
 <tr><td>Shapes no chamfer uses</td><td><strong>Green — Adding Chamfer N</strong></td><td>Creates a new chamfer. Nothing existing is touched.</td></tr>
 <tr><td>Shapes an existing chamfer was built from</td><td><strong>Blue — Rebuilding Chamfer K</strong></td><td>Rebuilds K, with K's own size, side and cut position already loaded. Selecting <em>some</em> of its shapes is enough.</td></tr>
-<tr><td>Nothing</td><td><strong>Blue — Rebuilding Chamfer K, nothing selected</strong></td><td>Rebuilds K from the shapes it remembers.</td></tr>
-<tr><td>Shapes a chamfer <em>should</em> know but doesn't</td><td><strong>Amber — I don't know which shapes</strong></td><td>Rebuilds it on your selection, and this run teaches it.</td></tr>
+<tr><td>Nothing</td><td><strong>Blue — Rebuilding Chamfer K, nothing selected</strong></td><td>Rebuilds K on the same shapes as last time.</td></tr>
+<tr><td>A chamfer whose shapes aren't on record</td><td><strong>Amber — its shapes aren't known</strong></td><td>Rebuilds K on your selection, and those become K's shapes from now on.</td></tr>
 <tr><td>A chamfer you picked by hand, holding different shapes</td><td><strong>Red — Replacing Chamfer K's shapes</strong></td><td>Removes K's offsets and toolpath and rebuilds them on the new shapes. Cannot be undone.</td></tr>
 </tbody></table></div>
 <p>Two more things it works out on its own:</p>
 <ul>
 <li><strong>A mixed selection</strong> — some free shapes, some already owned by another chamfer — adds a new chamfer from the free ones and says how many it left out.</li>
-<li><strong>Your own orange offsets</strong> caught up in a box-select are ignored, not refused. Box-selecting everything and re-running is the natural way to adjust a chamfer, and it works.</li>
+<li><strong>The gadget's own offsets can't be picked up.</strong> They're on a locked layer, so a box-select or a click gets your shapes and nothing else. Box-selecting everything and re-running is the natural way to adjust a chamfer, and it works.</li>
 </ul>
-<p>You are never stuck with its guess: the <strong>Change</strong> dropdown in the banner picks any chamfer in the job (or "New chamfer"), and the banner re-colours to match.</p>
+<p>You are never stuck with its guess: the <strong>Editing</strong> dropdown in the banner picks any chamfer in the job (or "New chamfer"), and the banner re-colours to match.</p>
 <p><strong>With nothing selected</strong>, EdgeBreaker rebuilds the newest chamfer — unless you single-click a chamfer's toolpath in the Toolpaths list first, which names the one you mean. A selection always outranks a highlighted toolpath.</p>
+</section>
+<section>
+<h2 id="which-edges-get-chamfered">Which edges get chamfered</h2>
+<p>Down the right-hand side of the dialog, under <strong>WHICH EDGES</strong>, you tell EdgeBreaker which side of your lines the material is on. A pocket and a raised shape look identical to it — one closed line either way — so this is the one thing it cannot work out on its own.</p>
+<p><strong>OUT</strong> treats your shape as an island: material inside the line, chamfer eating outward into the waste around it. <strong>IN</strong> treats it as a pocket: material outside, and the chamfer opens the hole up wider. <strong>AUTO</strong> works it out shape by shape from how they nest, which is what you want for lettering and for anything with holes in it — outward round the outlines, inward into the counters.</p>
+<p>AUTO is the default and it is right most of the time. A plain hole or a pocket with nothing else in the selection is the case where it isn't, because AUTO assumes the material is inside your line. Set that one to <strong>IN</strong>. If a chamfer comes out with a step in it, that's the first thing to check.</p>
+<p>The little block above the list draws what you picked, and the preview beside the section view shows it on your own shapes. Both change as you click.</p>
+<p>There's one case where the choice isn't yours: a chamfer big enough to go to Aspire's own chamfer engine, on shapes that sit inside each other. Aspire works the side out for itself there, so the list greys out and says why.</p>
+</section>
+<section>
+<h2 id="the-layer-it-draws-on">The layer it draws on</h2>
+<p>EdgeBreaker puts its offsets on their own layer and <strong>locks</strong> it. You can still see them, you just can't select them by accident — which matters most on a big sharp chamfer, where the offset sits exactly on top of your own line and clicking your shape would otherwise grab ours.</p>
+<p>On a big sharp chamfer those offsets are drawn <strong>black</strong>, because they're an exact copy of your line and there's nothing to check. Everywhere else they're <strong>orange</strong> and sit out in the waste — those are worth a look before you cut.</p>
+<p>Rerun the gadget any time; it unlocks the layer, redraws, and locks it again. If you ever want at them, unlock the layer in the Layers panel.</p>
 </section>
 <section>
 <h2 id="notes">Notes</h2>
 <ul>
 <li>The layers <code>EdgeBreaker Offset 01-1</code>, <code>02-1</code>, … are gadget-owned. Building a chamfer clears <strong>its own</strong> layer and no other, and gadget deletions cannot be undone — never keep your own work on one.</li>
 <li>Vectors must be <strong>closed</strong>. Outer boundaries offset outward, holes inward, automatically.</li>
-<li>A feature too narrow to chamfer at the size you asked for is <strong>skipped</strong>, not approximated: the offset collapses it to nothing, and it comes back with no orange offset beside it. A skip is one of the things that breaks the silence — you get a message naming the count. Ask for a smaller chamfer, or cut nearer the tip, and more of them will fit. Before v1.3.0 these came back inside-out and cut a slot down the middle of the feature.</li>
+<li>A feature too narrow to chamfer at the size you asked for is <strong>skipped</strong>, not approximated: the offset collapses it to nothing, and it comes back with no offset beside it. A skip is one of the things that breaks the silence — you get a message naming the count. Ask for a smaller chamfer, or cut nearer the tip, and more of them will fit. Before v1.3.0 these came back inside-out and cut a slot down the middle of the feature.</li>
 <li>One vector can produce <strong>more than one</strong> offset vector. Where an inward offset pinches a neck closed, the offset cuts the loop at the crossing and the valid pieces come back as separate closed loops — so the drawn count need not match what you selected.</li>
 <li>The gadget owns every toolpath whose name contains <code>[EdgeBreaker NN]</code>, and a run only touches its own number: building Chamfer 2 deletes and recreates <code>[EdgeBreaker 02]</code> and leaves <code>[EdgeBreaker 01]</code> alone. <strong>Toolpath deletions cannot be undone.</strong> To keep a chamfer toolpath forever, rename it so the marker is gone — the gadget will never touch it again, and it also forgets everything that chamfer remembered. Renaming it to a <em>different</em> number hands it to that chamfer instead.</li>
 <li>The gadget calculates its own toolpath and leaves your other toolpaths alone. If the software refuses the single-toolpath calculation, the message says so — then open the toolpath and click Calculate yourself.</li>
@@ -135,9 +152,10 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </section>
 <section>
 <h2 id="where-on-the-flute-you-cut">Where on the flute you cut</h2>
-<p>EdgeBreaker doesn't cut on your line. It draws a new line a little way out into the waste and cuts that one — and <strong><code>G</code> is how far out</strong>. The dialog calls it the standoff.</p>
+<p>EdgeBreaker doesn't cut on your line. It draws a new line a little way out into the waste and cuts that one, and the gap is marked <strong>standoff</strong> on the drawing.</p>
 <p>That gap is the whole trick. Push the cut further into the waste and the V-bit has to go deeper before its slanted face reaches your edge. Same chamfer, deeper plunge, and a higher spot on the flute doing the work.</p>
-<p>That's what the <strong>0%–100%</strong> buttons pick. <strong>0%</strong> is the smallest gap — the cut sits low, just clear of the tip. <strong>100%</strong> is the largest — up near the top of the flute. Cutting high uses fresh, wide flute instead of the tip, which is a point that barely cuts and wears out first. You pay for it in depth, and each button shows the depth it needs, so take the highest one your bit and your stock can reach.</p>
+<p><strong>Drag the blue dot up and down the bit</strong> to set it. The scale beside it runs 0 to 100 and the dot snaps to 0, 20, 40, 60, 80 and 100 — six spots, nothing in between. <strong>0</strong> sits low, just clear of the tip. <strong>100</strong> is up near the top of the flute. The POSITION box under the drawing reads back where you are, and the whole drawing redraws as you drag, so the depth each one needs is right there in front of you.</p>
+<p>Cutting high uses fresh, wide flute instead of the tip, which is a point that barely cuts and wears out first. You pay for it in depth, so take the highest spot your bit and your stock can reach.</p>
 <p>Both ends of the range are there to keep the cut off the two spots a V-bit cuts badly: the tip, and the shoulder where the flute runs out. A chamfer eats into the top of that range, so past a certain size there's nothing left in between and the bit can't take it in one go. So it takes it in several.</p>
 </section>
 <section>
@@ -157,30 +175,37 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </section>
 <section>
 <h2 id="sharp-corners">Sharp corners</h2>
-<p>A chamfer's corners normally come out rounded — at one depth, the bit can only get so far into a corner. Tick <strong>Sharp corners</strong> and the bit rises as it drives into each corner, so the two edges meet in a crisp point.</p>
-<p>There's a depth limit on it: the machine won't sharpen deeper than the bit's cutting edge. If your chamfer is close to that, EdgeBreaker drops the cut position lower to make it fit — and says so under the cut position buttons. Too big for even that and the box greys out: use a smaller chamfer, or a bigger bit.</p>
+<p>A chamfer's corners normally come out rounded — at one depth, the bit can only get so far into a corner. Turn <strong>Sharp corners</strong> on and the bit rises as it drives into each corner, so the two edges meet in a crisp point.</p>
+<p>There's a depth limit on it: the machine won't sharpen deeper than the bit's cutting edge. If your chamfer is close to that, EdgeBreaker drops the cut position lower to make it fit, and the banner above the drawing tells you it did. Past that there's no dropping left to do, so the cut goes to Aspire's own chamfer engine instead — see <a href="#big-sharp-chamfers">Big sharp chamfers</a>. The switch itself is never greyed out and never turns itself off.</p>
 <ul>
-<li>It works on any Chamfer side. Past the point where the bit runs out, Aspire's own chamfer engine takes over, and if you've picked shapes that sit inside other shapes — letters with counters, a part with holes — it works out each side for itself and the Side buttons grey out. Pick shapes with nothing inside each other and Side is yours as usual.</li>
-<li><strong>Chamfering a pocket? Set Side to Inside.</strong> A pocket and a raised shape look the same to EdgeBreaker — one closed line either way — so Auto assumes the material is <em>inside</em> your line. Right for letters and islands, wrong for a hole. If a chamfer comes out with a step in it, that's the first thing to check.</li>
-<li>Raised letters are one chamfer now: select the lot, leave Side on <strong>Auto</strong>, tick the box. It works out which way each shape goes — outward round the outlines, inward into the counters — and the corners come out sharp on both.</li>
+<li>It works whichever edges you picked. Past the point where the bit runs out, Aspire's own chamfer engine takes over, and if you've picked shapes that sit inside other shapes — letters with counters, a part with holes — it works out each side for itself and the WHICH EDGES list greys out. Pick shapes with nothing inside each other and the list stays yours.</li>
+<li><strong>Chamfering a pocket? Set WHICH EDGES to IN</strong>, or the corners sharpen on the wrong side of your line. See <a href="#which-edges-get-chamfered">Which edges get chamfered</a>.</li>
+<li>Raised letters are one chamfer now: select the lot, leave WHICH EDGES on <strong>AUTO</strong>, turn the switch on. It works out which way each shape goes — outward round the outlines, inward into the counters — and the corners come out sharp on both.</li>
 <li>Two chamfers is still how you do it when you want the outlines and the counters cut <em>differently</em>. It's a choice now, not a workaround.</li>
-<li>On an <strong>Outside</strong> chamfer the guide line is drawn inside the shape, so anything narrower than two chamfers gets skipped and counted with the other too-narrow ones. Go smaller and it fits.</li>
+<li>On an <strong>OUT</strong> chamfer the guide line is drawn inside the shape, so anything narrower than two chamfers gets skipped and counted with the other too-narrow ones. Go smaller and it fits.</li>
 <li>Each chamfer remembers its own setting, so a rebuild keeps what you chose — whether you select its shapes or rebuild with nothing selected. The one time it can't is when the shapes sit inside each other, like an outline and its hole: Aspire picks the side there, and the run tells you when that happens.</li>
 <li>The corner moves cut closer to the bit's tip than the position you picked — that's the only way into a corner, and it's a tiny share of the cut.</li>
-<li>The orange line sits a touch over on the material side of your edge on purpose: that's the line the machine steers by, not the cut. The cut still lands exactly where it always does.</li>
+<li>The orange line sits a touch over on the material side of your edge on purpose: that's the line the machine steers by, not the cut. On a big sharp chamfer there's no orange line — the copy sits right on your own line, drawn black.</li>
 </ul>
 </section>
 <section>
 <h2 id="big-sharp-chamfers">Big sharp chamfers</h2>
-<p>Sharp corners used to stop working past what the bit could sharpen in one flat pass. Now they don't stop - past that point EdgeBreaker hands the cut to Aspire's own chamfer engine, which runs the tip of the bit down the corner line. The trade: you give up the cut-position buttons for that chamfer, because the cut has to come off the tip. The dialog greys them and says so. Smaller chamfers keep working exactly as before, cut position and all.</p>
+<p>Sharp corners used to stop working past what the bit could sharpen in one flat pass. Now they don't stop - past that point EdgeBreaker hands the cut to Aspire's own chamfer engine, which runs the tip of the bit down the corner line. The trade: you give up the cut position for that chamfer, because the cut has to come off the tip. The blue dot disappears from the bit, the POSITION box reads <code>TIP</code>, and the banner says <strong>CUT ON THE TIP</strong>. Smaller chamfers keep working exactly as before, cut position and all.</p>
 </section>
 <section>
 <h2 id="the-section-view">The section view</h2>
-<p>The right-hand side of the setup dialog draws the cut you are about to make, in section, and redraws it as you type: the stock, the bevel it will leave, the V-bit that cuts it, and the four numbers that describe it — <code>W</code> the chamfer width, <code>D</code> the plunge depth, <code>G</code> the standoff, and <code>S</code> the start depth when the edge sits below the top of the stock.</p>
+<p>The middle of the dialog draws the cut you are about to make, in section, and redraws it the moment you change anything: the stock, the bevel it will leave, the V-bit that cuts it, and the numbers that describe it. Every number says what it is rather than carrying a letter — the chamfer size under the bevel, the <strong>standoff</strong> across to the bit, and <strong>TOTAL DEPTH</strong>, off to the left of the material, which is the whole reach from the surface down to the tip with the start depth included.</p>
+<p>It isn't only a picture. Three handles sit on it and you drag them: the <strong>orange dot</strong> on the bottom of the bevel sets the chamfer size, the <strong>yellow square</strong> on the top surface sets the start depth, and the <strong>blue dot</strong> on the bit sets where on the flute you cut. All three move up and down, and the boxes below the drawing follow along. Type in the boxes instead if you'd rather. Same thing either way.</p>
 <p>The stock is schematic, not to scale. Drawing a 0.02 in chamfer against 0.75 in of real stock would make the chamfer 3% of the picture and tell you nothing; whether the cut is too deep for the material is answered in words by the warning directly above the drawing.</p>
-<p>On any bit that isn't 90°, a small corner detail sits at the right-hand end of the drawing. It's the corner blown up, with the edge you're sizing picked out in orange and named underneath — <code>SETBACK</code> across the top face, <code>FACE</code> along the slant, <code>LEG</code> down the side — and the number you typed below that.</p>
-<p>It's a sketch, not a scale drawing. At the main drawing's scale your chamfer is a sliver a few percent of the bit's reach, so all three edges land on top of each other with nowhere to put a label. The true angle and every real number are on the drawing right beside it.</p>
-<p>A 90° bit doesn't get one — at 90° the setback and the leg are the same measurement, so there's no choice to explain.</p>
+<p><strong>Which measurement you're typing</strong> is picked by the three buttons beside the size box — <code>SETBACK</code> across the top face, <code>FACE</code> along the slant, <code>LEG</code> down the side — with a line underneath naming the live one. A 90° bit doesn't get them: at 90° the setback and the leg are the same measurement, so there's no choice to make.</p>
+</section>
+<section>
+<h2 id="what-the-chamfer-leaves">What the chamfer leaves</h2>
+<p>Beside the section view, under <strong>CHAMFER TOOLPATH PREVIEW</strong>, is a top view of the shapes you actually selected. The orange band is what the chamfer takes. What stays pale is the flat that survives.</p>
+<p>Drag the size and watch it. On a shape with a thin arm the arm goes solid orange while the thicker parts keep a pale stripe down the middle — that arm has lost its flat top completely, and otherwise you wouldn't find out until the toolpath was built and simulated.</p>
+<p>Pick IN and the picture flips over. Your line becomes a hole, the material is the flat all around it, and the chamfer just opens the hole up wider — nothing gets destroyed.</p>
+<p>It can't show you depth. Looking straight down there's no way to see that a chamfer is cutting deeper than a pocket's floor.</p>
+<p>Nothing selected — a rebuild from memory, say — means there's nothing to draw, so you get the generic block instead.</p>
 </section>
 <section>
 <h2 id="what-a-chamfer-remembers">What a chamfer remembers</h2>
@@ -188,7 +213,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <ul>
 <li>It travels <strong>inside the job file</strong>, so it survives save/close/reopen and moves with the job to another machine. <strong>Save the job</strong> to keep it.</li>
 <li>Delete a chamfer's toolpath and it is forgotten — which is also how you free its number for reuse.</li>
-<li>Edit or move a remembered shape and the gadget stops recognising it (shapes are matched by size and position). You get the amber "teach me" banner; rebuilding from your selection fixes it.</li>
+<li>Edit or move a remembered shape and the gadget stops recognising it (shapes are matched by size and position). You get the amber "its shapes aren't known" banner; rebuilding from your selection fixes it.</li>
 <li><strong>The bit is the exception.</strong> There's no way to store a tool identity in text, so each chamfer's bit is remembered in the software's own settings <strong>on this PC</strong>, not in the job. Open the same job on another machine and the picker offers the last bit you used there, not that chamfer's. Everything else travels.</li>
 </ul>
 </section>
@@ -205,7 +230,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </section>
 <section>
 <h2 id="chamfers-from-older-versions">Chamfers from older versions</h2>
-<p>Chamfers built by <strong>ChamferOffset v1.4.x</strong> are adopted. They keep their number and their size, but not their shapes — nothing recorded them at the time — so the first time you rebuild one you get the amber "teach me" banner and your selection becomes its shapes. That rebuild also renames its layer and toolpath to the EdgeBreaker names, and removes the old ones.</p>
+<p>Chamfers built by <strong>ChamferOffset v1.4.x</strong> are adopted. They keep their number and their size, but not their shapes — nothing recorded them at the time — so the first time you rebuild one you get the amber "its shapes aren't known" banner and your selection becomes its shapes. That rebuild also renames its layer and toolpath to the EdgeBreaker names, and removes the old ones.</p>
 <p>Chamfers from <strong>before v1.4.0</strong> (the unnumbered <code>ChamferOffset - Offset</code> layer, or a toolpath tagged plain <code>[ChamferOffset]</code>) are <em>not</em> adopted. The gadget says once that it found one and then leaves it alone entirely — never listed, never replaced, never deleted. Remove it by hand if you don't want it.</p>
 </section>
 <section>
@@ -219,8 +244,8 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <ol>
 <li>Double-click <code>EdgeBreaker-v*.vgadget</code> to install, then restart Aspire or VCarve. Windows may warn you about the file when you download it. That's only because it's new and not many people have it yet — choose Keep, then open it.</li>
 <li>Open a job, select the closed vector(s) to chamfer.</li>
-<li>Gadgets menu → EdgeBreaker. The dialog opens with a coloured banner telling you what it's about to do. <strong>Choose your V-bit</strong> (it opens on the bit you used last), enter the chamfer size, pick a cut position, press OK.</li>
-<li>The gadget draws orange offset vectors and creates a calculated <code>Chamfer ... [EdgeBreaker 01]</code> toolpath. A clean run shows you nothing at all — the toolpath in the Toolpaths panel and the orange offsets on the canvas are the confirmation. You only get a message when there is something to act on: a shape too narrow to chamfer, a vector skipped, a remembered shape that has gone, or a toolpath that could not be created.</li>
+<li>Gadgets menu → EdgeBreaker. The dialog opens with a coloured banner telling you what it's about to do. <strong>Choose your V-bit</strong> (it opens on the bit you used last), type the chamfer size, drag the blue dot on the bit to set where on the flute it cuts, press OK.</li>
+<li>The gadget draws its offset vectors and creates a calculated <code>Chamfer ... [EdgeBreaker 01]</code> toolpath. A clean run shows you nothing at all — the toolpath in the Toolpaths panel and the offsets on the canvas are the confirmation. You only get a message when there is something to act on: a shape too narrow to chamfer, a vector skipped, a remembered shape that has gone, or a toolpath that could not be created.</li>
 <li>Not what you wanted? Just run it again. Your vectors are still selected, so the banner says <strong>Rebuilding Chamfer 1</strong> and that chamfer's settings are already loaded.</li>
 </ol>
 <p><strong>Stuck at the machine?</strong> The <strong>Help</strong> button at the bottom of the dialog opens this guide in a browser window. It's a copy that ships with the gadget, so it works with no internet.</p>

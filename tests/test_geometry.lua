@@ -1049,7 +1049,7 @@ end
 -- Reading the Aspire chamfer template (2026-08-04, large-chamfer spec section 2).
 -- Values verified against the spec's decode of Tim's saved file: start 0,
 -- Inside = 1, inches, EditingDialog = uiChamferDialog. The depth is
--- 0.34641016151378 in the first save (docs/Chamfer 1.ToolpathTemplate, the
+-- 0.34641016151378 in the first save (Chamfer 1.ToolpathTemplate, the
 -- manual fixture below) but the SHIPPED template is the second save, made to
 -- pick up the layer restriction (spec section 2a-4) -- and resaving through
 -- Aspire's own decimal field rounded the depth to 0.3464101615. Pinned against

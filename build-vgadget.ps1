@@ -17,7 +17,7 @@ $zip = Join-Path $dist "EdgeBreaker-v$version.zip"
 $out = Join-Path $dist "EdgeBreaker-v$version.vgadget"
 if (Test-Path $zip) { Remove-Item $zip -Confirm:$false }
 if (Test-Path $out) { Remove-Item $out -Confirm:$false }
-# Folder at archive root (per docs/m0-results.md '.vgadget format' — adjust if findings differ)
+# Folder at archive root (per specs/m0-results.md '.vgadget format' — adjust if findings differ)
 Compress-Archive -Path (Join-Path $root "gadget\EdgeBreaker") -DestinationPath $zip
 Rename-Item $zip $out
 Write-Host "Built $out"
