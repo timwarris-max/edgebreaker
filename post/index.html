@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>EdgeBreaker — a free chamfering gadget for Aspire and VCarve</title>
+<meta name="description" content="A free gadget that puts a V-bit chamfer exactly the size you asked for on any closed vector in Aspire or VCarve — and lets you choose where along the flute it cuts.">
+
+<link rel="canonical" href="https://timwarris-max.github.io/edgebreaker/post/">
+
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="EdgeBreaker">
+<meta property="og:url" content="https://timwarris-max.github.io/edgebreaker/post/">
+<meta property="og:title" content="EdgeBreaker — a free chamfering gadget for Aspire and VCarve">
+<meta property="og:description" content="A free gadget that puts a V-bit chamfer exactly the size you asked for on any closed vector in Aspire or VCarve — and lets you choose where along the flute it cuts.">
+<meta property="og:image" content="https://timwarris-max.github.io/edgebreaker/post/social-card.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Tim's EdgeBreaker — predictable chamfers, every time">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="EdgeBreaker — a free chamfering gadget for Aspire and VCarve">
+<meta name="twitter:description" content="A free gadget that puts a V-bit chamfer exactly the size you asked for on any closed vector in Aspire or VCarve.">
+<meta name="twitter:image" content="https://timwarris-max.github.io/edgebreaker/post/social-card.png">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><rect width='200' height='200' fill='%23243447'/><polygon points='60,60 140,60 140,80 80,80 80,140 60,140' fill='%235980a6'/><polygon points='140,60 140,140 60,140' fill='%23e07a20'/></svg>">
+
+<link rel="stylesheet" href="styles.css">
+<style>
+  body { margin: 0; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); }
+  a { color: var(--color-accent-700); text-decoration: underline; text-underline-offset: 2px; }
+  a:hover { color: var(--color-accent-900); }
+  img { max-width: 100%; }
+
+  /* The two side-by-side blocks stack on a phone. Most of this page's
+     traffic arrives from a Facebook link, which is overwhelmingly mobile. */
+  @media (max-width: 620px) {
+    .hero      { grid-template-columns: 1fr !important; gap: 26px !important; padding: 26px 22px !important; }
+    .hero-word { font-size: 46px !important; }
+    .edges     { grid-template-columns: 1fr !important; }
+    .edges-fig { max-width: 230px; }
+    .pagetitle { font-size: 34px !important; }
+    h2         { font-size: 25px !important; }
+  }
+</style>
+</head>
+<body>
+
+<div style="min-height:100vh;background:var(--color-bg);padding:56px 24px 96px;display:flex;justify-content:center">
+<div style="width:100%;max-width:780px;display:flex;flex-direction:column;gap:28px">
+
+  <div style="display:flex;flex-direction:column;gap:26px">
+
+    <div class="blueprint hero" style="position:relative;background:#fff;background-image:linear-gradient(to right, color-mix(in srgb, var(--color-accent) 12%, transparent) 1px, transparent 1px),linear-gradient(to bottom, color-mix(in srgb, var(--color-accent) 12%, transparent) 1px, transparent 1px);background-size:28px 28px;display:grid;grid-template-columns:1.05fr 0.95fr;align-items:center;gap:20px;padding:34px 34px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="font-family:var(--font-heading);font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--color-accent-700)">A free gadget for Aspire &amp; VCarve &middot; v1.15.0</div>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <div style="font-family:var(--font-heading);font-size:19px;line-height:1;letter-spacing:0.16em;text-transform:uppercase;color:color-mix(in srgb, var(--color-text) 60%, transparent)">Tim's</div>
+          <div class="hero-word" style="font-family:var(--font-heading);font-size:64px;line-height:0.92;letter-spacing:-0.02em">Edge<span style="color:var(--color-accent-700)">BREAKER</span></div>
+        </div>
+        <div style="width:70px;height:2px;background:var(--color-accent)"></div>
+        <div style="font-family:var(--font-heading);font-size:23px;line-height:1.15;color:color-mix(in srgb, var(--color-text) 72%, transparent)">Predictable chamfers, every time</div>
+      </div>
+      <svg viewBox="0 0 420 300" style="width:100%;height:auto;display:block" role="img" aria-label="Section through a chamfered edge, with the chamfer size, standoff and cut position marked">
+        <defs>
+          <pattern id="hatchPost" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+            <line x1="0" y1="0" x2="0" y2="8" stroke="#1d1f20" stroke-opacity="0.16" stroke-width="1"></line>
+          </pattern>
+        </defs>
+        <polygon points="34,130 214,130 274,190 274,282 34,282" fill="url(#hatchPost)" stroke="#1d1f20" stroke-opacity="0.75" stroke-width="1.5"></polygon>
+        <polygon points="214,130 294,210 374,130 374,22 214,22" fill="#5980a6" fill-opacity="0.12" stroke="#5980a6" stroke-width="1.75"></polygon>
+        <line x1="214" y1="130" x2="274" y2="190" stroke="#5980a6" stroke-width="3.5"></line>
+        <g stroke="#1d1f20" stroke-opacity="0.3" stroke-width="1" stroke-dasharray="4 4">
+          <line x1="274" y1="190" x2="274" y2="282"></line>
+          <line x1="294" y1="210" x2="294" y2="22"></line>
+        </g>
+        <g stroke="#1d1f20" stroke-opacity="0.55" stroke-width="1">
+          <line x1="274" y1="262" x2="294" y2="262"></line>
+          <line x1="244" y1="160" x2="196" y2="208"></line>
+        </g>
+        <g font-family="Barlow Condensed, sans-serif" font-size="16" fill="#1d1f20" fill-opacity="0.72" letter-spacing="0.08em">
+          <text x="302" y="258">STANDOFF</text>
+          <text x="192" y="222" text-anchor="end">CHAMFER</text>
+        </g>
+        <circle cx="274" cy="190" r="7.5" fill="#5980a6" stroke="#fff" stroke-width="2"></circle>
+        <rect x="207" y="123" width="14" height="14" fill="#f2f2f3" stroke="#5980a6" stroke-width="2"></rect>
+        <circle cx="246" cy="162" r="7.5" fill="#2a4a6b" stroke="#fff" stroke-width="2"></circle>
+      </svg>
+    </div>
+
+    <h1 class="pagetitle" style="font-size:52px;line-height:1.05;margin:0;max-width:16em">EdgeBreaker, a free chamfering gadget for Aspire and VCarve</h1>
+
+    <p style="font-size:19px;line-height:1.6;margin:0">Recently I needed to put a small chamfer on a part. That should be a simple job. It wasn't. I find Aspire's own chamfer toolpath confusing and unpredictable, and building a chamfer out of a V-carve toolpath puts you in a fight with the math. So I wrote my own gadget to do it predictably.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">The whole point of it is a chamfer that comes out the size you asked for, whatever the situation. You give it the shapes, the bit and the size, and it works out how to get there. Sometimes that's one profile toolpath. Sometimes the chamfer is bigger than the bit can take in one bite and it splits the job into passes. Sometimes it hands the cut to Aspire's own chamfer engine because that's the only thing that will do it. You don't have to know which of those applies, or why. That's the gadget's problem now.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Most of the time you'll type a size, press OK, and never think about any of it. There is one option in there worth knowing about though, because it's the reason the gadget got written. A V-bit chamfer can be cut anywhere along the flute. Same bit, same chamfer, same finished size, but the cut can sit down near the tip or up near the shoulder, and what changes is how deep the bit plunges and which stretch of the cutting edge does the work. Usually that makes no difference to you and the default is fine.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">My job was one of the times it mattered. A run of parts bolted into a fixture, and the upper edge of the cutter was clipping the bolt heads, so I needed the cut forced lower down the flute to get clear of them. There's no intuitive way to force that with the tools as they are, so I built it into the gadget.</p>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/fixture-parts.jpg" alt="Parts bolted into a fixture with socket head screws standing above the surface" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">The job in question. Those bolt heads are what the top of the cutter wanted to hit.</div>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/fixture-flute-v4.png" loading="lazy" alt="Section diagrams comparing a cut near the tip fouling the screw head with a cut up the flute clearing it" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">Same chamfer either way. Cut near the tip and the body of the bit is into the screw head; move the cut up the flute and it clears.</div>
+
+    <h2 style="font-size:30px;margin:14px 0 0">Not cutting on your line</h2>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">You don't get that if you cut on your line. You get it by not cutting on your line. Offset the vector out into the waste, set Machine Vectors to On, and run the profile deep enough that the slanted flank of the bit reaches your edge. How far out you put that offset line sets how deep the bit plunges, and that sets where along the flute the cutting happens.</p>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/dialog-adding-80.png" loading="lazy" alt="The EdgeBreaker v1.15 setup dialog" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">Twenty shapes selected, a 0.05 chamfer at 80% of the flute. The banner and the OK button both say what's about to happen.</div>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Select your closed vectors, open EdgeBreaker from the Gadgets menu, pick a V-bit. The bit comes straight out of your own tool database with its angle, diameter, feeds, speeds and tool number exactly as you have them set, so the chamfer gets cut with the same numbers as the rest of the job.</p>
+
+    <h2 style="font-size:30px;margin:14px 0 0">The drawing is the control</h2>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Three handles sit on the section view and you drag them. The orange dot on the bevel sets the chamfer size. The yellow square on the surface sets how far below the top of the stock the edge sits. The blue dot on the bit sets where on the flute you cut, snapping to six spots, 0 down at the bottom just clear of the tip and 100 up near where the flute runs out. Everything redraws as you go, so the depth a position needs is in front of you instead of printed on a button you haven't pressed yet. The boxes are all still there. If you'd rather type, type.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Cut high and you're using fresh, wide flute instead of the tip, which is a point that barely cuts and wears out first. What you pay for it is depth. On a 60&deg; half inch bit a 0.03 in chamfer wants 0.1169 deep at 0% and 0.3897 at 100%, for the identical chamfer. Take the highest spot your bit and your stock will reach. Mine wanted the low end, on account of the bolt heads.</p>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="blueprint" style="padding:10px;background:#fff">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="font-family:var(--font-heading);font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:color-mix(in srgb, var(--color-text) 55%, transparent)">Cut at 0% &mdash; 0.0588 deep</div>
+            <img src="img/flute-100.png" loading="lazy" alt="Section view with the cut position at 0%" style="display:block;width:100%;height:auto">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--color-divider);padding-top:14px">
+            <div style="font-family:var(--font-heading);font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:var(--color-accent-700)">Cut at 100% &mdash; 0.1125 deep</div>
+            <img src="img/flute-0.png" loading="lazy" alt="Section view with the cut position at 100%" style="display:block;width:100%;height:auto">
+          </div>
+        </div>
+      </div>
+      <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent)">The same 0.0400 chamfer both times. Down at the bottom of the flute it's 0.0588 deep, up at the top it's 0.1125.</div>
+    </div>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Beside the section view there's a preview of the shapes you actually selected with the band the chamfer eats painted onto them. Drag the size up and watch a thin arm go solid orange. That arm has lost its flat top completely, and until now you'd have found that out after building the toolpath and simulating it. It's your real artwork, not a diagram of somebody else's.</p>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/star.jpg" loading="lazy" alt="Chamfered eight point star in the Aspire 3D preview" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">Three chamfers in the one job, each with its own bit and size. A job will take 99 of them.</div>
+
+    <h2 style="font-size:30px;margin:14px 0 0">Edges that aren't at the top</h2>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">The edge you want broken isn't always at the top of the stock. It might be a pocket floor, a second level, a face you've already skimmed. That's what start depth is for. Tell it how far down the edge sits and it drops the whole cut by that much, chamfer unchanged. The one below is 0.1250 down, so the machine reaches 0.2113 in total to put a 0.0500 chamfer on it.</p>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <img src="img/start-depth-section.png" loading="lazy" alt="Section view with a start depth of 0.1250 and total depth 0.2113" style="display:block;width:100%;height:auto">
+        <img src="img/pocket-step-3d.jpg" loading="lazy" alt="A chamfer cut on the edge of a lower step inside a pocket" style="display:block;width:100%;height:auto;border-top:1px solid var(--color-divider);padding-top:14px">
+      </div>
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">Start depth set on the yellow square, and the chamfer that comes out of it, down on the step.</div>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">A new chamfer always opens at 0, and start depth is the one setting that deliberately doesn't carry over from your last run. A leftover quarter inch from yesterday's pocket applied to today's flat job would cut a quarter inch too deep and look perfectly normal on screen while it did it.</p>
+
+    <h2 style="font-size:30px;margin:14px 0 0">Telling it which edges</h2>
+
+    <div class="edges" style="display:grid;grid-template-columns:230px 1fr;gap:22px;align-items:start">
+      <div class="blueprint edges-fig" style="padding:10px;background:#fff">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <img src="img/which-edges-panel.png" loading="lazy" alt="The WHICH EDGES panel with OUT, IN and AUTO, and the Sharp corners switch" style="display:block;width:100%;height:auto">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <p style="font-size:17px;line-height:1.65;margin:0">The one thing the gadget genuinely can't work out for itself is which side of your line the material is on. A pocket and a raised shape are the same closed line. So that moved out to its own panel on the right, with a block above it drawing what you picked.</p>
+        <p style="font-size:17px;line-height:1.65;margin:0">OUT is for the outline of the part, where the material is inside your line and the chamfer eats outward into the waste. That's a sign blank, a bracket, anything you're cutting free of the sheet. IN is for a pocket, a bore or a bolt hole, where the material is outside the line and the chamfer opens the hole up a little wider. A plain hole on its own is the case people get wrong, because it looks like a shape and it isn't. AUTO works it out shape by shape from how they nest, which is what you want for lettering and for any part with holes in it, outward round the outlines and inward into the counters. It's the default and it's right most of the time.</p>
+        <p style="font-size:17px;line-height:1.65;margin:0">If a chamfer comes out with a step in it, that's the first thing to check.</p>
+      </div>
+    </div>
+
+    <h2 style="font-size:30px;margin:14px 0 0">Sharp inside corners</h2>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Inside corners on a chamfer normally come out rounded, because at one fixed depth the bit can only get so far into a corner. Turn Sharp corners on and the bit rises as it drives into each corner, so the two edges meet at a point instead. Raised lettering is one chamfer now, the whole lot selected with the edge side left on AUTO, outward round the outlines and inward into the counters, sharp on both.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">On a sharp run you'll see the orange offset line sitting further out from the pocket wall than usual, which looks wrong and isn't. That line is what the machine steers by, not the cut, and the chamfer still lands where it always does. Outside corners still round over, nothing to be done about those.</p>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="blueprint" style="padding:10px;background:#fff">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <img src="img/corner-round-3.jpg" loading="lazy" alt="Inside corner of a chamfered pocket, rounded" style="display:block;width:100%;height:auto">
+            <div style="font-family:var(--font-heading);font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:color-mix(in srgb, var(--color-text) 55%, transparent)">Sharp corners off</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <img src="img/corner-sharp-3.jpg" loading="lazy" alt="The same inside corner run to a point" style="display:block;width:100%;height:auto">
+            <div style="font-family:var(--font-heading);font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:var(--color-accent-700)">Sharp corners on</div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent)">Same pocket, same bit, same chamfer. The corner on the right runs to a point.</div>
+    </div>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/ring.jpg" loading="lazy" alt="A ring with the outside edge and the bore both chamfered" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">Outside edge and bore, chamfered from the same selection.</div>
+
+    <h2 style="font-size:30px;margin:14px 0 0">The hard case</h2>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">A nine point star cut as a pocket, sharp corners on, and a 0.15 chamfer asked for off a quarter inch 90&deg; bit. That's past what the flute can sharpen, so the cut goes to Aspire's own chamfer engine and runs the tip of the bit down each corner instead. You give up the cut position when that happens, because the cut has to come off the tip. The blue dot leaves the bit, the position box reads TIP, and the banner says CUT ON THE TIP so you're not left guessing why.</p>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/star-tip-dialog.png" loading="lazy" alt="EdgeBreaker set to a 0.15 chamfer on a nine point star, cutting on the tip" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">One shape, edges set to IN, 0.15 from the tip. The preview beside it is the star itself with the band the chamfer takes.</div>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/star-tip-result.jpg" loading="lazy" alt="The cut star pocket with every inside point run to a sharp corner" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">Eighteen corners, every one of them run to a point. Damn, that came out well.</div>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/dog.jpg" loading="lazy" alt="A cartoon dog outline with a chamfer run right around it" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">Just because we can&hellip;</div>
+
+    <div style="display:flex;flex-direction:column;gap:26px">
+      <h2 style="font-size:30px;margin:14px 0 0">What it won't do</h2>
+      <p style="font-size:17px;line-height:1.65;margin:0">Vectors have to be closed. Anything too narrow to chamfer at the size you asked for is skipped rather than fudged, and it tells you how many it left out. Ask for a chamfer bigger than the bit can take in one bite and it cuts it in several passes instead of refusing, named pass 1 of 3 and so on, and that order isn't a preference, every pass but the last is sitting out over the part relying on the one above to have cleared the way. Run them backwards and you've buried the bit again.</p>
+    </div>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/track-template.jpg" loading="lazy" alt="Chamfered trackwork template in the Aspire 3D preview" style="display:block;width:100%;height:auto">
+    </div>
+    <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent);margin-top:-18px">The job it got written for.</div>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">If it isn't what you wanted, just run it again. Your vectors are still selected so it knows which chamfer you mean, and the settings that built it come back already filled in.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">This started out as a very simple gadget to get me around the interference problem with those bolts. Then it kept growing, the way these projects do, until it had every bit of functionality I could think of in it. Getting here took dozens of hours of trial and error to work the bugs out and make the thing pleasant to use, and I made every mistake there is to make along the way.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Which is where you come in. What I need now is people using it and telling me what I missed or got wrong. It's had one pair of eyes on it and one pair of eyes never finds everything.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">Installing is a double-click on the .vgadget and a restart of Aspire or VCarve. It goes in over the top of an older copy, so there's nothing to uninstall first, and your existing chamfers come back exactly as they were. Windows will probably warn you about the file when you download it. That's only because it's new and hardly anyone has it yet. Choose Keep and open it.</p>
+
+    <p style="font-size:17px;line-height:1.65;margin:0">I built and tested it in Aspire 12.5 and someone has since run it in VCarve Pro 12.5. There's nothing in it that needs either one in particular, so older versions should be fine, I just haven't tried them. It's free and it's here:</p>
+
+    <div class="blueprint" style="padding:12px;background:#fff">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <img src="img/wordmark-cut.jpg" loading="lazy" alt="EdgeBREAKER lettering chamfered into an aluminium face" style="display:block;width:100%;height:auto">
+    </div>
+
+    <div class="blueprint" style="padding:20px 22px;background:#fff;display:flex;flex-wrap:wrap;align-items:center;gap:16px;justify-content:space-between">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <div style="font-family:var(--font-heading);font-size:20px;line-height:1.1">EdgeBreaker v1.15.0</div>
+        <div style="font-size:13px;color:color-mix(in srgb, var(--color-text) 60%, transparent)">Free, for Aspire and VCarve Pro.</div>
+      </div>
+      <a class="btn btn-primary" href="https://github.com/timwarris-max/edgebreaker/releases/latest/download/EdgeBreaker.vgadget" style="text-decoration:none;white-space:nowrap;flex:none;font-size:18px;padding:12px 22px">Download EdgeBreaker</a>
+    </div>
+
+  </div>
+</div>
+</div>
+
+</body>
+</html>
