@@ -75,6 +75,19 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: #f4f6f8;
 #Bar input[type=button] { font-size: 23px; padding: 8px 32px;
        background: #2f9e4f; color: #fff; border: 1px solid #268040;
        font-weight: 600; }
+/* The second button, shown only when Lua sends a choice. Hidden is the DEFAULT
+   state, so every display-only message renders exactly as it did before.
+   Cancel is the setup dialog's cancel, verbatim, so the two windows agree about
+   what "the button you press to back out" looks like.
+
+   TWO ids, for the same reason the setup dialog's #Bar #ButtonHelp carries two:
+   `#Bar input[type=button]` above is one id plus an attribute plus an element
+   and outweighs a lone `#ButtonCancel`. Written that way first, and the cancel
+   button rendered GREEN -- found by looking at the render, since nothing here
+   measures colour. */
+#Bar #ButtonCancel { display: none; margin-right: 14px;
+       background: #fff; background: linear-gradient(#fff, #f2efea);
+       color: #4a4137; border: 1px solid #b9b0a4; }
 </style>
 </head>
 <body>
@@ -85,9 +98,12 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: #f4f6f8;
    <table id="Rows"><tbody id="RowsBody"></tbody></table>
    <div id="Note"></div>
  </div>
- <!-- One button. A display-only dialog reads nothing back, so there is nothing
-      to cancel. Same bar the deleted receipt used. -->
+ <!-- Both buttons exist in the markup on EVERY message, and Cancel is hidden by
+      CSS unless a choice was sent. Aspire binds these by NAME when the page
+      loads, so a button added later by script would not be bound at all -- the
+      one that has to exist is the one that has to be here from the start. -->
  <div id="Bar">
+   <input id="ButtonCancel" name="ButtonCancel" type="button" value="CANCEL">
    <input id="ButtonOK" name="ButtonOK" type="button" value="OK">
  </div>
 
@@ -98,6 +114,7 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: #f4f6f8;
  <input type="hidden" id="MRows"    name="MRows"    value="">
  <input type="hidden" id="MNote"    name="MNote"    value="">
  <input type="hidden" id="MVersion" name="MVersion" value="">
+ <input type="hidden" id="MChoice"  name="MChoice"  value="">
 
 <script>
 function el(id) { return document.getElementById(id); }
@@ -162,6 +179,15 @@ function init() {
   var note = el("MNote").value;
   setText("Note", note);
   el("Note").style.display = note === "" ? "none" : "block";
+
+  // The offer. OK carries it, so Aspire's own true/false answer IS the choice
+  // and nothing has to be read back out of the page. An empty MChoice leaves
+  // the bar exactly as it has always been: one green OK.
+  var choice = el("MChoice").value;
+  if (choice !== "") {
+    el("ButtonOK").value = choice;
+    el("ButtonCancel").style.display = "inline-block";
+  }
 }
 
 // Aspire fills the hidden fields after the page loads, so the page waits for

@@ -47,7 +47,7 @@ CO.FIT_EPS = 1e-9
 
 CO.MODES           = { setback = true, face = true, leg = true }
 CO.SIDES           = { auto = true, outside = true, inside = true }
-CO.VERSION         = "1.15.0"
+CO.VERSION         = "1.16.0"
 
 -- ONE template, not one per bit. The bit now comes from Aspire's tool library
 -- (live-proven 2026-07-25), which supplies angle, diameter, feeds, speeds and
@@ -232,22 +232,32 @@ function CO.message_fields(msg, screen_w, screen_h)
       MRows    = CO.encode_rows(msg.rows),
       MNote    = msg.note or "",
       MVersion = "v" .. CO.VERSION,
+      -- Empty on every display-only message, which the page reads as "one
+      -- button, OK". Non-empty turns the bar into a choice: this label on the
+      -- OK button, and a Cancel beside it.
+      MChoice  = msg.choice or "",
    }, size[1], size[2]
 end
 
-CO.MESSAGE_FIELD_NAMES = { "MKind", "MHead", "MBody", "MRows", "MNote", "MVersion" }
+CO.MESSAGE_FIELD_NAMES = { "MKind", "MHead", "MBody", "MRows", "MNote", "MVersion",
+                           "MChoice" }
 
--- Display-only, and it can never fail a run: no caller branches on it and it
--- always returns. Every way it can go wrong lands on the plain message box --
--- including a bad or missing msg.plain, which is why that fallback has its
--- own fallbacks rather than trusting the one field nothing here validates.
+-- Display-only unless msg.choice is set, and it can never fail a run: every way
+-- it can go wrong lands on the plain message box -- including a bad or missing
+-- msg.plain, which is why that fallback has its own fallbacks rather than
+-- trusting the one field nothing here validates.
+--
+-- Returns TRUE only when a choice was offered AND the operator took it. Every
+-- other path -- no choice offered, Cancel, the X, a missing page, a thrown
+-- error -- returns false. That direction is deliberate: the caller acts on
+-- true, so anything that goes wrong declines rather than silently re-running.
 --
 -- The file probe is not defensive padding -- it is the receipt's own hard-won
 -- lesson. The realistic failure here is a sync that did not copy the new page,
 -- and without the probe Aspire renders the file path as text and calls it a
 -- report.
 function CO.show_message(gadget_dir, msg)
-   local shown = false
+   local shown, took = false, false
    pcall(function()
       local probe = io.open(gadget_dir .. "\\MessageDialog.htm", "r")
       if probe == nil then return end
@@ -275,14 +285,20 @@ function CO.show_message(gadget_dir, msg)
          dlg:AddTextField(k, fields[k] or "")
       end
       -- Closing with the X returns false, which is not a failure: the operator
-      -- saw the message and dismissed it. Nothing is read back.
-      dlg:ShowDialog()
+      -- saw the message and dismissed it. On a display-only message nothing is
+      -- read back; on a choice the same false IS the answer, because the page
+      -- puts the offer on OK and leaves Cancel to mean no.
+      local pressed = dlg:ShowDialog()
+      took = (msg.choice ~= nil and msg.choice ~= "" and pressed == true)
       shown = true
    end)
    if not shown then
+      -- No page, so no second button to press. The plain box states the size to
+      -- try; the operator retypes it. Declining here is the only honest answer.
       DisplayMessageBox(msg.plain or msg.headline
          or "EdgeBreaker ran into a problem.")
    end
+   return took
 end
 
 -- The blink. It says nothing -- Tim's call: a wordless flicker rather than a
@@ -2422,11 +2438,20 @@ function CO.narrow_refusal(f)
       .. "these shapes - some of the detail would come away."
    local rows = { { "Selected", string.format("%d vector(s)", f.n_sel) } }
    local plain = "Chamfer's too big for this artwork.\n\n" .. body
+   local choice = nil
    if f.suggest ~= nil then
       local fits = CO.fmt_len(f.suggest) .. " " .. f.unit
-      body = body .. "\n\nTry " .. fits .. " or less."
+      body = body .. "\n\nThe biggest that works here is " .. fits .. "."
       rows[#rows + 1] = { "Biggest that fits", fits }
+      -- The FALLBACK wording differs on purpose. The plain box has one button,
+      -- so there is nothing to press and the operator retypes the number -- and
+      -- "Try X or less" is the instruction for that. The page's version says
+      -- what the button does instead.
       plain = plain .. "\n\nTry " .. fits .. " or less."
+      -- Offered only when the caller permits it: a run that is already a retry
+      -- must not offer another, or a shape whose count is not monotone in the
+      -- setback could bounce the operator round the loop.
+      if f.offer then choice = "Use " .. fits end
    end
    plain = plain .. "\n\nNothing was changed."
    return {
@@ -2435,6 +2460,73 @@ function CO.narrow_refusal(f)
       body = body,
       rows = rows,
       plain = plain,
+      choice = choice,
+   }
+end
+
+-- ==================== Leftover offsets ====================
+-- Deleting a chamfer TOOLPATH in Aspire leaves this gadget's offset layers on
+-- the canvas, and clearing them by hand is several clicks per layer -- they are
+-- locked, so the lock comes off first, and a multi-pass chamfer left one layer
+-- per band. The offer below is the whole fix the operator sees.
+--
+-- It rides on the OK button, like the too-big refusal's, so Aspire's own
+-- true/false IS the answer and nothing is read back out of the page.
+local function join_slots(slots)
+   local names = {}
+   for i, s in ipairs(slots) do names[i] = tostring(s) end
+   if #names <= 1 then return names[1] or "" end
+   local last = table.remove(names)
+   return table.concat(names, ", ") .. " and " .. last
+end
+
+-- Past this many, the list stops being information and starts being a wall.
+-- A job can hold 99 chamfers, so the naming has to have an end: the count says
+-- the same thing in one word, and the layers are about to be gone anyway.
+CO.LEFTOVER_NAMED_MAX = 4
+
+function CO.leftover_message(slots)
+   local many = #slots > 1
+   local who
+   if #slots > CO.LEFTOVER_NAMED_MAX then
+      who = #slots .. " chamfers"
+   else
+      who = (many and "Chamfers " or "Chamfer ") .. join_slots(slots)
+   end
+   local whose = many and "their toolpaths are" or "its toolpath is"
+   local lead = who .. (many and " still have" or " still has")
+       .. " offsets on the canvas, but " .. whose .. " gone."
+   return {
+      kind = "warn",
+      headline = "Old offsets left behind",
+      body = lead .. "\n\nRemove those layers? Your own vectors aren't touched.",
+      -- The fallback box has ONE button, so there is nothing to press and the
+      -- answer is already "no". It must not describe an offer it cannot make;
+      -- it names the manual fix instead, which is what the operator is left
+      -- with. Same split as the too-big refusal's plain wording.
+      plain = lead .. "\n\nNothing was changed - remove those layers in the Layers panel.",
+      choice = "Remove them",
+   }
+end
+
+-- What the sweep says afterwards. A clean sweep says NOTHING: the offsets have
+-- visibly gone from the canvas and the quiet-success rule (v1.7.0) covers it.
+-- Only trouble is worth a window -- and trouble here is realistic, because
+-- LayerManager:RemoveLayer has never been proven to work in Aspire, so
+-- "emptied but still listed" is a live outcome and gets an honest sentence.
+function CO.leftover_report(removed, stuck)
+   if stuck == 0 then return nil end
+   local layer_word = (stuck == 1) and "1 layer " or (stuck .. " layers ")
+   local it = (stuck == 1) and "it" or "them"
+   -- It does NOT say the offsets are gone. The wipe runs inside the same
+   -- pcall as the removal, so a layer counted here may still be holding its
+   -- vectors -- rare, but the sentence has to be true in both cases.
+   local said = layer_word .. "could not be removed."
+   return {
+      kind = "warn",
+      headline = "Some layers are still there",
+      body = said .. "\n\nDelete " .. it .. " in the Layers panel.",
+      plain = said .. " Delete " .. it .. " in the Layers panel.",
    }
 end
 
@@ -2987,7 +3079,7 @@ end
 -- makes this inheritance inert.
 function CO.sdk_selection_spans(job, own_ids)
    own_ids = own_ids or {}
-   local loops, skipped_open = {}, 0
+   local loops, skipped_open, skipped_other = {}, 0, 0
    local function add_object(obj, inherited)
       local ok_id, raw = pcall(function() return obj.LayerId end)
       local layer_id = (ok_id and type(raw) == "string") and raw or nil
@@ -3002,7 +3094,15 @@ function CO.sdk_selection_spans(job, own_ids)
          end
          return
       end
-      if obj.ClassName ~= "vcCadContour" and obj.ClassName ~= "vcCadPolyline" then return end
+      -- Counted, not silently dropped: a live TEXT object lands here, and
+      -- without the count "you selected text" is indistinguishable from "you
+      -- selected nothing" -- the operator got the generic refusal and no hint
+      -- that the text has to be converted to curves first. The count never
+      -- vetoes a run; main() only speaks when nothing usable survived.
+      if obj.ClassName ~= "vcCadContour" and obj.ClassName ~= "vcCadPolyline" then
+         skipped_other = skipped_other + 1
+         return
+      end
       local c = obj:GetContour()
       if c == nil or c.IsEmpty then return end
       if c.IsOpen then skipped_open = skipped_open + 1; return end
@@ -3020,7 +3120,7 @@ function CO.sdk_selection_spans(job, own_ids)
       obj, pos = sel:GetNext(pos)
       add_object(obj, nil)
    end
-   return loops, skipped_open
+   return loops, skipped_open, skipped_other
 end
 
 -- True when two bbox fingerprints {cx, cy, xlen, ylen} agree within eps.
@@ -3303,6 +3403,79 @@ function CO.sdk_scan_chamfers(job)
       end
    end
    return found, legacy
+end
+
+-- Which of the scanned chamfers are LEFTOVERS: offset layers still on the
+-- canvas, with no toolpath behind them. That is exactly what deleting a chamfer
+-- toolpath by hand leaves, and it is what the sweep is aimed at.
+--
+-- Ascending, because sdk_scan_chamfers builds its list slot by slot.
+--
+-- v1.4.x chamfers (origin "old") are deliberately OUT. The scan records a
+-- toolpath object for the new generation only, so every adopted v1.4.x chamfer
+-- would look toolpath-less here and be swept away with its toolpath still
+-- cutting -- the one mistake this feature could make that costs real work.
+-- Their layers stay for the operator to remove by hand, as they do today.
+function CO.leftover_slots(chamfers)
+   local out = {}
+   for _, c in ipairs(chamfers) do
+      if c.origin == "new" and c.tp == nil then out[#out + 1] = c.slot end
+   end
+   return out
+end
+
+-- Does this layer belong to one of the doomed slots? `slots` is a SET.
+-- slot_from_layer_name reads both live generations of the name -- banded
+-- (v1.13.0+) and unbanded (v1.5.0-1.12.0) -- and a job old enough to have
+-- accumulated leftovers is exactly the job holding the older kind.
+function CO.leftover_layer(name, slots)
+   if type(name) ~= "string" then return false end
+   local s = CO.slot_from_layer_name(name)
+   return s ~= nil and slots[s] == true
+end
+
+-- Empty and remove every layer belonging to the given slots. Returns how many
+-- layers went and how many would not go.
+--
+-- Collect first, then destroy: removing a layer while enumerating the layer
+-- list is the same hazard sdk_prepare_layers avoids the same way.
+--
+-- Nothing here may fail a run. It happens before the dialog opens, on an
+-- operator's explicit yes, and the worst realistic outcome -- an emptied layer
+-- Aspire still lists -- is reported rather than thrown.
+function CO.sdk_remove_leftovers(job, slots)
+   local set = {}
+   for _, s in ipairs(slots) do set[s] = true end
+   local doomed = {}
+   local pos = job.LayerManager:GetHeadPosition()
+   while pos ~= nil do
+      local layer
+      layer, pos = job.LayerManager:GetNext(pos)
+      local ok, name = pcall(function() return layer.Name end)
+      if ok and CO.leftover_layer(name, set) then doomed[#doomed + 1] = layer end
+   end
+   local removed, stuck = 0, 0
+   for _, layer in ipairs(doomed) do
+      -- Unlock BEFORE the wipe, and in its own pcall for the same reason
+      -- sdk_prepare_layers does it: every one of these was locked by the run
+      -- that created it, locked survives save/close/reopen, and whether
+      -- RemoveObject works on a locked layer has never been measured. Its own
+      -- pcall so a refused write cannot cost us the wipe as well.
+      pcall(function() layer.Locked = false end)
+      local ok = pcall(function()
+         local objs = {}
+         local p = layer:GetHeadPosition()
+         while p ~= nil do
+            local obj
+            obj, p = layer:GetNext(p)
+            objs[#objs + 1] = obj
+         end
+         for _, obj in ipairs(objs) do layer:RemoveObject(obj) end
+         job.LayerManager:RemoveLayer(layer)
+      end)
+      if ok then removed = removed + 1 else stuck = stuck + 1 end
+   end
+   return removed, stuck
 end
 
 -- ==================== Chamfer memory: the store ====================
@@ -4298,7 +4471,13 @@ function OnToolPicker_ToolChooseButton(dialog)
    return true
 end
 
-function main(script_path)
+-- `forced_size` is set only by main's own retry, when the operator pressed
+-- "Use 0.15 in" on the too-big-for-this-artwork refusal. It seeds the dialog
+-- with that size instead of whatever would normally seed it, and -- because it
+-- is also the flag that says "this run is already a retry" -- it withholds the
+-- offer the second time round. That is the whole bound on the loop: at most one
+-- re-run per press, and a size that fails again gets the plain refusal.
+function main(script_path, forced_size)
    local job = VectricJob()
    if not job.Exists then
       DisplayMessageBox("No job is open.\n\nOpen your job, select the edge vectors, then re-run EdgeBreaker.")
@@ -4360,7 +4539,7 @@ function main(script_path)
          .. "\n\nNothing was changed. Please report this message.")
       return false
    end
-   local raw_loops, skipped_open = CO.sdk_selection_spans(job, own_ids)
+   local raw_loops, skipped_open, skipped_other = CO.sdk_selection_spans(job, own_ids)
    local kept, skipped_own, loop_unknown = CO.partition_loops(raw_loops, own_ids)
    if layer_unknown > 0 or loop_unknown > 0 then
       DisplayMessageBox(string.format("EdgeBreaker couldn't work out which layer %d of your "
@@ -4377,8 +4556,68 @@ function main(script_path)
          .. "Close them (or select closed vectors) and run EdgeBreaker again.\n\nNothing was changed.")
       return false
    end
+   -- Same shape as the open-vector refusal, and for the same reason: selecting
+   -- TEXT is a mistake with an obvious fix, not the empty selection that means
+   -- "rebuild the last chamfer". The message does not claim the objects ARE
+   -- text -- what Aspire calls a text object is not attested here -- so it says
+   -- what was missing and names the fix for the case that causes this.
+   if #kept == 0 and skipped_other > 0 then
+      DisplayMessageBox("EdgeBreaker only cuts vectors, and there aren't any in what you "
+         .. "selected.\n\nText has to be converted to curves first. Do that, select the shapes, "
+         .. "and run again.\n\nNothing was changed.")
+      return false
+   end
    local sel_fps = {}
    for i, loop in ipairs(kept) do sel_fps[i] = loop.bbox end
+
+   -- Leftover offsets. Deleting a chamfer's TOOLPATH in Aspire leaves this
+   -- gadget's offset layers behind, and clearing them by hand is several clicks
+   -- per layer -- they are locked, and a multi-pass chamfer left one layer per
+   -- band. Offered before the dialog, so an operator who started the gadget only
+   -- to tidy up can say yes and then cancel out with the job already clean.
+   --
+   -- HERE, and not up beside the scan that found them, because this is the first
+   -- point at which the selection has been read out into plain Lua (`kept` and
+   -- `sel_fps`). The sweep DELETES vectors, and a box-select is the natural way
+   -- to re-run: sweeping first would leave sdk_selection_spans walking a
+   -- selection holding objects that no longer exist, and that call is not
+   -- pcall'd. The lock on those layers makes it unlikely rather than impossible,
+   -- and unlikely is not a reason to order it the risky way round.
+   --
+   -- Withheld on a retry: main() re-enters itself when the too-big offer is
+   -- taken, and asking the same question twice inside one press is a nag.
+   local leftovers = CO.leftover_slots(chamfers)
+   if forced_size == nil and #leftovers > 0
+      and CO.show_message(gadget_dir, CO.leftover_message(leftovers)) then
+      local ok_sweep, removed, stuck = pcall(CO.sdk_remove_leftovers, job, leftovers)
+      local report
+      if not ok_sweep then
+         report = {
+            kind = "warn",
+            headline = "The offsets are still there",
+            body = "EdgeBreaker couldn't remove them:\n" .. tostring(removed)
+                .. "\n\nDelete those layers in the Layers panel.",
+            plain = "EdgeBreaker couldn't remove the leftover offsets. "
+                .. "Delete those layers in the Layers panel.",
+         }
+      else
+         report = CO.leftover_report(removed, stuck)
+         -- Re-read rather than subtract. A layer that would not go still holds
+         -- its slot, and the scan is the only thing that knows which -- a
+         -- dropdown that omits a chamfer still sitting on the canvas is the one
+         -- way this could cost the operator work. A failed re-read keeps the
+         -- list we already have, which is stale but never wrong about the job.
+         local ok_rescan, rescanned = pcall(CO.sdk_scan_chamfers, job)
+         if ok_rescan then
+            chamfers = rescanned
+            used, by_slot = {}, {}
+            for _, c in ipairs(chamfers) do used[#used + 1] = c.slot; by_slot[c.slot] = c end
+            next_slot = CO.next_free_slot(used)
+         end
+      end
+      -- A clean sweep says nothing: the offsets have visibly gone.
+      if report ~= nil then CO.show_message(gadget_dir, report) end
+   end
 
    -- The top view's payload, built HERE because `kept` still carries the span
    -- geometry and the dialog has not been constructed yet (live-top-view spec 5).
@@ -4552,6 +4791,11 @@ function main(script_path)
    else
       seed = CO.apply_settings(CO.load_settings(), unit)
    end
+   -- The retry's size wins over both sources. It has to be applied HERE rather
+   -- than written to the settings file, because a rebuild seeds from the
+   -- chamfer's own memory and would never read the file at all. Same job, same
+   -- run, so it is already in this job's units and needs no conversion.
+   if type(forced_size) == "number" and forced_size > 0 then seed.size = forced_size end
 
    -- First arg is local_html, NOT modal: false is required with a file: URL
    -- (Aspire renders the URL as text otherwise) — same as Inlay Doctor's dialogs.
@@ -5158,10 +5402,18 @@ function main(script_path)
                if suggest <= 0 then suggest = nil end
             end
             restore_selection_after_check()
-            CO.show_message(gadget_dir, CO.narrow_refusal({
+            local chose = CO.show_message(gadget_dir, CO.narrow_refusal({
                asked = size, suggest = suggest,
                n_sel = #check_objs, unit = unit.suffix,
+               offer = (suggest ~= nil and forced_size == nil),
             }))
+            -- Nothing has been drawn, no layer touched and the selection is
+            -- already back, so re-entering main() is a clean restart rather
+            -- than a resume: the dialog simply reopens with the smaller size in
+            -- the box and the operator sees the cut before pressing CALCULATE.
+            -- Re-deriving the run's numbers here instead would mean redoing
+            -- everything main() has done since it read the dialog.
+            if chose and suggest ~= nil then return main(script_path, suggest) end
             return false
          end
       end

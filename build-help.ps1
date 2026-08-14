@@ -48,6 +48,7 @@ $ORDER = @(
   "What the chamfer leaves",
   "What a chamfer remembers",
   "More than one chamfer in a job",
+  "Deleting a chamfer",
   "Bits come from your tool database",
   "Chamfers from older versions",
   "The strategy template",

@@ -331,6 +331,18 @@ toolpath tagged plain `[ChamferOffset]`) are *not* adopted. The gadget says once
 that it found one and then leaves it alone entirely — never listed, never replaced,
 never deleted. Remove it by hand if you don't want it.
 
+## Deleting a chamfer
+
+Delete a chamfer's toolpath in Aspire and its offset layers stay behind, locked,
+doing nothing.
+
+Next time you run EdgeBreaker it spots them and offers to clear them out — one
+button, however many layers there are. Say no and nothing happens; you'll be
+asked again next run. Your own vectors are never touched.
+
+Chamfers from ChamferOffset v1.4.x aren't included, for the same reason they're
+adopted rather than replaced. Remove those layers by hand.
+
 ## Bits come from your tool database
 
 There is nothing to add to this gadget. Any V-bit defined in your tool
@@ -415,6 +427,9 @@ inch or metric, the gadget converts.
 Your chamfer takes a bite out of both sides of every wall, so a thin stroke or
 a tight junction can get cut away completely. EdgeBreaker checks before it cuts
 and stops if that would happen — and tells you the biggest size that fits.
+
+That size is on a button. Press it and the setup dialog reopens at the smaller
+size with everything else as you left it, so you see the cut before you make it.
 
 Older versions cut it anyway and said nothing.
 

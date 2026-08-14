@@ -48,16 +48,20 @@ do
          "Lua declares BitBadgeName empty and leaves the wording to the page")
 end
 
--- 11 pre-flight messages stay native by design (nothing has started, and one
+-- 12 pre-flight messages stay native by design (nothing has started, and one
 -- of them reports that the HTML is missing), plus the one inside
 -- show_message's own fallback. Anything else calling DisplayMessageBox
 -- directly is a message that shipped unstyled -- which is invisible until
 -- someone triggers it in Aspire.
+--
+-- 11 -> 12 on 2026-08-13: the non-vector refusal ("if you selected text,
+-- convert it to curves"), which sits beside the open-vector one and fires
+-- before the dialog exists.
 do
    local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
    local src = f:read("*a"); f:close()
    local _, n = src:gsub("DisplayMessageBox%(", "")
-   CHECK(n == 12, "only the 11 pre-flight messages and show_message's fallback "
+   CHECK(n == 13, "only the 12 pre-flight messages and show_message's fallback "
                   .. "call DisplayMessageBox directly (found " .. n .. ")")
 end
 
@@ -432,7 +436,7 @@ CHECK(CO.patch_template_layer(tbytes, nil) == nil, "nil slot refused")
 -- spellings stay recognizable so existing chamfers can be ADOPTED rather than
 -- orphaned (spec 6). One parser serves both generations; the old_* entry
 -- points differ only in which prefix they are handed.
-CHECK(CO.VERSION == "1.15.0", "version gate: 1.15.0")
+CHECK(CO.VERSION == "1.16.0", "version gate: 1.16.0")
 -- The page prints the version in its own header and cannot read the Lua, so the
 -- two drift silently -- and the number on screen is what an operator quotes in
 -- a bug report.
@@ -693,7 +697,7 @@ do
    -- is "from the definition to end of file" -- a "\nend\n" match, like
    -- qbody/abody above, would stop at the first bare "end" line inside one of
    -- main()'s own if-blocks, long before the real one.
-   local mstart = lua:find("function main(script_path)", 1, true)
+   local mstart = lua:find("function main(script_path, forced_size)", 1, true)
    CHECK(mstart ~= nil, "found main()")
    local mbody = mstart ~= nil and lua:sub(mstart) or ""
 
@@ -833,7 +837,7 @@ do
    -- main() ever calls it. That is a pin that cannot fail, which is worse than
    -- no pin. main() runs from its definition to end of file (same extraction the
    -- absence pins below use).
-   local mstart = src:find("function main(script_path)", 1, true)
+   local mstart = src:find("function main(script_path, forced_size)", 1, true)
    CHECK(mstart ~= nil, "found main() for the sharp gate pins")
    local mbody = mstart ~= nil and src:sub(mstart) or ""
    CHECK(mbody:find("local sharp_ok = CO%.sharp_applies%(sharp, s%.d, r%.d_max%)") ~= nil,
@@ -895,7 +899,7 @@ do
    -- alongside them. main() runs from its definition to end of file (same
    -- extraction as the ask-Windows deletion pins earlier in this file).
    do
-      local mstart = src:find("function main(script_path)", 1, true)
+      local mstart = src:find("function main(script_path, forced_size)", 1, true)
       CHECK(mstart ~= nil, "found main() for the sharp-shift absence pin")
       local mbody = mstart ~= nil and src:sub(mstart) or ""
       CHECK(mbody:find("sharp_offset_shift", 1, true) == nil,
@@ -916,7 +920,7 @@ do
    -- The negative half. `sharp_run and side` is the old line, and it would pass
    -- every positive pin above if somebody put it back alongside them.
    do
-      local mstart = src:find("function main(script_path)", 1, true)
+      local mstart = src:find("function main(script_path, forced_size)", 1, true)
       CHECK(mstart ~= nil, "found main() for the sharp_side derivation pin")
       local mbody = mstart ~= nil and src:sub(mstart) or ""
       CHECK(mbody:find("sharp_run and side", 1, true) == nil,
@@ -1466,7 +1470,7 @@ end
 do
    local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
    local src = f:read("*a"); f:close()
-   local mstart = src:find("function main(script_path)", 1, true)
+   local mstart = src:find("function main(script_path, forced_size)", 1, true)
    CHECK(mstart ~= nil, "found main() for the strategy pins")
    local mbody = mstart ~= nil and src:sub(mstart) or ""
    CHECK(mbody:find("CO%.chamfer_strategy%(") ~= nil,
@@ -1774,7 +1778,10 @@ do
    -- message telling them to try a smaller size.
    local refusal = src:find("CO.show_message(gadget_dir, CO.narrow_refusal", 1, true)
    CHECK(refusal ~= nil, "the refusal goes through show_message like every other message")
-   CHECK(src:find("restore_selection_after_check%(%)%s*CO%.show_message%("
+   -- The assignment is the offer's return (2026-08-13). Still ADJACENT: the
+   -- restore has to be the statement immediately before the message, because a
+   -- re-run launched from that message reads the selection again.
+   CHECK(src:find("restore_selection_after_check%(%)%s*local chose = CO%.show_message%("
                   .. "gadget_dir, CO%.narrow_refusal") ~= nil,
          "the operator's selection is put back immediately before the refusal is shown")
 end
@@ -1818,6 +1825,40 @@ do
          "the flooring happens before the (gated) refusal message is built")
 end
 
+-- THE OFFER (2026-08-13, Tim's call): the refusal carries a "Use 0.15 in"
+-- button that reopens the setup dialog at that size. Three things about it can
+-- only be checked here, because they live in main() and never run offline.
+--
+-- The one that MATTERS is the bound. `forced_size` is both the seed and the
+-- flag: set, and this run is already a retry, so it must not offer another. The
+-- piece counts are NOT monotone in the setback (see the B in EDGEBREAKER,
+-- session 086), so a shape can refuse a size that a smaller bisect just passed
+-- -- and without the flag that is a loop the operator cannot leave except by
+-- cancelling. ANCHOR ON THE CALL SITE: `forced_size` also appears in main's own
+-- parameter list, so a pin on the bare name could never fail.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+
+   CHECK(src:find("offer = (suggest ~= nil and forced_size == nil),", 1, true) ~= nil,
+         "the offer is withheld on a run that is already a retry")
+   CHECK(src:find("if chose and suggest ~= nil then return main(script_path, suggest) end",
+                  1, true) ~= nil,
+         "taking the offer re-enters main() with the size that fits")
+
+   -- The seed override. Writing the size to the settings file instead would be
+   -- silently dead on a REBUILD, which seeds from the chamfer's own memory and
+   -- never reads that file -- and a rebuild is exactly when a too-big chamfer
+   -- is likely, because the size came from the last run rather than the operator.
+   local seeded = src:find(
+      "if type(forced_size) == \"number\" and forced_size > 0 then seed.size = forced_size end",
+      1, true)
+   CHECK(seeded ~= nil, "the retry's size overrides whatever would have seeded the dialog")
+   local mem_seed = src:find("seed = CO.apply_settings(target.memory, unit)", 1, true)
+   CHECK(mem_seed ~= nil and seeded ~= nil and seeded > mem_seed,
+         "the override is applied AFTER both seeding paths, so it wins over a chamfer's memory")
+end
+
 -- FINDING A (final review, 2026-08-04, Tim's call): the guard counts ONCE PER
 -- SHAPE, not once for the selection. One aggregate count can cancel - a thin
 -- bar eaten away is -1, a welded dumbbell pinching in two is +1, and together
@@ -1834,7 +1875,7 @@ do
    local src = f:read("*a"); f:close()
 
    -- Scope to main(), so a match anywhere else in the file cannot stand in.
-   local m0 = src:find("\nfunction main(script_path)", 1, true)
+   local m0 = src:find("\nfunction main(script_path, forced_size)", 1, true)
    local mbody = m0 ~= nil and src:sub(m0) or ""
    CHECK(mbody ~= "", "main() is findable, so the pins below mean something")
 
@@ -1913,7 +1954,7 @@ do
    -- Anchored on the CALL SITE. main()'s body only, and by exact text: the
    -- file defines all three of these names, so a bare-name search would match
    -- its own definitions and could never fail.
-   local mstart = src:find("function main(script_path)", 1, true)
+   local mstart = src:find("function main(script_path, forced_size)", 1, true)
    CHECK(mstart ~= nil, "found main() for the own-offsets pins")
    local mbody = mstart ~= nil and src:sub(mstart) or ""
 
@@ -2079,4 +2120,71 @@ do
          "lock_copies walks the layers prepare returned")
    CHECK(src:find("pcall(function() layer.Locked = true end)", 1, true) ~= nil,
          "and the write is pcall'd, so a failure to lock never fails a run")
+end
+
+-- The leftover sweep (2026-08-14) is SDK-touching and cannot run offline, so
+-- main()'s use of it is pinned by source. Scoped to main()'s BODY, because
+-- every name below is DEFINED earlier in the same file -- a whole-file search
+-- would match the definition and pass whether or not main() ever calls it.
+do
+   local f = assert(io.open("gadget/EdgeBreaker/EdgeBreaker.lua", "rb"))
+   local src = f:read("*a"); f:close()
+   local mstart = src:find("function main(script_path, forced_size)", 1, true)
+   CHECK(mstart ~= nil, "found main() for the leftover-sweep pins")
+   local mbody = mstart ~= nil and src:sub(mstart) or ""
+   CHECK(mbody:find("local leftovers = CO%.leftover_slots%(chamfers%)") ~= nil,
+         "main() asks which chamfers are leftovers")
+   -- Three things that can fail apart, so three pins: the retry guard (without
+   -- it a taken too-big offer asks the same question twice in one press), the
+   -- offer itself, and the sweep it gates. Deleting any one leaves the others
+   -- reading correctly.
+   CHECK(mbody:find("forced_size == nil and #leftovers > 0", 1, true) ~= nil,
+         "and withholds the offer on a run that is already a retry")
+   CHECK(mbody:find("CO%.show_message%(gadget_dir, CO%.leftover_message%(leftovers%)%)") ~= nil,
+         "the offer is the message's own OK button, not a second dialog")
+   CHECK(mbody:find("pcall%(CO%.sdk_remove_leftovers, job, leftovers%)") ~= nil,
+         "and a yes runs the sweep, pcall'd so it can never fail the run")
+   -- The dropdown must not keep listing a chamfer whose layers have just gone,
+   -- and must keep listing one whose layers would not go. Only a re-read knows
+   -- the difference.
+   CHECK(mbody:find("pcall%(CO%.sdk_scan_chamfers, job%)[^\n]*\n[^\n]*") ~= nil,
+         "main() re-reads the job after sweeping")
+   CHECK(mbody:find("if ok_rescan then", 1, true) ~= nil
+         and mbody:find("chamfers = rescanned", 1, true) ~= nil,
+         "and the chamfer list the dialog is built from takes the new reading")
+   CHECK(mbody:find("CO%.leftover_report%(removed, stuck%)") ~= nil,
+         "trouble during the sweep is reported, not swallowed")
+   -- The re-read is worth nothing unless the bookkeeping built from the FIRST
+   -- reading is rebuilt with it: by_slot seeds the dialog and next_slot is the
+   -- number a new chamfer gets. Anchored INSIDE the rescan block, because
+   -- "next_slot = CO.next_free_slot(used)" also appears earlier in main() and a
+   -- bare search for it matches that one and passes either way.
+   local at = mbody:find("chamfers = rescanned", 1, true)
+   CHECK(at ~= nil, "found the re-read for the bookkeeping pin")
+   local after = at ~= nil and mbody:sub(at, at + 300) or ""
+   CHECK(after:find("by_slot%[c%.slot%] = c") ~= nil
+         and after:find("next_slot = CO%.next_free_slot%(used%)") ~= nil,
+         "the re-read rebuilds by_slot and next_slot from the new reading")
+end
+
+-- The layout gate seeds MessageDialog.htm from hand-typed strings, so its
+-- leftover case and CO.leftover_message are two copies of one message -- and a
+-- reworded message would leave the gate measuring a layout the product can no
+-- longer produce, still green. Pinned on the pieces that survive the gate file's
+-- line wrapping: the headline, the button, and the closing paragraph.
+do
+   local f = assert(io.open("tests/check-dialog-layout.js", "rb"))
+   local gate = f:read("*a"); f:close()
+   local m = CO.leftover_message({ 12, 34, 56, 78 })
+   CHECK(gate:find(m.headline, 1, true) ~= nil,
+         "the layout gate seeds the leftover offer's real headline")
+   CHECK(gate:find(m.choice, 1, true) ~= nil,
+         "and its real button label")
+   local tail = m.body:match("[^\n]+$")
+   CHECK(tail ~= nil and gate:find(tail, 1, true) ~= nil,
+         "and its real closing line (got: " .. tostring(tail) .. ")")
+   -- The named list is at its widest here, which is what the case exists to
+   -- measure. A raised cap silently makes it a typical case instead.
+   CHECK(gate:find("CO.LEFTOVER_NAMED_MAX", 1, true) ~= nil,
+         "and the case says which constant decides how wide that list can get")
 end

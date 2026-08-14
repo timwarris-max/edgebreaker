@@ -71,7 +71,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </head>
 <body>
 <header>
-  <div class="name">EdgeBreaker<span class="ver">v1.15.0</span></div>
+  <div class="name">EdgeBreaker<span class="ver">v1.16.0</span></div>
   <div class="sub">Help &mdash; works offline</div>
 </header>
 <main>
@@ -92,6 +92,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <li><a href="#what-the-chamfer-leaves">What the chamfer leaves</a></li>
 <li><a href="#what-a-chamfer-remembers">What a chamfer remembers</a></li>
 <li><a href="#more-than-one-chamfer-in-a-job">More than one chamfer in a job</a></li>
+<li><a href="#deleting-a-chamfer">Deleting a chamfer</a></li>
 <li><a href="#bits-come-from-your-tool-database">Bits come from your tool database</a></li>
 <li><a href="#chamfers-from-older-versions">Chamfers from older versions</a></li>
 <li><a href="#the-strategy-template">The strategy template</a></li>
@@ -147,6 +148,7 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 </ul>
 <p><strong>"Chamfer's too big for this artwork"</strong></p>
 <p>Your chamfer takes a bite out of both sides of every wall, so a thin stroke or a tight junction can get cut away completely. EdgeBreaker checks before it cuts and stops if that would happen — and tells you the biggest size that fits.</p>
+<p>That size is on a button. Press it and the setup dialog reopens at the smaller size with everything else as you left it, so you see the cut before you make it.</p>
 <p>Older versions cut it anyway and said nothing.</p>
 <p>One thing it can't see: a thin arm that stays attached. That comes out as a sharp ridge rather than a flat, and the check won't catch it.</p>
 </section>
@@ -221,6 +223,12 @@ tbody tr:nth-child(even) { background: #fafcfd; }
 <h2 id="more-than-one-chamfer-in-a-job">More than one chamfer in a job</h2>
 <p>A job can hold up to 99 chamfers, each with its own bit, size and cut position — a fine chamfer on the lettering and a heavier one on the outline, say.</p>
 <p>Each chamfer keeps its own offset layers (<code>EdgeBreaker Offset 01-1</code>, <code>02-1</code>, …) and its own toolpath marker (<code>[EdgeBreaker 01]</code>). A run clears and rebuilds <strong>only its own number</strong>; every other chamfer is left exactly as it was, and the banner says which ones those are before you press OK.</p>
+</section>
+<section>
+<h2 id="deleting-a-chamfer">Deleting a chamfer</h2>
+<p>Delete a chamfer's toolpath in Aspire and its offset layers stay behind, locked, doing nothing.</p>
+<p>Next time you run EdgeBreaker it spots them and offers to clear them out — one button, however many layers there are. Say no and nothing happens; you'll be asked again next run. Your own vectors are never touched.</p>
+<p>Chamfers from ChamferOffset v1.4.x aren't included, for the same reason they're adopted rather than replaced. Remove those layers by hand.</p>
 </section>
 <section>
 <h2 id="bits-come-from-your-tool-database">Bits come from your tool database</h2>

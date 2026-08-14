@@ -267,3 +267,49 @@ NEAR(CO.band_offset_distance("outward", 0.02), 0.02, 1e-12, "outward final pass"
 NEAR(CO.band_offset_distance("inward", 0.02), -0.02, 1e-12, "inward final pass")
 NEAR(CO.band_offset_distance("outward", -0.08), -0.08, 1e-12, "outward upper pass")
 NEAR(CO.band_offset_distance("inward", -0.08), 0.08, 1e-12, "inward upper pass")
+
+-- ==================== Leftover chamfers (2026-08-14) ====================
+-- A chamfer whose toolpath the operator deleted by hand leaves its offset
+-- layers on the canvas. sdk_scan_chamfers already lists it (that is what makes
+-- it selectable); these two say which ones they are and which layers belong to
+-- them, so the sweep can be tested without a job.
+do
+   local function scanned(t) return t end
+   -- tp is the toolpath object the scan kept. Absent = the toolpath is gone.
+   local list = scanned({
+      { slot = 1, origin = "new", tp = {} },
+      { slot = 3, origin = "new" },
+      { slot = 5, origin = "new", tp = {} },
+      { slot = 7, origin = "new" },
+   })
+   local got = CO.leftover_slots(list)
+   CHECK(#got == 2 and got[1] == 3 and got[2] == 7,
+         "leftover_slots: only the chamfers with no toolpath, in order")
+
+   -- A v1.4.x chamfer is deliberately OUT of the sweep. The scan never records
+   -- a toolpath for one, so every adopted chamfer would look like a leftover
+   -- and be swept away with its toolpath still cutting.
+   local old_only = CO.leftover_slots({ { slot = 2, origin = "old" } })
+   CHECK(#old_only == 0, "leftover_slots: a v1.4.x chamfer is never swept")
+
+   CHECK(#CO.leftover_slots({}) == 0, "leftover_slots: a job with no chamfers sweeps nothing")
+
+   -- Which layers go. Both live generations of the name, because a job made in
+   -- v1.5.0-1.12.0 has unbanded layers and is exactly the job old enough to
+   -- have accumulated leftovers.
+   local set = { [3] = true, [7] = true }
+   CHECK(CO.leftover_layer(CO.offset_layer_name(3, 1), set) == true,
+         "leftover_layer: a banded layer of a doomed slot goes")
+   CHECK(CO.leftover_layer(CO.offset_layer_name(3, 4), set) == true,
+         "leftover_layer: every band of it goes, not just the first")
+   CHECK(CO.leftover_layer(CO.V112_LAYER_PREFIX .. "07", set) == true,
+         "leftover_layer: a v1.12.0 unbanded layer goes too")
+   CHECK(CO.leftover_layer(CO.offset_layer_name(5, 1), set) == false,
+         "leftover_layer: a chamfer that still has its toolpath is left alone")
+   CHECK(CO.leftover_layer("Layer 1", set) == false,
+         "leftover_layer: the operator's own layer is never ours to remove")
+   CHECK(CO.leftover_layer(CO.OLD_LAYER_PREFIX .. "03", set) == false,
+         "leftover_layer: a v1.4.x layer is out, matching leftover_slots")
+   CHECK(CO.leftover_layer(nil, set) == false,
+         "leftover_layer: an unreadable name is not a match")
+end

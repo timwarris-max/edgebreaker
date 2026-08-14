@@ -1304,6 +1304,43 @@ do
       job_of({ group_obj(THIRD, { contour_obj(USER) }) }), {})
    CHECK(#plain_group == 1 and plain_group[1].layer_id == USER,
          "selection spans: a child of an ordinary group keeps its own id")
+
+   -- Anything that is not a contour, a polyline or a group is COUNTED on its
+   -- way out, so main() can tell "you selected text" apart from "you selected
+   -- nothing" -- the two produced the same unhelpful refusal until 2026-08-13.
+   -- No GetContour at all, because a live text object has none: the class check
+   -- has to return before anything asks it for geometry.
+   local function alien_obj(cls)
+      return { ClassName = cls, LayerId = USER,
+               GetBoundingBox = function()
+                  return { IsInvalid = false, Centre = { x = 0.5, y = 0.5 },
+                           XLength = 1, YLength = 1 }
+               end }
+   end
+
+   local t_loops, t_open, t_other =
+      CO.sdk_selection_spans(job_of({ alien_obj("vcCadText") }), {})
+   CHECK(#t_loops == 0 and t_open == 0 and t_other == 1,
+         "selection spans: a non-vector object is counted, not silently dropped")
+
+   -- Inside a group as well -- text is commonly grouped with its own shapes.
+   local gt_loops, _, gt_other = CO.sdk_selection_spans(
+      job_of({ group_obj(THIRD, { alien_obj("vcCadText") }) }), {})
+   CHECK(#gt_loops == 0 and gt_other == 1,
+         "selection spans: a non-vector inside a group is counted too")
+
+   -- A mixed selection still runs. The count is for the message, never a veto:
+   -- one stray text object must not refuse a chamfer on real shapes.
+   local mx_loops, _, mx_other = CO.sdk_selection_spans(
+      job_of({ contour_obj(USER), alien_obj("vcCadBitmap") }), {})
+   CHECK(#mx_loops == 1 and mx_other == 1,
+         "selection spans: a non-vector alongside real shapes is counted but not fatal")
+
+   -- The control. Without this the counter could be a constant 1 and every
+   -- check above would still pass.
+   local _, _, clean_other = CO.sdk_selection_spans(job_of({ contour_obj(USER) }), {})
+   CHECK(clean_other == 0,
+         "selection spans: an all-vector selection counts no aliens")
 end
 
 -- ============================================================
@@ -1602,4 +1639,86 @@ do
    CHECK(src:find("pcall(CO.sdk_prepare_layers, job, slot, n_passes, migrating, strategy)",
                   1, true) ~= nil,
          "main() passes the strategy through to prepare_layers")
+end
+
+-- ==================== Sweeping leftover offsets (2026-08-14) ====================
+-- The sweep is destructive and aimed by slot, so the assertion that matters is
+-- the negative one: a chamfer that still has its toolpath must come through
+-- completely untouched, and so must the operator's own layers.
+do
+   -- Records the lock state at the moment each object is removed, which is the
+   -- only way to catch an unlock that happens too late -- the same trap
+   -- sdk_prepare_layers documents at length.
+   local function spy_layer(name, objs)
+      return {
+         Name = name, objs = objs, Locked = true, wiped = 0,
+         GetHeadPosition = function(self) return #self.objs > 0 and 1 or nil end,
+         GetNext = function(self, pos)
+            local nxt = pos + 1
+            return self.objs[pos], (nxt <= #self.objs) and nxt or nil
+         end,
+         RemoveObject = function(self)
+            self.wiped = self.wiped + 1
+            self.locked_when_wiped = self.Locked
+         end,
+      }
+   end
+   local function job_of(layers, removable)
+      return { LayerManager = {
+         GetHeadPosition = function() return #layers > 0 and 1 or nil end,
+         GetNext = function(_, pos)
+            local nxt = pos + 1
+            return layers[pos], (nxt <= #layers) and nxt or nil
+         end,
+         RemoveLayer = function(_, layer)
+            if not removable then error("this build has no RemoveLayer") end
+            layer.removed = true
+         end,
+      } }
+   end
+
+   local dead1 = spy_layer(CO.offset_layer_name(3, 1), { "a", "b" })
+   local dead2 = spy_layer(CO.offset_layer_name(3, 2), { "c" })
+   local dead3 = spy_layer(CO.V112_LAYER_PREFIX .. "07", { "d" })
+   local live  = spy_layer(CO.offset_layer_name(5, 1), { "e" })
+   local mine  = spy_layer("Layer 1", { "f" })
+   local job = job_of({ dead1, live, dead2, mine, dead3 }, true)
+
+   local removed, stuck = CO.sdk_remove_leftovers(job, { 3, 7 })
+   CHECK(removed == 3 and stuck == 0, "sweep: three layers removed, none stuck")
+   CHECK(dead1.removed and dead2.removed and dead3.removed,
+         "sweep: every band of a doomed chamfer goes, both name generations")
+   CHECK(dead1.wiped == 2 and dead2.wiped == 1,
+         "sweep: their vectors are removed first")
+   CHECK(dead1.locked_when_wiped == false,
+         "sweep: the lock comes OFF before the wipe, never after")
+   CHECK(live.wiped == 0 and live.removed == nil and live.Locked == true,
+         "sweep: a chamfer that still has its toolpath is not touched at all")
+   CHECK(mine.wiped == 0 and mine.removed == nil and mine.Locked == true,
+         "sweep: the operator's own layer is not touched at all")
+
+   -- RemoveLayer is the one call here nobody has run in Aspire. If it refuses,
+   -- the vectors are still gone and the run carries on -- and the count comes
+   -- back so the operator can be told the truth rather than nothing.
+   local s1 = spy_layer(CO.offset_layer_name(2, 1), { "a" })
+   local rem2, stuck2 = CO.sdk_remove_leftovers(job_of({ s1 }, false), { 2 })
+   CHECK(rem2 == 0 and stuck2 == 1, "sweep: a refused RemoveLayer is reported, not swallowed")
+   CHECK(s1.wiped == 1, "sweep: and the wipe still stands")
+
+   -- Nothing to do: no enumeration result may reach a doomed list, so no layer
+   -- can be touched by an empty sweep.
+   local s2 = spy_layer(CO.offset_layer_name(2, 1), { "a" })
+   local rem3, stuck3 = CO.sdk_remove_leftovers(job_of({ s2 }, true), {})
+   CHECK(rem3 == 0 and stuck3 == 0 and s2.wiped == 0,
+         "sweep: an empty slot list touches nothing")
+
+   -- A layer whose name cannot be read is skipped, not fatal: the sweep runs
+   -- before the dialog and must never be the thing that stops a run.
+   local bad = setmetatable({}, { __index = function(_, k)
+      if k == "Name" then error("no such member") end
+   end })
+   local s3 = spy_layer(CO.offset_layer_name(2, 1), { "a" })
+   local rem4 = CO.sdk_remove_leftovers(job_of({ bad, s3 }, true), { 2 })
+   CHECK(rem4 == 1 and s3.removed == true,
+         "sweep: an unreadable layer name is skipped and the rest still go")
 end

@@ -364,7 +364,7 @@ input[type=text] { height: 44px; width: 160px; border: 1px solid #9b968e; border
      <span class="kick">TIM'S</span><br>
      <span class="word w1">EDGE</span><span class="word w2">BREAKER</span>
    </span>
-   <span class="ver">v1.15.0</span>
+   <span class="ver">v1.16.0</span>
    <span id="Tag">Predictable chamfers, every time</span>
    <input type="button" name="ToolChooseButton" id="ToolChooseButton"
           value="SELECT..." class="ToolPicker">
@@ -1296,11 +1296,24 @@ function applySharpState() {
 // it (CO.effective_side) and the row says so instead of offering a control that
 // can only make the cut worse.
 //
-// The greyed radios show AUTO, not the operator's stored pick: a greyed "Inside"
-// beside a caption saying the run cuts on the material contradicts itself on the
-// face of the dialog. Their real choice is never touched -- it lives in the
-// hidden #Side field the whole time, which is what hands it back when the box is
-// unticked, so there is deliberately no second copy of it to drift.
+// The greyed radios show the operator's OWN stored pick, greyed (2026-08-13,
+// Tim's call). They used to show AUTO -- what the run would really do -- on the
+// argument that a greyed "Inside" beside a caption saying Aspire picks the side
+// contradicts itself on the face of the dialog.
+//
+// What that cost, found live: the stored pick becomes INVISIBLE. Set Inside,
+// open at a size past the ceiling, and the row greys and reads Auto; drop under
+// the ceiling and Inside reappears with nobody having touched it, which reads as
+// the gadget changing the setting by itself. Tim hit exactly that through the
+// too-big refusal's re-run, and called it a way to make a mess.
+//
+// So the row now never claims a pick that is not the stored one, and the caption
+// beside it -- always visible while greyed -- is what says the pick does not
+// apply here. A caption in words beats a highlight that quietly lies.
+//
+// Their real choice is still never touched: it lives in the hidden #Side field
+// the whole time, which is what hands it back when the box is unticked, so there
+// is deliberately no second copy of it to drift.
 function applyAspireState() {
   var on = aspireMode();
   el("Presets").className = on ? "row off" : "row";
@@ -1346,8 +1359,10 @@ function applyAspireState() {
       ? "one shape inside another &#8212; Aspire picks the side itself"
       : "nothing to work from &#8212; Aspire picks the side itself";
   // Disabled as well as greyed: a click that still landed would write #Side and
-  // silently change what an un-tick hands back.
-  var shown = sideOff ? "auto" : (el("Side").value || "auto");
+  // silently change what an un-tick hands back. That is also why the operator
+  // cannot simply "pick Auto" out of this state -- the buttons are off, so a
+  // highlight on Auto here was never something they chose.
+  var shown = el("Side").value || "auto";
   var radios = document.getElementsByName("SideRadio");
   for (var i = 0; i < radios.length; i++) {
     radios[i].checked  = (radios[i].value === shown);

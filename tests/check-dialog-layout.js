@@ -387,19 +387,30 @@ var CASES = [
   // size, all three sides, same aspire state. They replace the two refusal
   // cases that used to make the same point about greying the box.
   //
-  // 2026-08-06: these two are now also what says the SIDE row greys and reads
-  // Auto up here. The side they were given is the one Lua drops (CO.effective_side),
-  // so a page still showing it would be promising a cut the run will not make.
+  // 2026-08-06: these two are also what says the SIDE row greys up here.
+  //
+  // 2026-08-13, Tim's call, REVERSING what they used to assert: they pinned
+  // sideShown "auto" -- what the run really does, since Lua drops the forced side
+  // (CO.effective_side) -- and the cost of that was found live. A stored Inside
+  // is INVISIBLE while the row is greyed, so it reappears the moment the chamfer
+  // drops under the ceiling and reads as the gadget changing the setting by
+  // itself. The row must never highlight a pick that is not the stored one; the
+  // caption, pinned below and always up while greyed, is what says it does not
+  // apply here.
+  //
+  // Both sides, because "auto" and "the stored pick" agree whenever the stored
+  // pick IS auto -- a case seeded with auto could never have told the two rules
+  // apart, and neither of these can pass by accident.
   { name: "aspire: inside is the same aspire run", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", small: true,
     expectSharp: { dis: 0, chk: 1, cap: 0 },
     expectPresetsOff: 1, expectPresetCap: "big sharp chamfers cut from the tip",
-    expectSideShown: "auto" },
+    expectSideShown: "inside" },
   { name: "aspire: outside is the same aspire run", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.13", side: "outside", sharp: "1", small: true,
     expectSharp: { dis: 0, chk: 1, cap: 0 },
     expectPresetsOff: 1, expectPresetCap: "big sharp chamfers cut from the tip",
-    expectSideShown: "auto" },
+    expectSideShown: "outside" },
   // THE POCKET (2026-08-07, side-on-flat-selections spec 5b). Identical to the
   // two cases above in every respect but one: the selection is FLAT, so there is
   // no nesting for Aspire to read each loop's side from, and Inside is the
@@ -426,13 +437,18 @@ var CASES = [
   // reasons and only the caption distinguishes them, so both are pinned by a
   // case that names the wording outright rather than leaning on the default.
   //
+  // Every greyed case below is seeded side "inside" and now expects to SEE
+  // inside (2026-08-13) -- see the reversal note above the two aspire cases. The
+  // caption is what carries "this does not apply here"; the highlight carries
+  // only what is stored.
+  //
   // Nested: shapes were selected, and they sit inside one another. This is
   // S5's ring, and the sentence that has always been there.
   { name: "aspire + nested: the caption says shapes nest", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", small: true,
     slot: "1", kind: "rebuild", facts: "sel=2;excluded=;mem=2",
     expectSharp: { dis: 0, chk: 1, cap: 0 },
-    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto",
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "inside",
     expectSideCap: SIDECAP_NESTED },
   // Nothing to measure at all: no selection AND no usable memory, so flatness
   // has no shapes to look at. The row greys for a reason that has nothing to do
@@ -448,7 +464,7 @@ var CASES = [
     angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "", small: true,
     slot: "1", kind: "recall", facts: "sel=0;excluded=;mem=4",
     expectSharp: { dis: 0, chk: 1, cap: 0 },
-    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto",
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "inside",
     expectSideCap: SIDECAP_NOTHING },
   // A recall run whose remembered shapes NEST: still greyed, and now for the
   // real reason. Nothing is selected, so the pre-10c gate would have called this
@@ -457,7 +473,7 @@ var CASES = [
     angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "0", small: true,
     slot: "1", kind: "recall", facts: "sel=0;excluded=;mem=2",
     expectSharp: { dis: 0, chk: 1, cap: 0 },
-    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto",
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "inside",
     expectSideCap: SIDECAP_NESTED },
   // THE ONE THIS AMENDMENT EXISTS FOR (spec 10i, check F6). A recall run whose
   // remembered shapes are flat: the Side row is LIVE with nothing selected, and
@@ -471,7 +487,7 @@ var CASES = [
   { name: "aspire + junk Flat field: greys, the safe way", bit: "1/4in 90deg V-bit",
     angle: "90", dia: "0.25", size: "0.13", side: "inside", sharp: "1", flat: "yes", small: true,
     expectSharp: { dis: 0, chk: 1, cap: 0 },
-    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "auto" },
+    expectPresetsOff: 1, expectSideOff: 1, expectSideShown: "inside" },
   // Flat changes NOTHING below the ceiling: an ordinary bands run honours the
   // side whatever the selection looks like, which is what keeps that path
   // byte-identical. Without this, a page that keyed the side row off `flat`
@@ -1569,20 +1585,53 @@ var MSG_CASES = [
           "Layers=EdgeBreaker - Offset 02-1 to 02-3",
     note: "Note: ignored 1 selected vector that EdgeBreaker drew itself.\n\n" +
           "Toolpath 'Chamfer 2 - 0.13 in [EdgeBreaker 02]' created and calculated " +
-          "(Chamfer, depth 0.1300 in)\nusing V-Bit 90.0&deg; - 1/4&quot;." }
+          "(Chamfer, depth 0.1300 in)\nusing V-Bit 90.0&deg; - 1/4&quot;." },
+
+  // 2026-08-13: the ONLY case that opens the bar's second button. The too-big
+  // refusal offers to re-run at the size that fits, and the offer rides on the
+  // OK button with a CANCEL beside it -- a two-button bar this page had never
+  // drawn, at any size, until this case existed.
+  //
+  // mm at four decimals is the widest label the product can build: the string is
+  // "Use " + CO.fmt_len(suggest) + " " + unit, and fmt_len strips trailing zeros,
+  // so 12.7003 mm is a real worst case rather than a padded one. The bar is the
+  // whole point of the case, so seed the LONGEST label, not a typical one.
+  { name: "msg: too big, offering the size that fits (two-button bar)",
+    kind: "m-error", tall: true,
+    head: "Chamfer's too big for this artwork",
+    body: "At 25.4 mm this chamfer cuts right through the thin parts of these " +
+          "shapes - some of the detail would come away.\n\n" +
+          "The biggest that works here is 12.7003 mm.",
+    rows: "Selected=17 vector(s);Biggest that fits=12.7003 mm",
+    choice: "Use 12.7003 mm" },
+
+  // 2026-08-14: the leftover-offsets offer. The SECOND two-button case, and the
+  // first with no rows -- it opens in the SHORT window, where the bar sits much
+  // closer to the text, so the case above cannot stand in for it.
+  //
+  // Seeded at its longest: CO.LEFTOVER_NAMED_MAX slots, all two digits, which is
+  // the widest the naming can get before CO.leftover_message stops naming them
+  // and counts them instead. Change that constant and this case has to change
+  // with it.
+  { name: "msg: leftover offsets, offering to remove them (short window, two buttons)",
+    kind: "m-warn", tall: false,
+    head: "Old offsets left behind",
+    body: "Chamfers 12, 34, 56 and 78 still have offsets on the canvas, but their " +
+          "toolpaths are gone.\n\nRemove those layers? Your own vectors aren't touched.",
+    choice: "Remove them" }
 ];
 
 function msgSeed(c, viewH) {
   var s = msgHtml;
   function put(id, v) {
     var before = s;
-    s = s.replace('id="' + id + '"    name="' + id + '"    value=""',
-                  'id="' + id + '"    name="' + id + '"    value="' + v + '"');
-    if (s === before) {
-      // A seed that matches nothing renders, passes, and proves nothing.
-      s = s.replace('id="' + id + '" name="' + id + '" value=""',
-                    'id="' + id + '" name="' + id + '" value="' + v + '"');
-    }
+    // The hidden fields are space-aligned into a column, so how many spaces sit
+    // between the attributes depends on the length of the field's NAME. Two
+    // fixed-width literals were enough until MChoice arrived at a width neither
+    // matched -- and a seed that matches nothing renders, passes, and proves
+    // nothing, which is why the throw below has always been here.
+    var re = new RegExp('id="' + id + '"(\\s+)name="' + id + '"(\\s+)value=""');
+    s = s.replace(re, 'id="' + id + '"$1name="' + id + '"$2value="' + v + '"');
     if (s === before) throw new Error(id + " seed matched nothing - hidden field markup changed");
   }
   put("MKind", c.kind);
@@ -1594,6 +1643,10 @@ function msgSeed(c, viewH) {
   // an unencoded newline inside an attribute is not worth relying on.
   if (c.note) put("MNote", c.note.replace(/\n/g, "&#10;"));
   put("MVersion", "v1.8.0");
+  // The offer. Empty on every other case, which is the control: those cases
+  // assert CANCEL stays HIDDEN, so a stylesheet change that leaked it into every
+  // message fails here instead of shipping.
+  if (c.choice) put("MChoice", c.choice);
   s = s.replace("</head>", "<style>html,body{height:" + viewH + "px !important;" +
     "width:" + MSG_VW + "px !important;} body{position:relative !important;}</style></head>");
   s = s.replace("</body>", "<script>setTimeout(function(){" +
@@ -1604,8 +1657,11 @@ function msgSeed(c, viewH) {
     "var real=Math.round(low-top)+20;" +
     "var over=real-sc.clientHeight;" +
     "var r=ok.getBoundingClientRect();" +
+    "var cb=document.getElementById('ButtonCancel'), cr=cb.getBoundingClientRect();" +
+    "var cShown=(cr.width>0&&cr.height>0)?1:0;" +
     "document.title='MSG over='+over+' content='+real+' avail='+sc.clientHeight+" +
-    "' okBottom='+Math.round(r.bottom)+' viewH=" + viewH + "';" +
+    "' okBottom='+Math.round(r.bottom)+' cShown='+cShown+" +
+    "' cLeft='+Math.round(cShown?cr.left:r.left)+' viewH=" + viewH + "';" +
     "},1200);</script></body>");
   return s;
 }
@@ -1621,10 +1677,11 @@ MSG_CASES.forEach(function (c) {
     "--dump-dom", "file:///" + f.replace(/\\/g, "/")
   ], { encoding: "utf8", maxBuffer: 40 * 1024 * 1024 });
 
-  var m = /MSG over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) viewH=(\d+)/.exec(out);
+  var m = /MSG over=(-?\d+) content=(\d+) avail=(\d+) okBottom=(\d+) cShown=(\d+) cLeft=(-?\d+) viewH=(\d+)/.exec(out);
   if (!m) { console.log("FAIL  " + c.name + "  (no measurement - page error?)"); failed++; return; }
 
-  var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4], viewH2 = +m[5];
+  var over = +m[1], content = +m[2], avail = +m[3], okBottom = +m[4];
+  var cShown = +m[5], cLeft = +m[6], viewH2 = +m[7];
   var bad = [];
   var scrolls = false;
   if (over > 0) {
@@ -1645,6 +1702,22 @@ MSG_CASES.forEach(function (c) {
   // an acceptable answer, so if OK ever leaves the window the argument above
   // collapses and this is a real failure at any size.
   if (okBottom > viewH2) bad.push("OK button below the fold");
+
+  // The offer's second button. Two failures, opposite directions, and the page
+  // has to get both right on the SAME stylesheet: a message carrying a choice
+  // must show CANCEL and fit both buttons in the bar, and every other message
+  // must not show it at all. Without the second half a rule that leaked CANCEL
+  // into all twelve cases would pass every one of them.
+  if (c.choice) {
+    if (!cShown) bad.push("the offer's CANCEL button never appeared");
+    // Left edge of the leftmost button. Negative means the pair is wider than
+    // the bar and the first one has been pushed off the window -- the smallest
+    // screen is where that bites, and nothing else here would see it.
+    else if (cLeft < 0) bad.push("both buttons do not fit the bar (leftmost starts at " + cLeft + "px)");
+  } else if (cShown) {
+    bad.push("CANCEL is showing on a message that offered no choice");
+  }
+
   if (over <= 0 && !MSG_CLAMPED && (avail - content) < MIN_SLACK)
     bad.push("only " + (avail - content) + "px slack, want >= " + MIN_SLACK);
 

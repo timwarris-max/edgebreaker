@@ -120,7 +120,7 @@ do
          "narrow_refusal: headline (got " .. tostring(m.headline) .. ")")
    CHECK(m.body:find("0.2 in", 1, true) ~= nil,
          "narrow_refusal: body names the size that was asked for")
-   CHECK(m.body:find("Try 0.15 in or less", 1, true) ~= nil,
+   CHECK(m.body:find("The biggest that works here is 0.15 in", 1, true) ~= nil,
          "narrow_refusal: body names the size that fits")
    CHECK(#m.rows == 2, "narrow_refusal: two rows when a size is known")
    CHECK(m.rows[1][1] == "Selected" and m.rows[1][2] == "17 vector(s)",
@@ -144,4 +144,107 @@ do
    -- product is, so two messages about the same size read identically.
    local z = CO.narrow_refusal({ asked = 0.2000, suggest = 0.1500, n_sel = 1, unit = "in" })
    CHECK(z.body:find("0.2000", 1, true) == nil, "narrow_refusal: no trailing zeros")
+
+   -- The OFFER (2026-08-13, Tim's call): the refusal can carry a second button
+   -- that re-runs at the size that fits. `offer` is the caller's permission, not
+   -- the message's own decision -- main() withholds it on a run that is ALREADY
+   -- a retry, which is the only thing bounding the loop.
+   local o = CO.narrow_refusal({ asked = 0.2, suggest = 0.15, n_sel = 2,
+                                 unit = "in", offer = true })
+   CHECK(o.choice == "Use 0.15 in",
+         "narrow_refusal: the offer button names the size (got " .. tostring(o.choice) .. ")")
+   CHECK(m.choice == nil,
+         "narrow_refusal: no offer button unless the caller asks for one")
+
+   -- Nothing to offer. A button reading "Use " with no number is worse than no
+   -- button, and pressing it would re-run at exactly the size that just failed.
+   local no_size = CO.narrow_refusal({ asked = 0.2, suggest = nil, n_sel = 2,
+                                       unit = "in", offer = true })
+   CHECK(no_size.choice == nil,
+         "narrow_refusal: no offer button when there is no size to offer")
+end
+
+-- The choice travels to the page in its own field. An empty one is what every
+-- display-only message sends, and the page reads that as "one button, OK".
+do
+   local f = CO.message_fields({ kind = "error", headline = "x", choice = "Use 0.15 in" })
+   CHECK(f.MChoice == "Use 0.15 in", "message_fields: the choice label reaches the page")
+   local plain = CO.message_fields({ kind = "error", headline = "x" })
+   CHECK(plain.MChoice == "", "message_fields: no choice sends an empty field, never nil")
+   local named = false
+   for _, k in ipairs(CO.MESSAGE_FIELD_NAMES) do if k == "MChoice" then named = true end end
+   CHECK(named, "message_fields: MChoice is in the list show_message actually sends")
+end
+
+-- ==================== The leftover-offsets offer (2026-08-14) ====================
+-- A chamfer whose toolpath was deleted by hand leaves its offsets behind, and
+-- removing them by hand is several clicks per layer (they are locked, too).
+-- The offer rides on the OK button, exactly like the too-big refusal's, so the
+-- answer is Aspire's own true/false and nothing is read back out of the page.
+do
+   local one = CO.leftover_message({ 3 })
+   CHECK(one.choice == "Remove them",
+         "leftover_message: the offer is on the button (got " .. tostring(one.choice) .. ")")
+   CHECK(one.body:find("Chamfer 3", 1, true) ~= nil,
+         "leftover_message: one leftover is named")
+   CHECK(one.body:find("Chamfers", 1, true) == nil,
+         "leftover_message: and not pluralised")
+   CHECK(one.body:find("its toolpath", 1, true) ~= nil,
+         "leftover_message: singular all the way through the sentence")
+
+   local two = CO.leftover_message({ 2, 5 })
+   CHECK(two.body:find("Chamfers 2 and 5", 1, true) ~= nil,
+         "leftover_message: two are joined with 'and', no comma")
+   CHECK(two.body:find("their toolpaths", 1, true) ~= nil,
+         "leftover_message: and the sentence agrees with them")
+
+   local three = CO.leftover_message({ 2, 3, 5 })
+   CHECK(three.body:find("Chamfers 2, 3 and 5", 1, true) ~= nil,
+         "leftover_message: three are a list ending in 'and'")
+
+   -- The fallback box has ONE button, so there is nothing to press: it must not
+   -- describe a choice it cannot offer, and must say what to do instead.
+   CHECK(one.plain:find("Remove them", 1, true) == nil,
+         "leftover_message: the plain fallback promises no button")
+   CHECK(one.plain:find("Layers panel", 1, true) ~= nil,
+         "leftover_message: the plain fallback names the manual fix")
+   CHECK(CO.MESSAGE_KINDS[one.kind] ~= nil,
+         "leftover_message: the kind is one the page knows")
+end
+
+-- What the operator is told when the layers would not go. Aspire's RemoveLayer
+-- has never been proven here, so "the offsets are gone but the layers are not"
+-- is a real outcome and gets its own honest sentence rather than silence.
+do
+   CHECK(CO.leftover_report(4, 0) == nil,
+         "leftover_report: a clean sweep says nothing at all")
+   CHECK(CO.leftover_report(0, 0) == nil,
+         "leftover_report: and so does a sweep with nothing to do")
+   local stuck = CO.leftover_report(2, 3)
+   CHECK(stuck ~= nil and stuck.choice == nil,
+         "leftover_report: the trouble report is display-only, not another offer")
+   CHECK(stuck.body:find("3 ", 1, true) ~= nil,
+         "leftover_report: it counts what is still there")
+   CHECK(stuck.body:find("Layers panel", 1, true) ~= nil,
+         "leftover_report: and names where to finish the job by hand")
+   local one_stuck = CO.leftover_report(0, 1)
+   CHECK(one_stuck.body:find("1 layer ", 1, true) ~= nil
+         and one_stuck.body:find("1 layers", 1, true) == nil,
+         "leftover_report: one is not '1 layers'")
+end
+
+-- A job holds up to 99 chamfers, so the naming needs an end -- a message box
+-- listing forty numbers is a wall, not information, and it would overflow a
+-- window nothing else here can resize.
+do
+   local four = CO.leftover_message({ 1, 2, 3, 4 })
+   CHECK(four.body:find("Chamfers 1, 2, 3 and 4", 1, true) ~= nil,
+         "leftover_message: four are still named")
+   local five = CO.leftover_message({ 1, 2, 3, 4, 5 })
+   CHECK(five.body:find("5 chamfers still have offsets", 1, true) ~= nil,
+         "leftover_message: past that it counts them instead")
+   CHECK(five.body:find("Chamfers 1", 1, true) == nil,
+         "leftover_message: and names none of them")
+   CHECK(five.body:find("their toolpaths are gone", 1, true) ~= nil,
+         "leftover_message: the counted form still reads as plural")
 end
